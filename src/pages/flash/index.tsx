@@ -12,7 +12,7 @@ export default function FlashPage() {
         </p>
       </div>
 
-      {/* 探针选择 + 目标信息 */}
+      {/* 仿真器选择 + 目标信息 */}
       <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
         <ProbeSelector />
         <TargetSelector />

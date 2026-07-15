@@ -9,7 +9,7 @@ import type {
 
 /**
  * 绑定 WebSocket 事件到 probe store。
- * 在后端就绪后自动连接 WebSocket，订阅探针相关事件。
+ * 在后端就绪后自动连接 WebSocket，订阅仿真器相关事件。
  * 支持 port 变化时自动重连（后端重启场景）。
  */
 export function useProbeWs(port: number | null): void {
@@ -29,25 +29,25 @@ export function useProbeWs(port: number | null): void {
     // 连接 WebSocket
     wsClient.connect(port)
 
-    // 订阅探针列表更新
+    // 订阅仿真器列表更新
     const unsubList = wsClient.on('probe.list', (data) => {
       const d = data as ProbeListData
       store.onProbeList(d.probes)
     })
 
-    // 订阅探针已连接
+    // 订阅仿真器已连接
     const unsubConnected = wsClient.on('probe.connected', (data) => {
       const d = data as ProbeConnectedData
       store.onProbeConnected(d.uid, d.target ?? null)
     })
 
-    // 订阅探针已断开
+    // 订阅仿真器已断开
     const unsubDisconnected = wsClient.on('probe.disconnected', (data) => {
       const d = data as ProbeDisconnectedData
       store.onProbeDisconnected(d.uid)
     })
 
-    // 订阅探针热插拔 — 刷新探针列表
+    // 订阅仿真器热插拔 — 刷新仿真器列表
     const unsubAdded = wsClient.on('probe.added', () => {
       store.fetchProbes()
     })

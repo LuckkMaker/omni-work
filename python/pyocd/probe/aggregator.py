@@ -17,6 +17,7 @@
 
 from ..core import exceptions
 from ..core.plugin import load_plugin_classes_of_type
+from ..core.options import add_option_set
 from .debug_probe import DebugProbe
 
 ## @brief Dictionary of loaded probe plugins indexed by name.
@@ -81,3 +82,21 @@ class DebugProbeAggregator(object):
 
 # Load plugins when this module is loaded.
 load_plugin_classes_of_type('pyocd.probe', PROBE_CLASSES, DebugProbe)
+
+# Fallback: if no plugins were loaded via entry_points (e.g. when pyocd source
+# is used without pip install), directly register built-in probe plugins.
+if not PROBE_CLASSES:
+    from .cmsis_dap_probe import CMSISDAPProbePlugin
+    from .stlink_probe import StlinkProbePlugin
+    from .jlink_probe import JLinkProbePlugin
+    from .picoprobe import PicoprobePlugin
+    from .tcp_client_probe import TCPClientProbePlugin
+
+    for plugin_cls in (CMSISDAPProbePlugin, StlinkProbePlugin, JLinkProbePlugin,
+                       PicoprobePlugin, TCPClientProbePlugin):
+        plugin = plugin_cls()
+        if plugin.should_load():
+            impl_class = plugin.load()
+            if issubclass(impl_class, DebugProbe):
+                PROBE_CLASSES[plugin.name] = impl_class
+                add_option_set(plugin.options)

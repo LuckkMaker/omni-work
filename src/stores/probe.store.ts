@@ -5,13 +5,13 @@ import { listTargets } from '@/services/target.service'
 
 interface ProbeStore {
   // ── 状态 ──────────────────────────────
-  /** 探针列表（含连接状态） */
+  /** 仿真器列表（含连接状态） */
   probes: ProbeWithState[]
-  /** 当前选中的探针 UID */
+  /** 当前选中的仿真器 UID */
   selectedUid: string | null
   /** 所有支持的 MCU 型号列表 */
   targetList: string[]
-  /** 加载探针中 */
+  /** 加载仿真器中 */
   loadingProbes: boolean
   /** 连接/断开操作中 */
   connecting: boolean
@@ -19,21 +19,21 @@ interface ProbeStore {
   error: string | null
 
   // ── 派生获取器 ────────────────────────
-  /** 获取当前选中的探针 */
+  /** 获取当前选中的仿真器 */
   getSelectedProbe: () => ProbeWithState | null
-  /** 获取当前选中探针的目标信息 */
+  /** 获取当前选中仿真器的目标信息 */
   getSelectedTarget: () => TargetInfo | null
 
   // ── 操作 ──────────────────────────────
-  /** 拉取探针列表 */
+  /** 拉取仿真器列表 */
   fetchProbes: () => Promise<void>
   /** 拉取支持的 MCU 型号列表 */
   fetchTargets: () => Promise<void>
-  /** 选中探针 */
+  /** 选中仿真器 */
   selectProbe: (uid: string | null) => void
-  /** 连接探针 */
+  /** 连接仿真器 */
   connectProbe: (uid: string) => Promise<void>
-  /** 断开探针 */
+  /** 断开仿真器 */
   disconnectProbe: (uid: string) => Promise<void>
   /** 手动设置目标芯片 */
   setTarget: (partNumber: string) => Promise<void>
@@ -41,11 +41,11 @@ interface ProbeStore {
   clearError: () => void
 
   // ── WebSocket 事件处理 ────────────────
-  /** 探针列表更新（热插拔 / 手动刷新） */
+  /** 仿真器列表更新（热插拔 / 手动刷新） */
   onProbeList: (probes: ProbeWithState[]) => void
-  /** 探针已连接 */
+  /** 仿真器已连接 */
   onProbeConnected: (uid: string, target: TargetInfo | null) => void
-  /** 探针已断开 */
+  /** 仿真器已断开 */
   onProbeDisconnected: (uid: string) => void
 }
 
@@ -78,7 +78,7 @@ export const useProbeStore = create<ProbeStore>((set, get) => ({
     } catch (err) {
       set({
         loadingProbes: false,
-        error: err instanceof Error ? err.message : '获取探针列表失败',
+        error: err instanceof Error ? err.message : '获取仿真器列表失败',
       })
     }
   },
@@ -87,8 +87,8 @@ export const useProbeStore = create<ProbeStore>((set, get) => ({
     try {
       const targets = await listTargets()
       set({ targetList: targets })
-    } catch {
-      // 目标列表获取失败不阻塞主流程
+    } catch (err) {
+      console.error('[probe.store] fetchTargets failed:', err)
     }
   },
 
@@ -104,7 +104,7 @@ export const useProbeStore = create<ProbeStore>((set, get) => ({
     }))
     try {
       const result = await probeService.connectProbe(uid)
-      // 连接成功，更新探针状态和目标信息
+      // 连接成功，更新仿真器状态和目标信息
       set((state) => ({
         probes: state.probes.map((p) =>
           p.uid === uid
@@ -113,13 +113,17 @@ export const useProbeStore = create<ProbeStore>((set, get) => ({
         ),
         connecting: false,
       }))
+      // 连接成功后，如果型号列表为空则重新加载
+      if (get().targetList.length === 0) {
+        get().fetchTargets()
+      }
     } catch (err) {
       set((state) => ({
         probes: state.probes.map((p) =>
           p.uid === uid ? { ...p, state: 'error' as const } : p
         ),
         connecting: false,
-        error: err instanceof Error ? err.message : '连接探针失败',
+        error: err instanceof Error ? err.message : '连接仿真器失败',
       }))
     }
   },
@@ -139,7 +143,7 @@ export const useProbeStore = create<ProbeStore>((set, get) => ({
     } catch (err) {
       set({
         connecting: false,
-        error: err instanceof Error ? err.message : '断开探针失败',
+        error: err instanceof Error ? err.message : '断开仿真器失败',
       })
     }
   },
@@ -172,7 +176,7 @@ export const useProbeStore = create<ProbeStore>((set, get) => ({
   onProbeList: (probes) => {
     set((state) => ({
       probes,
-      // 保持已选中的探针（如果仍然存在）
+      // 保持已选中的仿真器（如果仍然存在）
       selectedUid:
         state.selectedUid && probes.some((p) => p.uid === state.selectedUid)
           ? state.selectedUid

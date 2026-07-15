@@ -40,6 +40,9 @@ class ProbeSession:
 class PyOCDBackend(BackendInterface):
     """pyOCD 后端实现"""
 
+    # 默认目标型号（DAPLink 无法自动探测 MCU 型号，需指定）
+    DEFAULT_TARGET = "stm32f407xg"
+
     def __init__(self):
         self._sessions: dict[str, ProbeSession] = {}
         self._lock = threading.Lock()
@@ -112,11 +115,14 @@ class PyOCDBackend(BackendInterface):
 
         event_manager.log("info", f"Connecting to probe {probe_uid[:16]}...")
 
+        # 确定目标型号：优先使用用户指定的 _pending_target，否则使用默认型号
+        target_override = self._pending_target or self.DEFAULT_TARGET
+
         try:
             session = ConnectHelper.session_with_chosen_probe(
                 blocking=False,
                 unique_id=probe_uid,
-                target_override=self._pending_target,
+                target_override=target_override,
             )
             if session is None:
                 with self._lock:
@@ -204,16 +210,18 @@ class PyOCDBackend(BackendInterface):
         sector_size = 0
 
         try:
-            flash = target.memory_map.get_boot_memory()
-            if flash:
-                flash_start = flash.start
-                flash_size = flash.length
-                page_size = getattr(flash, 'page_size', 0) or 0
-                sector_size = getattr(flash, 'sector_size', 0) or 2048
+            # 遍历所有 Flash 区域，汇总总容量
+            from pyocd.core.memory_map import MemoryType
+            flash_regions = [r for r in target.memory_map if r.type == MemoryType.FLASH]
+            if flash_regions:
+                first = flash_regions[0]
+                flash_start = first.start
+                page_size = getattr(first, 'page_size', 0) or 0
+                sector_size = getattr(first, 'sector_size', 0) or 2048
+                flash_size = sum(r.length for r in flash_regions)
         except Exception:
             pass
 
-        # pyOCD 的 part_number 在 generic cortex_m 模式下为 CoreSightTarget
         # 优先使用 session.options 中的 target_override
         try:
             part_number = session.options.get('target_override')
@@ -221,21 +229,30 @@ class PyOCDBackend(BackendInterface):
             part_number = None
         if not part_number:
             part_number = getattr(target, 'part_number', None) or 'Unknown'
-        
+
         # 获取 CPU 核心信息
         core = 'Unknown'
         try:
-            # 尝试从 CoreRegister 或 cortex_m 获取
-            if hasattr(target, 'core') and target.core:
-                core = str(target.core)
-            elif hasattr(target, '_core'):
+            # CortexM 对象存储在 target._core 内部
+            if hasattr(target, '_core') and target._core is not None:
                 core = str(target._core)
+            elif hasattr(target, 'core') and target.core:
+                core = str(target.core)
         except Exception:
             pass
-        
-        # 如果 core 仍是 Unknown，从 part_number 推断
+
+        # 如果 core 仍是 Unknown，根据 part_number 推断
         if core == 'Unknown' and part_number != 'Unknown':
-            core = part_number
+            if 'stm32f4' in part_number.lower():
+                core = 'Cortex-M4'
+            elif 'stm32f1' in part_number.lower():
+                core = 'Cortex-M3'
+            elif 'stm32l4' in part_number.lower():
+                core = 'Cortex-M4'
+            elif 'stm32h7' in part_number.lower():
+                core = 'Cortex-M7'
+            else:
+                core = part_number
 
         return TargetInfo(
             part_number=part_number,

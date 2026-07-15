@@ -1,21 +1,21 @@
 import { api } from './api'
 import type { ProbeWithState, TargetInfo } from '@shared/types'
 
-/** 列出所有探针（含连接状态和目标信息） */
+/** 列出所有仿真器（含连接状态和目标信息） */
 export async function listProbes(): Promise<ProbeWithState[]> {
   const client = await api()
   const { data } = await client.get('/api/probes')
   return data.probes as ProbeWithState[]
 }
 
-/** 手动触发探针列表刷新 */
+/** 手动触发仿真器列表刷新 */
 export async function refreshProbes(): Promise<ProbeWithState[]> {
   const client = await api()
   const { data } = await client.post('/api/probes/refresh')
   return data.probes as ProbeWithState[]
 }
 
-/** 连接指定探针 */
+/** 连接指定仿真器 */
 export async function connectProbe(
   uid: string
 ): Promise<{ connected: boolean; uid: string; target: TargetInfo | null }> {
@@ -24,7 +24,7 @@ export async function connectProbe(
   return data
 }
 
-/** 断开指定探针 */
+/** 断开指定仿真器 */
 export async function disconnectProbe(uid: string): Promise<void> {
   const client = await api()
   await client.post(`/api/probes/${uid}/disconnect`)

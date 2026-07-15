@@ -12,6 +12,7 @@ import {
 } from '@/components/ui/select'
 import { Cpu, CheckCircle2, AlertCircle } from 'lucide-react'
 import { useProbeStore } from '@/stores/probe.store'
+import { useBackendStatus } from '@/hooks/useBackendStatus'
 
 function formatSize(bytes: number): string {
   if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
@@ -37,15 +38,16 @@ export function TargetSelector() {
   const probe = getSelectedProbe()
   const target = getSelectedTarget()
   const isConnected = probe?.state === 'connected'
+  const { status } = useBackendStatus()
 
   const [manualTarget, setManualTarget] = useState<string>('')
 
-  // 加载目标芯片列表
+  // 后端就绪后加载目标芯片列表
   useEffect(() => {
-    if (targetList.length === 0) {
+    if (status && targetList.length === 0) {
       fetchTargets()
     }
-  }, [targetList.length, fetchTargets])
+  }, [status, targetList.length, fetchTargets])
 
   // 判断目标是否已正确识别（非通用 cortex_m 且有 Flash 信息）
   const isTargetIdentified =
@@ -58,7 +60,7 @@ export function TargetSelector() {
     }
   }, [isTargetIdentified])
 
-  // 未选中探针
+  // 未选中仿真器
   if (!probe) {
     return (
       <Card>
@@ -70,14 +72,14 @@ export function TargetSelector() {
         </CardHeader>
         <CardContent>
           <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
-            请先选择探针
+            请先选择仿真器
           </div>
         </CardContent>
       </Card>
     )
   }
 
-  // 探针未连接
+  // 仿真器未连接
   if (!isConnected) {
     return (
       <Card>
@@ -89,7 +91,7 @@ export function TargetSelector() {
         </CardHeader>
         <CardContent>
           <div className="flex items-center justify-center py-8 text-sm text-muted-foreground">
-            请先连接探针
+            请先连接仿真器
           </div>
         </CardContent>
       </Card>

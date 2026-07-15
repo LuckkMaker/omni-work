@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { useBackendStatus } from '@/hooks/useBackendStatus'
 import { useProbeWs } from '@/hooks/useProbeWs'
 import { useProbeStore } from '@/stores/probe.store'
+import { resetApiClient } from '@/services/api'
 import { DeviceSwitcher } from '@/components/layout/DeviceSwitcher'
 
 const navItems = [
@@ -24,9 +25,10 @@ export default function MainLayout() {
 
   const { fetchProbes, fetchTargets, error, clearError } = useProbeStore()
 
-  // 后端就绪后自动拉取探针列表和目标列表
+  // 后端就绪后重置 API 客户端并拉取仿真器列表和目标列表
   useEffect(() => {
     if (status) {
+      resetApiClient()
       fetchProbes()
       fetchTargets()
     }

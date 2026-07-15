@@ -1,7 +1,6 @@
 import { useEffect } from 'react'
-import { Usb, ChevronsUpDown, Check, RefreshCw, Plug, PlugZap, Cpu, ChevronRight } from 'lucide-react'
+import { Usb, ChevronsUpDown, Check, RefreshCw, Cpu, Plug, PlugZap } from 'lucide-react'
 import { cn } from '@/lib/utils'
-import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import {
   DropdownMenu,
@@ -15,7 +14,8 @@ import {
   DropdownMenuSubContent,
 } from '@/components/ui/dropdown-menu'
 import { useProbeStore } from '@/stores/probe.store'
-import type { ProbeState } from '@shared/types'
+import { useBackendStatus } from '@/hooks/useBackendStatus'
+import type { ProbeState, ProbeWithState } from '@shared/types'
 
 const stateLabel: Record<ProbeState, string> = {
   disconnected: '未连接',
@@ -54,21 +54,32 @@ export function DeviceSwitcher() {
     getSelectedTarget,
   } = useProbeStore()
 
+  const { status } = useBackendStatus()
   const selectedProbe = getSelectedProbe()
   const target = getSelectedTarget()
   const isConnected = selectedProbe?.state === 'connected'
   const isTargetIdentified =
     !!target && target.part_number !== 'cortex_m' && target.flash_size > 0
 
-  // 加载目标芯片列表
+  // 后端就绪后加载目标芯片列表
   useEffect(() => {
-    if (targetList.length === 0) {
+    if (status && targetList.length === 0) {
       fetchTargets()
     }
-  }, [targetList.length, fetchTargets])
+  }, [status, targetList.length, fetchTargets])
+
+  // 点击仿真器项：选中 + 自动连接/断开切换
+  const handleProbeClick = (probe: ProbeWithState) => {
+    selectProbe(probe.uid)
+    if (probe.state === 'connected') {
+      disconnectProbe(probe.uid)
+    } else if (probe.state === 'disconnected' || probe.state === 'error') {
+      connectProbe(probe.uid)
+    }
+  }
 
   return (
-    <DropdownMenu>
+    <DropdownMenu onOpenChange={(open) => { if (open && status) fetchProbes() }}>
       <DropdownMenuTrigger asChild>
         <button
           className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent data-[state=open]:bg-accent"
@@ -87,26 +98,32 @@ export function DeviceSwitcher() {
                 ? target.part_number
                 : selectedProbe
                   ? stateLabel[selectedProbe.state]
-                  : '点击选择探针'}
+                  : '点击选择仿真器'}
             </div>
           </div>
           <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent className="w-(--radix-dropdown-menu-trigger-width)" align="start" sideOffset={4}>
-        {/* 探针列表 */}
-        <DropdownMenuLabel>已检测到的探针</DropdownMenuLabel>
+        {/* 仿真器列表 */}
+        <DropdownMenuLabel>
+          <span>已检测到的仿真器</span>
+          {loadingProbes && <RefreshCw className="ml-2 inline size-3 animate-spin text-muted-foreground" />}
+        </DropdownMenuLabel>
         {probes.length === 0 ? (
           <div className="px-2 py-4 text-center text-sm text-muted-foreground">
-            {loadingProbes ? '扫描中...' : '未检测到探针'}
+            {loadingProbes ? '扫描中...' : '未检测到仿真器'}
           </div>
         ) : (
           probes.map((probe) => {
             const isSelected = probe.uid === selectedUid
+            const probeConnected = probe.state === 'connected'
+            const probeConnecting = probe.state === 'connecting'
             return (
               <DropdownMenuItem
                 key={probe.uid}
-                onClick={() => selectProbe(probe.uid)}
+                onClick={() => handleProbeClick(probe)}
+                disabled={probeConnecting || connecting}
               >
                 <Check className={cn('size-4', isSelected ? 'opacity-100' : 'opacity-0')} />
                 <div className="min-w-0 flex-1">
@@ -115,82 +132,46 @@ export function DeviceSwitcher() {
                     {probe.vendor} · {stateLabel[probe.state]}
                   </div>
                 </div>
-                {probe.state === 'connected' && (
-                  <Badge variant={stateVariant[probe.state]} className="ml-auto">
-                    连
-                  </Badge>
-                )}
+                {probeConnected ? (
+                  <Plug className="size-4 shrink-0 text-primary" />
+                ) : probeConnecting ? (
+                  <PlugZap className="size-4 shrink-0 text-muted-foreground animate-pulse" />
+                ) : null}
               </DropdownMenuItem>
             )
           })
         )}
 
+        {/* MCU 型号选择子菜单（始终显示，未连接时禁用选择） */}
         <DropdownMenuSeparator />
-
-        {/* 刷新按钮 */}
-        <DropdownMenuItem onClick={() => fetchProbes()}>
-          <RefreshCw className={cn('size-4', loadingProbes && 'animate-spin')} />
-          刷新设备列表
-        </DropdownMenuItem>
-
-        {/* 连接/断开 */}
-        {selectedProbe && (
-          <>
-            <DropdownMenuSeparator />
-            {isConnected ? (
-              <DropdownMenuItem
-                onClick={() => disconnectProbe(selectedProbe.uid)}
-                disabled={connecting}
-              >
-                <Plug className="size-4" />
-                断开连接
-              </DropdownMenuItem>
-            ) : (
-              <DropdownMenuItem
-                onClick={() => connectProbe(selectedProbe.uid)}
-                disabled={connecting || selectedProbe.state === 'connecting'}
-              >
-                <PlugZap className="size-4" />
-                {selectedProbe.state === 'connecting' ? '连接中...' : '连接探针'}
-              </DropdownMenuItem>
+        <DropdownMenuSub>
+          <DropdownMenuSubTrigger className="gap-2">
+            <Cpu className="size-4" />
+            MCU 型号
+            {isTargetIdentified && (
+              <Badge variant="outline" className="ml-auto">
+                {target.part_number}
+              </Badge>
             )}
-          </>
-        )}
-
-        {/* MCU 型号选择子菜单 */}
-        {selectedProbe && (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>
-                <Cpu className="size-4" />
-                MCU 型号
-                {isTargetIdentified && (
-                  <Badge variant="outline" className="ml-auto">
-                    {target.part_number}
-                  </Badge>
-                )}
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="max-h-80 overflow-y-auto">
-                {targetList.map((t) => (
-                  <DropdownMenuItem
-                    key={t}
-                    onClick={() => setTarget(t)}
-                    disabled={!isConnected || connecting}
-                  >
-                    <Check
-                      className={cn(
-                        'size-4',
-                        target?.part_number === t ? 'opacity-100' : 'opacity-0'
-                      )}
-                    />
-                    {t}
-                  </DropdownMenuItem>
-                ))}
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-          </>
-        )}
+          </DropdownMenuSubTrigger>
+          <DropdownMenuSubContent className="max-h-80 overflow-y-auto">
+            {targetList.map((t) => (
+              <DropdownMenuItem
+                key={t}
+                onClick={() => setTarget(t)}
+                disabled={!isConnected || connecting}
+              >
+                <Check
+                  className={cn(
+                    'size-4',
+                    target?.part_number === t ? 'opacity-100' : 'opacity-0'
+                  )}
+                />
+                {t}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuSubContent>
+        </DropdownMenuSub>
       </DropdownMenuContent>
     </DropdownMenu>
   )

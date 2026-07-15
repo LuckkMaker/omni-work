@@ -39,7 +39,7 @@ export function ProbeSelector() {
       <CardHeader className="flex-row items-center justify-between space-y-0">
         <div className="flex items-center gap-2">
           <Usb className="size-5 text-muted-foreground" />
-          <CardTitle>探针选择</CardTitle>
+          <CardTitle>仿真器选择</CardTitle>
         </div>
         <Button
           variant="ghost"
@@ -56,7 +56,7 @@ export function ProbeSelector() {
           <div className="flex flex-col items-center justify-center py-8 text-center">
             <Usb className="size-8 text-muted-foreground/50" />
             <p className="mt-2 text-sm text-muted-foreground">
-              {loadingProbes ? '正在扫描探针...' : '未检测到探针'}
+              {loadingProbes ? '正在扫描仿真器...' : '未检测到仿真器'}
             </p>
             {!loadingProbes && (
               <Button
@@ -100,7 +100,7 @@ export function ProbeSelector() {
                         )}
                       </div>
 
-                      {/* 探针信息 */}
+                      {/* 仿真器信息 */}
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center gap-2">
                           <span className="truncate text-sm font-medium">

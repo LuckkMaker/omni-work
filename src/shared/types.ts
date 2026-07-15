@@ -1,4 +1,4 @@
-/** 探针信息 */
+/** 仿真器信息 */
 export interface ProbeInfo {
   uid: string
   vendor: string
@@ -8,10 +8,10 @@ export interface ProbeInfo {
   serial: string
 }
 
-/** 探针连接状态 */
+/** 仿真器连接状态 */
 export type ProbeState = 'disconnected' | 'connecting' | 'connected' | 'error'
 
-/** 带状态的探针信息（后端 get_probe_states 返回） */
+/** 带状态的仿真器信息（后端 get_probe_states 返回） */
 export interface ProbeWithState extends ProbeInfo {
   state: ProbeState
   target: TargetInfo | null
@@ -64,20 +64,20 @@ export interface WsEvent<T = unknown> {
   data: T
 }
 
-/** 探针连接事件数据 */
+/** 仿真器连接事件数据 */
 export interface ProbeConnectedData {
   uid: string
   target?: TargetInfo | null
   reason?: string
 }
 
-/** 探针断开事件数据 */
+/** 仿真器断开事件数据 */
 export interface ProbeDisconnectedData {
   uid: string
   reason?: string
 }
 
-/** 探针列表事件数据 */
+/** 仿真器列表事件数据 */
 export interface ProbeListData {
   probes: ProbeWithState[]
 }
