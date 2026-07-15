@@ -10,13 +10,19 @@ import type {
 /**
  * 绑定 WebSocket 事件到 probe store。
  * 在后端就绪后自动连接 WebSocket，订阅探针相关事件。
+ * 支持 port 变化时自动重连（后端重启场景）。
  */
 export function useProbeWs(port: number | null): void {
-  const initialized = useRef(false)
+  const connectedPort = useRef<number | null>(null)
 
   useEffect(() => {
-    if (!port || initialized.current) return
-    initialized.current = true
+    if (!port || connectedPort.current === port) return
+
+    // 如果之前连接了不同端口，先断开
+    if (connectedPort.current !== null) {
+      wsClient.disconnect()
+    }
+    connectedPort.current = port
 
     const store = useProbeStore.getState()
 
@@ -49,14 +55,13 @@ export function useProbeWs(port: number | null): void {
       store.fetchProbes()
     })
 
+    // 注意：不在 cleanup 中 disconnect，由 port 变化或组件卸载时处理
     return () => {
       unsubList()
       unsubConnected()
       unsubDisconnected()
       unsubAdded()
       unsubRemoved()
-      wsClient.disconnect()
-      initialized.current = false
     }
   }, [port])
 }

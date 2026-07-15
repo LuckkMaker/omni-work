@@ -1,6 +1,12 @@
+import { useEffect } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
 import { Zap, Terminal, Radio, Activity, Settings, Cpu } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { Badge } from '@/components/ui/badge'
+import { useBackendStatus } from '@/hooks/useBackendStatus'
+import { useProbeWs } from '@/hooks/useProbeWs'
+import { useProbeStore } from '@/stores/probe.store'
+import { DeviceSwitcher } from '@/components/layout/DeviceSwitcher'
 
 const navItems = [
   { to: '/flash', label: 'Flash', icon: Zap },
@@ -12,15 +18,29 @@ const navItems = [
 ]
 
 export default function MainLayout() {
+  // 全局后端状态 + WebSocket 初始化（所有页面共享）
+  const { status, port } = useBackendStatus()
+  useProbeWs(port)
+
+  const { fetchProbes, fetchTargets, error, clearError } = useProbeStore()
+
+  // 后端就绪后自动拉取探针列表和目标列表
+  useEffect(() => {
+    if (status) {
+      fetchProbes()
+      fetchTargets()
+    }
+  }, [status, fetchProbes, fetchTargets])
+
   return (
     <div className="flex h-screen w-full">
       <aside className="flex w-56 flex-col border-r border-border bg-muted/30">
-        <div className="flex h-14 items-center gap-2 border-b border-border px-4">
-          <div className="flex h-7 w-7 items-center justify-center rounded bg-primary text-primary-foreground text-xs font-bold">
-            DW
-          </div>
-          <span className="text-sm font-semibold">DAPLink Work</span>
+        {/* 设备选择器（替代原来的品牌区） */}
+        <div className="border-b border-border p-2">
+          <DeviceSwitcher />
         </div>
+
+        {/* 导航菜单 */}
         <nav className="flex-1 space-y-1 p-3">
           {navItems.map((item) => (
             <NavLink
@@ -40,8 +60,26 @@ export default function MainLayout() {
             </NavLink>
           ))}
         </nav>
-        <div className="border-t border-border p-3 text-xs text-muted-foreground">
-          v0.1.0
+
+        {/* 底部：后端状态 + 错误提示 */}
+        <div className="border-t border-border p-3 space-y-2">
+          {error && (
+            <div className="flex items-center justify-between rounded-md border border-destructive/50 px-2 py-1.5">
+              <span className="truncate text-xs text-destructive">{error}</span>
+              <button
+                className="shrink-0 text-xs text-destructive/70 hover:text-destructive"
+                onClick={clearError}
+              >
+                ✕
+              </button>
+            </div>
+          )}
+          <div className="flex items-center gap-2">
+            <Badge variant={status ? 'default' : 'destructive'} className="text-[10px]">
+              {status ? '后端在线' : '后端离线'}
+            </Badge>
+            <span className="text-xs text-muted-foreground">v0.1.0</span>
+          </div>
         </div>
       </aside>
       <main className="flex-1 overflow-auto">
