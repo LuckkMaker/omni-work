@@ -4,3 +4,4 @@ starlette>=0.41.0,<0.42.0
 pyocd>=0.44.0
 pyelftools>=0.31.0
 websockets>=14.0
+wsproto>=1.2.0

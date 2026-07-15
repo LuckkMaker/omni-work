@@ -8,6 +8,15 @@ export interface ProbeInfo {
   serial: string
 }
 
+/** 探针连接状态 */
+export type ProbeState = 'disconnected' | 'connecting' | 'connected' | 'error'
+
+/** 带状态的探针信息（后端 get_probe_states 返回） */
+export interface ProbeWithState extends ProbeInfo {
+  state: ProbeState
+  target: TargetInfo | null
+}
+
 /** 目标芯片信息 */
 export interface TargetInfo {
   part_number: string
@@ -30,7 +39,7 @@ export interface FlashResult {
 export interface FirmwareFileInfo {
   format: 'bin' | 'hex' | 'elf'
   size: number
-  entry?: number
+  entry?: number | null
   segments?: { address: number; size: number }[]
 }
 
@@ -47,6 +56,30 @@ export interface LogEvent {
   timestamp: string
   level: 'info' | 'warning' | 'error'
   message: string
+}
+
+/** WebSocket 事件通用结构 */
+export interface WsEvent<T = unknown> {
+  event: string
+  data: T
+}
+
+/** 探针连接事件数据 */
+export interface ProbeConnectedData {
+  uid: string
+  target?: TargetInfo | null
+  reason?: string
+}
+
+/** 探针断开事件数据 */
+export interface ProbeDisconnectedData {
+  uid: string
+  reason?: string
+}
+
+/** 探针列表事件数据 */
+export interface ProbeListData {
+  probes: ProbeWithState[]
 }
 
 /** Python 后端状态 */

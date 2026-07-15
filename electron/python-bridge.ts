@@ -26,7 +26,7 @@ export class PythonBridge {
 
   getStatus(): PythonStatus {
     return {
-      running: this.proc !== null && !this.proc.killed,
+      running: this.proc !== null && !this.proc.killed && this.port !== null,
       port: this.port
     }
   }
@@ -67,9 +67,9 @@ export class PythonBridge {
       const timeout = setTimeout(() => {
         if (!resolved) {
           resolved = true
-          reject(new Error('Python backend startup timeout (10s)'))
+          reject(new Error('Python backend startup timeout (30s)'))
         }
-      }, 10000)
+      }, 30000)
 
       this.proc.stdout?.on('data', (data: Buffer) => {
         const text = data.toString().trim()

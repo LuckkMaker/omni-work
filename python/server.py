@@ -12,6 +12,7 @@ import logging
 import uvicorn
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
+from fastapi.middleware.cors import CORSMiddleware
 from api import probes, flash, targets, files
 from core.events import event_manager
 from core.probe_monitor import probe_monitor
@@ -39,6 +40,15 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="DAPLink Work Backend", version="0.1.0", lifespan=lifespan)
+
+# CORS 配置：允许 Electron 渲染进程（开发模式 localhost:5173/5174）访问
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # 注册路由
 app.include_router(probes.router, prefix="/api/probes", tags=["probes"])
