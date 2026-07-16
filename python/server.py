@@ -13,7 +13,7 @@ import uvicorn
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from api import probes, flash, targets, files
+from api import probes, flash, targets, files, devices
 from core.events import event_manager
 from core.probe_monitor import probe_monitor
 from core.pyocd_backend import backend
@@ -53,6 +53,7 @@ app.add_middleware(
 # 注册路由
 app.include_router(probes.router, prefix="/api/probes", tags=["probes"])
 app.include_router(targets.router, prefix="/api/targets", tags=["targets"])
+app.include_router(devices.router, prefix="/api/devices", tags=["devices"])
 app.include_router(flash.router, prefix="/api", tags=["flash"])
 app.include_router(files.router, prefix="/api/files", tags=["files"])
 

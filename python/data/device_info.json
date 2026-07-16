@@ -1,0 +1,47 @@
+[
+  {
+    "part_number": "stm32f407xg",
+    "vendor": "ST",
+    "display_name": "STM32F407xG",
+    "core": "Cortex-M4",
+    "num_cores": 1,
+    "flash_size": 1024,
+    "ram_size": 192
+  },
+  {
+    "part_number": "apm32f403xb",
+    "vendor": "Geehy",
+    "display_name": "APM32F403xB",
+    "core": "Cortex-M4",
+    "num_cores": 1,
+    "flash_size": 128,
+    "ram_size": 32
+  },
+  {
+    "part_number": "g32f002x5",
+    "vendor": "Geehy",
+    "display_name": "G32F002x5",
+    "core": "Cortex-M0+",
+    "num_cores": 1,
+    "flash_size": 24,
+    "ram_size": 3
+  },
+  {
+    "part_number": "g32f031x8",
+    "vendor": "Geehy",
+    "display_name": "G32F031x8",
+    "core": "Cortex-M0+",
+    "num_cores": 1,
+    "flash_size": 64,
+    "ram_size": 8
+  },
+  {
+    "part_number": "g32m3101x8",
+    "vendor": "Geehy",
+    "display_name": "G32M3101x8",
+    "core": "Cortex-M0+",
+    "num_cores": 1,
+    "flash_size": 64,
+    "ram_size": 8
+  }
+]

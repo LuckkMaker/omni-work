@@ -48,24 +48,30 @@ class PyOCDBackend(BackendInterface):
         self._lock = threading.Lock()
         self._known_probe_uids: set[str] = set()
         self._pending_target: str | None = None  # 连接时使用的目标型号
+        self._probe_info_cache: dict[str, ProbeInfo] = {}  # 缓存探针初始信息（避免连接后名称变化）
 
     # ── 探针扫描 ──────────────────────────────────────────────
 
     def list_probes(self) -> list[ProbeInfo]:
-        """扫描所有已连接的 CMSIS-DAP 探针"""
+        """扫描所有已连接的 CMSIS-DAP 探针（缓存初始信息，避免连接后名称变化）"""
         from pyocd.core.helpers import ConnectHelper
 
         probes = ConnectHelper.get_all_connected_probes(blocking=False)
         result = []
         for probe in probes:
-            result.append(ProbeInfo(
-                uid=probe.unique_id,
-                vendor=probe.vendor_name or "Unknown",
-                product=probe.product_name or "Unknown",
-                vid=getattr(probe, 'vid', 0) or 0,
-                pid=getattr(probe, 'pid', 0) or 0,
-                serial=getattr(probe, 'serial_number', None) or probe.unique_id,
-            ))
+            uid = probe.unique_id
+            # 首次发现时缓存探针信息；已连接的探针 product_name 会变化，用缓存保持一致
+            if uid not in self._probe_info_cache:
+                info = ProbeInfo(
+                    uid=uid,
+                    vendor=probe.vendor_name or "Unknown",
+                    product=probe.product_name or "Unknown",
+                    vid=getattr(probe, 'vid', 0) or 0,
+                    pid=getattr(probe, 'pid', 0) or 0,
+                    serial=getattr(probe, 'serial_number', None) or uid,
+                )
+                self._probe_info_cache[uid] = info
+            result.append(self._probe_info_cache[uid])
         return result
 
     def get_probe_states(self) -> list[dict]:
@@ -95,6 +101,9 @@ class PyOCDBackend(BackendInterface):
             added = [p for p in current_probes if p.uid not in self._known_probe_uids]
             removed = [uid for uid in self._known_probe_uids if uid not in current_uids]
             self._known_probe_uids = current_uids
+            # 清理已拔出探针的信息缓存
+            for uid in removed:
+                self._probe_info_cache.pop(uid, None)
 
         return added, removed
 

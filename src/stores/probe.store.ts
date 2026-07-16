@@ -1,7 +1,8 @@
 import { create } from 'zustand'
-import type { ProbeWithState, TargetInfo } from '@shared/types'
+import type { ProbeWithState, TargetInfo, DeviceInfo } from '@shared/types'
 import * as probeService from '@/services/probe.service'
 import { listTargets } from '@/services/target.service'
+import { listDevices } from '@/services/device.service'
 
 interface ProbeStore {
   // ── 状态 ──────────────────────────────
@@ -9,8 +10,10 @@ interface ProbeStore {
   probes: ProbeWithState[]
   /** 当前选中的仿真器 UID */
   selectedUid: string | null
-  /** 所有支持的 MCU 型号列表 */
+  /** pyOCD 支持的目标型号列表 */
   targetList: string[]
+  /** 设备目录（来自 device_info.json） */
+  deviceList: DeviceInfo[]
   /** 加载仿真器中 */
   loadingProbes: boolean
   /** 连接/断开操作中 */
@@ -23,12 +26,16 @@ interface ProbeStore {
   getSelectedProbe: () => ProbeWithState | null
   /** 获取当前选中仿真器的目标信息 */
   getSelectedTarget: () => TargetInfo | null
+  /** 根据 part_number 查找设备目录信息 */
+  getDeviceInfo: (partNumber: string) => DeviceInfo | undefined
 
   // ── 操作 ──────────────────────────────
   /** 拉取仿真器列表 */
   fetchProbes: () => Promise<void>
   /** 拉取支持的 MCU 型号列表 */
   fetchTargets: () => Promise<void>
+  /** 拉取设备目录 */
+  fetchDevices: () => Promise<void>
   /** 选中仿真器 */
   selectProbe: (uid: string | null) => void
   /** 连接仿真器 */
@@ -54,6 +61,7 @@ export const useProbeStore = create<ProbeStore>((set, get) => ({
   probes: [],
   selectedUid: null,
   targetList: [],
+  deviceList: [],
   loadingProbes: false,
   connecting: false,
   error: null,
@@ -67,6 +75,10 @@ export const useProbeStore = create<ProbeStore>((set, get) => ({
   getSelectedTarget: () => {
     const probe = get().getSelectedProbe()
     return probe?.target ?? null
+  },
+
+  getDeviceInfo: (partNumber: string) => {
+    return get().deviceList.find((d) => d.part_number === partNumber)
   },
 
   // ── 操作 ──────────────────────────────
@@ -92,6 +104,15 @@ export const useProbeStore = create<ProbeStore>((set, get) => ({
     }
   },
 
+  fetchDevices: async () => {
+    try {
+      const devices = await listDevices()
+      set({ deviceList: devices })
+    } catch (err) {
+      console.error('[probe.store] fetchDevices failed:', err)
+    }
+  },
+
   selectProbe: (uid) => set({ selectedUid: uid }),
 
   connectProbe: async (uid) => {
@@ -113,9 +134,12 @@ export const useProbeStore = create<ProbeStore>((set, get) => ({
         ),
         connecting: false,
       }))
-      // 连接成功后，如果型号列表为空则重新加载
+      // 连接成功后，如果列表为空则重新加载
       if (get().targetList.length === 0) {
         get().fetchTargets()
+      }
+      if (get().deviceList.length === 0) {
+        get().fetchDevices()
       }
     } catch (err) {
       set((state) => ({

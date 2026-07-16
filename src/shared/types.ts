@@ -17,7 +17,7 @@ export interface ProbeWithState extends ProbeInfo {
   target: TargetInfo | null
 }
 
-/** 目标芯片信息 */
+/** 目标芯片信息（运行时从 pyOCD session 获取） */
 export interface TargetInfo {
   part_number: string
   core: string
@@ -25,6 +25,19 @@ export interface TargetInfo {
   flash_size: number
   page_size: number
   sector_size: number
+}
+
+/** 设备目录信息（来自 device_info.json，静态元数据） */
+export interface DeviceInfo {
+  part_number: string
+  vendor: string
+  display_name: string
+  core: string
+  num_cores: number
+  /** Flash 大小（KB） */
+  flash_size: number
+  /** RAM 大小（KB） */
+  ram_size: number
 }
 
 /** Flash 操作结果 */
