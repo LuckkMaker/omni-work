@@ -4,9 +4,7 @@ import {
   DialogContent,
   DialogHeader,
   DialogTitle,
-  DialogFooter,
 } from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
 import type { DeviceInfo } from '@shared/types'
@@ -17,7 +15,6 @@ interface TargetDeviceDialogProps {
   deviceList: DeviceInfo[]
   currentPartNumber: string | null
   onConfirm: (partNumber: string) => void
-  disabled?: boolean
 }
 
 /** 格式化 Flash/RAM 大小：KB → 可读字符串 */
@@ -54,7 +51,6 @@ export function TargetDeviceDialog({
   deviceList,
   currentPartNumber,
   onConfirm,
-  disabled = false,
 }: TargetDeviceDialogProps) {
   const [selected, setSelected] = useState<string | null>(currentPartNumber)
 
@@ -65,6 +61,7 @@ export function TargetDeviceDialog({
     core: '',
     flash: '',
     ram: '',
+    base: '',
   })
 
   const updateFilter = (key: keyof typeof filters, value: string) => {
@@ -78,20 +75,19 @@ export function TargetDeviceDialog({
       if (filters.core && !d.core.toLowerCase().includes(filters.core.toLowerCase())) return false
       if (filters.flash && !formatSize(d.flash_size).toLowerCase().includes(filters.flash.toLowerCase())) return false
       if (filters.ram && !formatSize(d.ram_size).toLowerCase().includes(filters.ram.toLowerCase())) return false
+      if (filters.base && !d.flash_base_address.toLowerCase().includes(filters.base.toLowerCase())) return false
       return true
     })
   }, [deviceList, filters])
 
-  const handleConfirm = () => {
-    if (selected && !disabled) {
-      onConfirm(selected)
-      onOpenChange(false)
-    }
+  const handleDoubleClick = (partNumber: string) => {
+    onConfirm(partNumber)
+    onOpenChange(false)
   }
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent className="max-w-4xl">
         <DialogHeader>
           <DialogTitle>选择目标设备</DialogTitle>
         </DialogHeader>
@@ -106,7 +102,8 @@ export function TargetDeviceDialog({
                 <th className="border-r border-border px-2 py-2 text-center font-medium">设备</th>
                 <th className="border-r border-border px-2 py-2 text-center font-medium">内核</th>
                 <th className="border-r border-border px-2 py-2 text-center font-medium">Flash 大小</th>
-                <th className="px-2 py-2 text-center font-medium">RAM 大小</th>
+                <th className="border-r border-border px-2 py-2 text-center font-medium">RAM 大小</th>
+                <th className="px-2 py-2 text-center font-medium">Flash 基地址</th>
               </tr>
               {/* 筛选输入行 */}
               <tr className="border-b border-border bg-muted/30 pb-1">
@@ -122,15 +119,18 @@ export function TargetDeviceDialog({
                 <th className="border-r border-border px-1.5 py-1">
                   <ColumnFilter value={filters.flash} onChange={(v) => updateFilter('flash', v)} />
                 </th>
-                <th className="px-1.5 py-1">
+                <th className="border-r border-border px-1.5 py-1">
                   <ColumnFilter value={filters.ram} onChange={(v) => updateFilter('ram', v)} />
+                </th>
+                <th className="px-1.5 py-1">
+                  <ColumnFilter value={filters.base} onChange={(v) => updateFilter('base', v)} />
                 </th>
               </tr>
             </thead>
             <tbody>
               {filtered.length === 0 ? (
                 <tr>
-                  <td colSpan={5} className="px-3 py-8 text-center text-muted-foreground">
+                  <td colSpan={6} className="px-3 py-8 text-center text-muted-foreground">
                     无匹配设备
                   </td>
                 </tr>
@@ -138,20 +138,21 @@ export function TargetDeviceDialog({
                 filtered.map((d) => (
                   <tr
                     key={d.part_number}
-                    onClick={() => !disabled && setSelected(d.part_number)}
+                    onClick={() => setSelected(d.part_number)}
+                    onDoubleClick={() => handleDoubleClick(d.part_number)}
                     className={cn(
                       'cursor-pointer border-b border-border/50 transition-colors',
                       selected === d.part_number
                         ? 'bg-primary/20'
-                        : 'hover:bg-muted/30',
-                      disabled && 'cursor-not-allowed opacity-50'
+                        : 'hover:bg-muted/30'
                     )}
                   >
                     <td className="border-r border-border/50 px-3 py-2 text-left">{d.vendor}</td>
                     <td className="border-r border-border/50 px-3 py-2 text-left font-medium">{d.display_name}</td>
                     <td className="border-r border-border/50 px-3 py-2 text-left text-muted-foreground">{d.core}</td>
                     <td className="border-r border-border/50 px-3 py-2 text-left tabular-nums">{formatSize(d.flash_size)}</td>
-                    <td className="px-3 py-2 text-left tabular-nums">{formatSize(d.ram_size)}</td>
+                    <td className="border-r border-border/50 px-3 py-2 text-left tabular-nums">{formatSize(d.ram_size)}</td>
+                    <td className="px-3 py-2 text-left font-mono text-xs">{d.flash_base_address}</td>
                   </tr>
                 ))
               )}
@@ -159,14 +160,7 @@ export function TargetDeviceDialog({
           </table>
         </div>
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            取消
-          </Button>
-          <Button onClick={handleConfirm} disabled={!selected || disabled}>
-            确定
-          </Button>
-        </DialogFooter>
+        <p className="text-xs text-muted-foreground">双击设备行选中，点击窗口外取消</p>
       </DialogContent>
     </Dialog>
   )

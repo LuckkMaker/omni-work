@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, shell } from 'electron'
+import { app, BrowserWindow, ipcMain, shell, dialog } from 'electron'
 import { join } from 'path'
 import { PythonBridge } from './python-bridge'
 
@@ -59,6 +59,20 @@ app.whenReady().then(async () => {
   // IPC: Python 后端状态
   ipcMain.handle('python:status', () => {
     return pythonBridge?.getStatus() ?? { running: false, port: null }
+  })
+
+  // IPC: 打开文件选择对话框
+  ipcMain.handle('dialog:open-file', async () => {
+    const result = await dialog.showOpenDialog(mainWindow!, {
+      title: '选择固件文件',
+      filters: [
+        { name: '固件文件', extensions: ['bin', 'hex', 'elf'] },
+        { name: '所有文件', extensions: ['*'] },
+      ],
+      properties: ['openFile'],
+    })
+    if (result.canceled || result.filePaths.length === 0) return null
+    return result.filePaths[0]
   })
 
   createWindow()

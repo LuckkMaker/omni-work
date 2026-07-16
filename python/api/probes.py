@@ -12,6 +12,12 @@ class SetTargetRequest(BaseModel):
     part_number: str
 
 
+class ConnectRequest(BaseModel):
+    target: str | None = None
+    interface: str = "swd"
+    speed: int | None = None
+
+
 @router.get("")
 async def list_probes():
     """列出所有已连接探针（含连接状态）"""
@@ -32,9 +38,12 @@ async def get_probe_states():
 
 
 @router.post("/{uid}/connect")
-async def connect_probe(uid: str):
-    """连接指定探针"""
-    success = backend.connect(uid)
+async def connect_probe(uid: str, req: ConnectRequest | None = None):
+    """连接指定探针（可指定目标型号、接口、速度）"""
+    target = req.target if req else None
+    interface = req.interface if req else "swd"
+    speed = req.speed if req else None
+    success = backend.connect(uid, target=target, interface=interface, speed=speed)
     if not success:
         raise HTTPException(status_code=500, detail="Connection failed")
 

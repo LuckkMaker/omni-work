@@ -25,6 +25,8 @@ export interface TargetInfo {
   flash_size: number
   page_size: number
   sector_size: number
+  core_id: string
+  endian: string
 }
 
 /** 设备目录信息（来自 device_info.json，静态元数据） */
@@ -38,6 +40,10 @@ export interface DeviceInfo {
   flash_size: number
   /** RAM 大小（KB） */
   ram_size: number
+  /** Flash 基地址（十六进制字符串） */
+  flash_base_address: string
+  /** RAM 基地址（十六进制字符串） */
+  ram_base_address: string
 }
 
 /** Flash 操作结果 */
@@ -105,6 +111,7 @@ export interface PythonStatus {
 export interface ElectronAPI {
   getPythonPort: () => Promise<number | null>
   getPythonStatus: () => Promise<PythonStatus>
+  openFileDialog: () => Promise<string | null>
 }
 
 declare global {

@@ -109,8 +109,16 @@ class PyOCDBackend(BackendInterface):
 
     # ── 连接管理 ──────────────────────────────────────────────
 
-    def connect(self, probe_uid: str) -> bool:
-        """连接指定探针"""
+    def connect(self, probe_uid: str, target: str | None = None,
+                interface: str = "swd", speed: int | None = None) -> bool:
+        """连接指定探针
+
+        Args:
+            probe_uid: 探针唯一 ID
+            target: 目标型号（如 stm32f407xg），None 则使用默认
+            interface: 调试接口 "swd" 或 "jtag"
+            speed: 时钟频率 (Hz)，None 则使用默认
+        """
         from pyocd.core.helpers import ConnectHelper
 
         with self._lock:
@@ -124,14 +132,26 @@ class PyOCDBackend(BackendInterface):
 
         event_manager.log("info", f"Connecting to probe {probe_uid[:16]}...")
 
-        # 确定目标型号：优先使用用户指定的 _pending_target，否则使用默认型号
-        target_override = self._pending_target or self.DEFAULT_TARGET
+        # 确定目标型号
+        target_override = target or self._pending_target or self.DEFAULT_TARGET
+
+        # 构建 pyOCD 选项
+        options = {}
+        if speed:
+            options['frequency'] = speed
+        # 接口协议通过 dap_protocol 选项设置
+        if interface == 'jtag':
+            options['dap_protocol'] = 'jtag'
+        else:
+            options['dap_protocol'] = 'swd'
 
         try:
             session = ConnectHelper.session_with_chosen_probe(
                 blocking=False,
                 unique_id=probe_uid,
                 target_override=target_override,
+                init_board=False,
+                options=options,
             )
             if session is None:
                 with self._lock:
@@ -263,6 +283,15 @@ class PyOCDBackend(BackendInterface):
             else:
                 core = part_number
 
+        # 读取 Core ID (DPIDR)
+        core_id = ""
+        try:
+            if hasattr(target, '_core') and target._core is not None:
+                dpidr = target._core.read_dpidr()
+                core_id = f"0x{dpidr:08X}"
+        except Exception:
+            pass
+
         return TargetInfo(
             part_number=part_number,
             core=core,
@@ -270,6 +299,8 @@ class PyOCDBackend(BackendInterface):
             flash_size=flash_size,
             page_size=page_size,
             sector_size=sector_size,
+            core_id=core_id,
+            endian="Little",
         )
 
     # ── 目标管理 ──────────────────────────────────────────────

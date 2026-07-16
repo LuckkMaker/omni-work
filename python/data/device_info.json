@@ -6,7 +6,9 @@
     "core": "Cortex-M4",
     "num_cores": 1,
     "flash_size": 1024,
-    "ram_size": 192
+    "ram_size": 192,
+    "flash_base_address": "0x08000000",
+    "ram_base_address": "0x20000000"
   },
   {
     "part_number": "apm32f403xb",
@@ -15,7 +17,9 @@
     "core": "Cortex-M4",
     "num_cores": 1,
     "flash_size": 128,
-    "ram_size": 32
+    "ram_size": 32,
+    "flash_base_address": "0x08000000",
+    "ram_base_address": "0x20000000"
   },
   {
     "part_number": "g32f002x5",
@@ -24,7 +28,9 @@
     "core": "Cortex-M0+",
     "num_cores": 1,
     "flash_size": 24,
-    "ram_size": 3
+    "ram_size": 3,
+    "flash_base_address": "0x00000000",
+    "ram_base_address": "0x20000000"
   },
   {
     "part_number": "g32f031x8",
@@ -33,7 +39,9 @@
     "core": "Cortex-M0+",
     "num_cores": 1,
     "flash_size": 64,
-    "ram_size": 8
+    "ram_size": 8,
+    "flash_base_address": "0x00000000",
+    "ram_base_address": "0x20000000"
   },
   {
     "part_number": "g32m3101x8",
@@ -42,6 +50,8 @@
     "core": "Cortex-M0+",
     "num_cores": 1,
     "flash_size": 64,
-    "ram_size": 8
+    "ram_size": 8,
+    "flash_base_address": "0x00000000",
+    "ram_base_address": "0x20000000"
   }
 ]

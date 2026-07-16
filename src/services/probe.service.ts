@@ -17,10 +17,11 @@ export async function refreshProbes(): Promise<ProbeWithState[]> {
 
 /** 连接指定仿真器 */
 export async function connectProbe(
-  uid: string
+  uid: string,
+  options?: { target?: string; interface?: string; speed?: number }
 ): Promise<{ connected: boolean; uid: string; target: TargetInfo | null }> {
   const client = await api()
-  const { data } = await client.post(`/api/probes/${uid}/connect`)
+  const { data } = await client.post(`/api/probes/${uid}/connect`, options ?? {})
   return data
 }
 

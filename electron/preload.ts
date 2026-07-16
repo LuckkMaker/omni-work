@@ -6,7 +6,10 @@ const api = {
 
   /** 获取 Python 后端状态 */
   getPythonStatus: (): Promise<{ running: boolean; port: number | null }> =>
-    ipcRenderer.invoke('python:status')
+    ipcRenderer.invoke('python:status'),
+
+  /** 打开文件选择对话框，返回选中文件路径或 null */
+  openFileDialog: (): Promise<string | null> => ipcRenderer.invoke('dialog:open-file'),
 }
 
 export type ElectronAPI = typeof api

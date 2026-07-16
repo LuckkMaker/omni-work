@@ -26,6 +26,8 @@ class TargetInfo:
     flash_size: int
     page_size: int
     sector_size: int
+    core_id: str = ""
+    endian: str = "Little"
 
 
 @dataclass

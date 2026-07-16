@@ -4,6 +4,20 @@ import * as probeService from '@/services/probe.service'
 import { listTargets } from '@/services/target.service'
 import { listDevices } from '@/services/device.service'
 
+/** 调试接口类型 */
+export type DebugInterface = 'swd' | 'jtag'
+
+/** 速度选项 (Hz) */
+export const SPEED_OPTIONS = [
+  { label: '100 kHz', value: 100_000 },
+  { label: '500 kHz', value: 500_000 },
+  { label: '1 MHz', value: 1_000_000 },
+  { label: '2 MHz', value: 2_000_000 },
+  { label: '4 MHz', value: 4_000_000 },
+  { label: '8 MHz', value: 8_000_000 },
+  { label: '10 MHz', value: 10_000_000 },
+]
+
 interface ProbeStore {
   // ── 状态 ──────────────────────────────
   /** 仿真器列表（含连接状态） */
@@ -20,6 +34,14 @@ interface ProbeStore {
   connecting: boolean
   /** 错误信息 */
   error: string | null
+
+  // ── 连接前配置 ────────────────────────
+  /** 连接前选择的目标设备 part_number */
+  pendingTarget: string | null
+  /** 连接前选择的调试接口 */
+  pendingInterface: DebugInterface
+  /** 连接前选择的时钟速度 (Hz) */
+  pendingSpeed: number
 
   // ── 派生获取器 ────────────────────────
   /** 获取当前选中的仿真器 */
@@ -38,6 +60,10 @@ interface ProbeStore {
   fetchDevices: () => Promise<void>
   /** 选中仿真器 */
   selectProbe: (uid: string | null) => void
+  /** 设置连接前配置 */
+  setPendingTarget: (partNumber: string | null) => void
+  setPendingInterface: (iface: DebugInterface) => void
+  setPendingSpeed: (speed: number) => void
   /** 连接仿真器 */
   connectProbe: (uid: string) => Promise<void>
   /** 断开仿真器 */
@@ -66,6 +92,11 @@ export const useProbeStore = create<ProbeStore>((set, get) => ({
   connecting: false,
   error: null,
 
+  // 连接前默认配置
+  pendingTarget: null,
+  pendingInterface: 'swd',
+  pendingSpeed: 1_000_000,
+
   // ── 派生获取器 ────────────────────────
   getSelectedProbe: () => {
     const { probes, selectedUid } = get()
@@ -86,7 +117,12 @@ export const useProbeStore = create<ProbeStore>((set, get) => ({
     set({ loadingProbes: true, error: null })
     try {
       const probes = await probeService.listProbes()
-      set({ probes, loadingProbes: false })
+      // 未选中仿真器时，默认选中第一个
+      const currentUid = get().selectedUid
+      const autoUid = currentUid && probes.some((p) => p.uid === currentUid)
+        ? currentUid
+        : probes.length > 0 ? probes[0].uid : null
+      set({ probes, selectedUid: autoUid, loadingProbes: false })
     } catch (err) {
       set({
         loadingProbes: false,
@@ -115,7 +151,12 @@ export const useProbeStore = create<ProbeStore>((set, get) => ({
 
   selectProbe: (uid) => set({ selectedUid: uid }),
 
+  setPendingTarget: (partNumber) => set({ pendingTarget: partNumber }),
+  setPendingInterface: (iface) => set({ pendingInterface: iface }),
+  setPendingSpeed: (speed) => set({ pendingSpeed: speed }),
+
   connectProbe: async (uid) => {
+    const { pendingTarget, pendingInterface, pendingSpeed } = get()
     set({ connecting: true, error: null })
     // 先将状态标记为 connecting
     set((state) => ({
@@ -124,7 +165,11 @@ export const useProbeStore = create<ProbeStore>((set, get) => ({
       ),
     }))
     try {
-      const result = await probeService.connectProbe(uid)
+      const result = await probeService.connectProbe(uid, {
+        target: pendingTarget ?? undefined,
+        interface: pendingInterface,
+        speed: pendingSpeed,
+      })
       // 连接成功，更新仿真器状态和目标信息
       set((state) => ({
         probes: state.probes.map((p) =>
