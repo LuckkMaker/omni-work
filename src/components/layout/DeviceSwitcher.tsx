@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Usb, ChevronsUpDown, RefreshCw, Cpu, Wifi } from 'lucide-react'
+import { Usb, ChevronsUpDown, RefreshCw, Cpu, Plug, Unlink } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -87,54 +87,90 @@ export function DeviceSwitcher() {
     }
   }
 
-  // 确认按钮：连接/断开切换
+  // 确认按钮：仅保存配置并关闭弹窗（不发起连接）
   const handleConfirm = () => {
+    setConfigDialogOpen(false)
+    setErrorMsg(null)
+  }
+
+  // 侧边栏连接/断开图标按钮
+  const toggleConnection = () => {
     if (!selectedProbe) return
-    // 断开操作不需要检查目标设备
+    // 已连接 → 断开
     if (selectedProbe.state === 'connected') {
       disconnectProbe(selectedProbe.uid)
-      setConfigDialogOpen(false)
-      setErrorMsg(null)
       return
     }
     // 连接前必须选择目标设备
     if (!pendingTarget) {
       setErrorMsg('请先选择目标设备')
+      setConfigDialogOpen(true)
       return
     }
     if (selectedProbe.state === 'disconnected' || selectedProbe.state === 'error') {
       connectProbe(selectedProbe.uid)
-      setConfigDialogOpen(false)
-      setErrorMsg(null)
     }
   }
 
   return (
     <>
-      {/* 侧边栏顶部触发按钮 */}
-      <button
-        onClick={() => handleConfigOpen(true)}
-        className="flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm transition-colors hover:bg-accent"
-      >
-        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-primary/10">
-          <Usb className="size-4 text-primary" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium">
-            {selectedProbe
-              ? formatProbeName(selectedProbe.product, selectedProbe.vendor)
-              : '未选择设备'}
+      {/* 侧边栏顶部：设备配置按钮 + 连接/断开图标按钮 */}
+      <div className="flex items-center gap-1">
+        <button
+          onClick={() => handleConfigOpen(true)}
+          className="flex flex-1 min-w-0 items-center gap-2 rounded-md px-2 py-2 text-left text-sm transition-colors hover:bg-accent"
+        >
+          <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded bg-primary/10">
+            <Usb className="size-4 text-primary" />
           </div>
-          <div className="truncate text-xs text-muted-foreground">
-            {currentDeviceName
-              ? currentDeviceName
-              : selectedProbe
-                ? stateLabel[selectedProbe.state]
-                : '点击选择仿真器'}
+          <div className="min-w-0 flex-1">
+            <div className="truncate text-sm font-medium">
+              {selectedProbe
+                ? formatProbeName(selectedProbe.product, selectedProbe.vendor)
+                : '未选择设备'}
+            </div>
+            <div className="truncate text-xs text-muted-foreground">
+              {currentDeviceName
+                ? currentDeviceName
+                : selectedProbe
+                  ? stateLabel[selectedProbe.state]
+                  : '点击选择仿真器'}
+            </div>
           </div>
-        </div>
-        <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" />
-      </button>
+          <ChevronsUpDown className="size-4 shrink-0 text-muted-foreground" />
+        </button>
+
+        {/* 连接/断开图标按钮 */}
+        {selectedProbe && (
+          <button
+            onClick={toggleConnection}
+            disabled={connecting || selectedProbe.state === 'connecting'}
+            title={
+              connecting
+                ? '处理中...'
+                : isConnected
+                  ? '断开连接'
+                  : pendingTarget
+                    ? '连接目标设备'
+                    : '请先选择目标设备'
+            }
+            className={cn(
+              'flex h-9 w-9 shrink-0 items-center justify-center rounded-md transition-colors disabled:opacity-50',
+              isConnected
+                ? 'text-green-600 hover:bg-green-500/10'
+                : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+            )}
+          >
+            {connecting || selectedProbe.state === 'connecting' ? (
+              <RefreshCw className="size-4 animate-spin" />
+            ) : isConnected ? (
+              <Unlink className="size-4" />
+            ) : (
+              <Plug className="size-4" />
+            )}
+          </button>
+        )}
+      </div>
 
       {/* 配置弹窗 */}
       <Dialog open={configDialogOpen} onOpenChange={handleConfigOpen}>
@@ -215,21 +251,15 @@ export function DeviceSwitcher() {
             </div>
           </div>
 
-          {/* 确认按钮 */}
+          {/* 完成按钮：仅保存配置 */}
           {selectedProbe && (
             <div className="flex justify-end pt-2">
               <Button
                 className="gap-2"
-                variant={isConnected ? 'outline' : 'default'}
                 onClick={handleConfirm}
                 disabled={connecting || selectedProbe.state === 'connecting'}
               >
-                {connecting ? (
-                  <RefreshCw className="size-4 animate-spin" />
-                ) : (
-                  <Wifi className="size-4" />
-                )}
-                确认
+                完成
               </Button>
             </div>
           )}
