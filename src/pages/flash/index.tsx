@@ -1,14 +1,16 @@
-import { useEffect } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { Eraser, Download, ShieldCheck, RotateCcw, Loader2 } from 'lucide-react'
 import { InfoPanel } from './components/InfoPanel'
 import { FilePanel } from './components/FilePanel'
-import { FlashProgress } from './components/FlashProgress'
-import { LogConsole } from './components/LogConsole'
+import { LogConsole, ResizeHandle } from './components/LogConsole'
 import { Button } from '@/components/ui/button'
 import { useProbeStore } from '@/stores/probe.store'
 import { useFlashStore } from '@/stores/flash.store'
 import { wsClient } from '@/services/ws'
 import type { FlashProgressEvent, LogEvent, FlashResult } from '@shared/types'
+
+const MIN_LOG_HEIGHT = 100
+const DEFAULT_LOG_HEIGHT = 160
 
 export default function FlashPage() {
   const { getSelectedProbe } = useProbeStore()
@@ -23,6 +25,8 @@ export default function FlashPage() {
     onLog,
     onComplete,
   } = useFlashStore()
+
+  const [logHeight, setLogHeight] = useState(DEFAULT_LOG_HEIGHT)
 
   const probe = getSelectedProbe()
   const isConnected = probe?.state === 'connected'
@@ -45,6 +49,16 @@ export default function FlashPage() {
       unsubComplete()
     }
   }, [onProgress, onLog, onComplete])
+
+  // 拖拽调整日志高度（向上拖增大）
+  const handleResize = useCallback((deltaY: number) => {
+    setLogHeight((prev) => {
+      const next = prev - deltaY
+      // 限制：最小 100px，最大页面一半
+      const maxHalf = window.innerHeight / 2
+      return Math.max(MIN_LOG_HEIGHT, Math.min(maxHalf, next))
+    })
+  }, [])
 
   return (
     <div className="flex h-full flex-col p-4">
@@ -74,8 +88,7 @@ export default function FlashPage() {
         </div>
       </div>
 
-      {/* 进度条（仅操作中/有结果时显示） */}
-      <FlashProgress />
+      {/* 进度通过全局通知显示，不再占用页面空间 */}
 
       {/* 主体：左右两列 */}
       <div className="grid min-h-0 flex-1 grid-cols-[280px_1fr] gap-3">
@@ -90,9 +103,12 @@ export default function FlashPage() {
         </div>
       </div>
 
+      {/* 拖拽分隔条 */}
+      <ResizeHandle onResize={handleResize} expanded={logHeight > DEFAULT_LOG_HEIGHT} />
+
       {/* 底部：日志区 */}
-      <div className="mt-3 h-40 shrink-0">
-        <LogConsole />
+      <div className="shrink-0">
+        <LogConsole height={logHeight} />
       </div>
     </div>
   )

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useCallback } from 'react'
 import { Terminal } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { useFlashStore } from '@/stores/flash.store'
@@ -26,7 +26,12 @@ function formatTime(ts: string): string {
   }
 }
 
-export function LogConsole() {
+interface LogConsoleProps {
+  /** 日志区高度 (px) */
+  height: number
+}
+
+export function LogConsole({ height }: LogConsoleProps) {
   const { logs } = useFlashStore()
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -38,11 +43,11 @@ export function LogConsole() {
   }, [logs])
 
   return (
-    <Card className="flex flex-col">
+    <Card className="flex flex-col" style={{ height }}>
       <CardHeader className="shrink-0">
         <div className="flex items-center gap-2">
-          <Terminal className="size-5 text-muted-foreground" />
-          <CardTitle>日志</CardTitle>
+          <Terminal className="size-4 text-muted-foreground" />
+          <CardTitle className="text-sm">日志</CardTitle>
           {logs.length > 0 && (
             <span className="text-xs text-muted-foreground">({logs.length})</span>
           )}
@@ -71,5 +76,59 @@ export function LogConsole() {
         </div>
       </CardContent>
     </Card>
+  )
+}
+
+/** 拖拽分隔条组件 */
+export function ResizeHandle({
+  onResize,
+  expanded,
+}: {
+  onResize: (deltaY: number) => void
+  expanded: boolean
+}) {
+  const dragging = useRef(false)
+  const lastY = useRef(0)
+
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    dragging.current = true
+    lastY.current = e.clientY
+    document.body.style.cursor = 'row-resize'
+    document.body.style.userSelect = 'none'
+  }, [])
+
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!dragging.current) return
+      const deltaY = e.clientY - lastY.current
+      lastY.current = e.clientY
+      onResize(deltaY)
+    }
+    const handleMouseUp = () => {
+      if (dragging.current) {
+        dragging.current = false
+        document.body.style.cursor = ''
+        document.body.style.userSelect = ''
+      }
+    }
+    window.addEventListener('mousemove', handleMouseMove)
+    window.addEventListener('mouseup', handleMouseUp)
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove)
+      window.removeEventListener('mouseup', handleMouseUp)
+    }
+  }, [onResize])
+
+  return (
+    <div
+      onMouseDown={handleMouseDown}
+      className="group flex h-1.5 cursor-row-resize items-center justify-center transition-colors hover:bg-primary/20"
+    >
+      <div className={cn(
+        'h-0.5 w-8 rounded-full transition-colors',
+        expanded ? 'bg-primary/40' : 'bg-border group-hover:bg-primary/40'
+      )} />
+    </div>
   )
 }

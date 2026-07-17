@@ -8,6 +8,7 @@ import { useProbeWs } from '@/hooks/useProbeWs'
 import { useProbeStore } from '@/stores/probe.store'
 import { resetApiClient } from '@/services/api'
 import { DeviceSwitcher } from '@/components/layout/DeviceSwitcher'
+import { NotificationContainer } from '@/components/NotificationContainer'
 
 const navItems = [
   { to: '/flash', label: 'Flash', icon: Zap },
@@ -87,6 +88,9 @@ export default function MainLayout() {
       <main className="flex-1 overflow-auto">
         <Outlet />
       </main>
+
+      {/* 全局通知容器 */}
+      <NotificationContainer />
     </div>
   )
 }
