@@ -19,10 +19,10 @@ export function TabBar() {
           key={tab.id}
           onClick={() => selectTab(tab.id)}
           className={cn(
-            'group flex items-center gap-1.5 px-2.5 py-1 rounded-t-md cursor-pointer text-xs whitespace-nowrap transition-colors',
+            'group flex items-center gap-1.5 px-2.5 py-1 rounded-t-md cursor-pointer text-xs whitespace-nowrap transition-colors border-b-2',
             activeTabId === tab.id
-              ? 'bg-background text-foreground border border-b-border border-border/50 -mb-px'
-              : 'text-muted-foreground hover:text-foreground hover:bg-muted/30'
+              ? 'bg-primary/10 text-primary border-primary font-medium'
+              : 'text-muted-foreground border-transparent hover:text-foreground hover:bg-muted/30'
           )}
         >
           {tab.type === 'device' ? (

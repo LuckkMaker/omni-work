@@ -3,6 +3,7 @@ import axios, { AxiosInstance } from 'axios'
 /**
  * HTTP 客户端，用于与 Python FastAPI 后端通信。
  * 端口由 Electron 主进程动态分配，通过 IPC 获取。
+ * 默认超时 30s，Flash 长操作在 service 层按请求覆盖为 0（无超时）。
  */
 let baseURL: string | null = null
 let client: AxiosInstance | null = null
@@ -25,7 +26,7 @@ export async function api(): Promise<AxiosInstance> {
   const url = await getBaseURL()
   client = axios.create({
     baseURL: url,
-    timeout: 30000,
+    timeout: 0,
     headers: { 'Content-Type': 'application/json' }
   })
   return client

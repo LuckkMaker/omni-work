@@ -71,7 +71,7 @@ export function InfoPanel() {
 
   return (
     <div className="h-full overflow-y-auto">
-      <CollapsibleSection icon={<Usb className="size-3" />} title="接口信息" defaultOpen>
+      <CollapsibleSection icon={<Usb className="size-3" />} title="接口信息">
         <Row label="接口" value={pendingInterface.toUpperCase()} />
         <Row label="速度" value={speedLabel} />
         <Row label="状态" value={isConnected ? '已连接' : '未连接'} />
@@ -86,7 +86,7 @@ export function InfoPanel() {
         <Row label="RAM" value={deviceInfo ? `${formatKb(deviceInfo.ram_size)} (${deviceInfo.ram_base_address})` : null} />
       </CollapsibleSection>
 
-      <CollapsibleSection icon={<MemoryStick className="size-3" />} title="Flash 信息" defaultOpen>
+      <CollapsibleSection icon={<MemoryStick className="size-3" />} title="Flash 信息">
         <Row label="Bank" value="Bank 1" />
         <Row label="基地址" value={target ? formatHex(target.flash_start) : (deviceInfo?.flash_base_address ?? null)} />
         <Row label="大小" value={target ? formatSize(target.flash_size) : (deviceInfo ? formatKb(deviceInfo.flash_size) : null)} />

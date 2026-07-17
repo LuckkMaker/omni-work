@@ -793,7 +793,7 @@ class PyOCDBackend(BackendInterface):
             total_bytes = 0
             blank_bytes = 0
             first_nonblank_addr = None
-            chunk_size = 8192
+            chunk_size = 65536
 
             # 计算总大小用于进度
             check_total = 0
@@ -905,7 +905,7 @@ class PyOCDBackend(BackendInterface):
             # halt 目标确保 flash 读取稳定
             session.target.halt()
 
-            chunk_size = 8192
+            chunk_size = 65536
             total_read = 0
             all_data = bytearray()
 
