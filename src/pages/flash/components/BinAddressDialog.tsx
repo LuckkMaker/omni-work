@@ -8,37 +8,41 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { useFlashStore } from '@/stores/flash.store'
+import { useProbeStore } from '@/stores/probe.store'
 
 export function BinAddressDialog() {
-  const { showBinAddrDialog, binBaseAddress, setShowBinAddrDialog, setBinBaseAddress, loadBinWithAddress, clearFile } = useFlashStore()
+  const { showBinAddrDialog, confirmBinAddress, setShowBinAddrDialog } = useFlashStore()
+  const { getDeviceInfo, pendingTarget, connectedTarget } = useProbeStore()
+
   const [inputValue, setInputValue] = useState('')
   const [error, setError] = useState('')
 
-  // 同步外部状态到输入框
+  const targetKey = connectedTarget || pendingTarget || ''
+  const devInfo = getDeviceInfo(targetKey)
+  const defaultAddr = devInfo?.flash_base_address
+    ? parseInt(devInfo.flash_base_address, 16)
+    : 0x08000000
+
   useEffect(() => {
-    if (showBinAddrDialog && binBaseAddress != null) {
-      setInputValue('0x' + binBaseAddress.toString(16).toUpperCase().padStart(8, '0'))
+    if (showBinAddrDialog) {
+      setInputValue('0x' + defaultAddr.toString(16).toUpperCase().padStart(8, '0'))
       setError('')
     }
-  }, [showBinAddrDialog, binBaseAddress])
+  }, [showBinAddrDialog, defaultAddr])
 
   const handleConfirm = () => {
     const trimmed = inputValue.trim()
-    // 支持 0x 前缀的十六进制或纯十进制
     const addr = parseInt(trimmed, trimmed.toLowerCase().startsWith('0x') ? 16 : 10)
     if (isNaN(addr) || addr < 0) {
       setError('请输入有效的地址（如 0x08000000）')
       return
     }
-    // 直接传参，避免 store 状态同步时序问题
-    loadBinWithAddress(addr)
+    confirmBinAddress(addr)
   }
 
   const handleCancel = () => {
     setShowBinAddrDialog(false)
-    clearFile()
   }
 
   return (
@@ -51,14 +55,14 @@ export function BinAddressDialog() {
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-2">
-          <Input
+          <input
             value={inputValue}
             onChange={(e) => { setInputValue(e.target.value); setError('') }}
             onKeyDown={(e) => { if (e.key === 'Enter') handleConfirm() }}
             placeholder="0x08000000"
             spellCheck={false}
             autoComplete="off"
-            className="font-mono"
+            className="w-full px-3 py-2 font-mono text-sm border border-border rounded-md bg-transparent outline-none focus:border-primary"
             autoFocus
           />
           {error && <p className="text-sm text-destructive">{error}</p>}

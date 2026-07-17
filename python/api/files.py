@@ -13,6 +13,11 @@ class ParseRequest(BaseModel):
     base_address: int | None = None
 
 
+class SaveRequest(BaseModel):
+    file_path: str
+    data: str  # base64 encoded
+
+
 @router.post("/parse")
 async def parse_file(req: ParseRequest):
     """解析固件文件，返回格式/大小/段信息"""
@@ -62,6 +67,18 @@ async def read_file(req: ParseRequest):
         return read_elf(req.file_path)
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported file format: {ext}")
+
+
+@router.post("/save")
+async def save_file(req: SaveRequest):
+    """将 base64 编码的数据保存到文件"""
+    try:
+        data = base64.b64decode(req.data)
+        with open(req.file_path, "wb") as f:
+            f.write(data)
+        return {"success": True, "size": len(data)}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 def read_hex(file_path: str):

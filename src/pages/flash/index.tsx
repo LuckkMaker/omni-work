@@ -23,6 +23,7 @@ import { FilePanel } from './components/FilePanel'
 import { BinAddressDialog } from './components/BinAddressDialog'
 import { EraseSectorsDialog } from './components/EraseSectorsDialog'
 import { ReadBackDialog } from './components/ReadBackDialog'
+import { CompareDialog } from './components/CompareDialog'
 import { LogConsole, ResizeHandle } from './components/LogConsole'
 import { useFlashStore } from '@/stores/flash.store'
 import { useProbeStore } from '@/stores/probe.store'
@@ -30,8 +31,8 @@ import { useProbeStore } from '@/stores/probe.store'
 export default function FlashPage() {
   const [logHeight, setLogHeight] = useState(180)
 
-  const { busy,
-    filePath,
+  const {
+    busy,
     doCheckBlank,
     doEraseChip,
     doProgram,
@@ -47,6 +48,11 @@ export default function FlashPage() {
     return uid ? s.probes.find((p) => p.uid === uid) ?? null : null
   })
   const isConnected = selectedProbe?.state === 'connected'
+
+  // 获取当前活跃 tab 判断 Program/Verify 是否可用
+  const activeTab = useFlashStore((s) => s.tabs.find((t) => t.id === s.activeTabId) ?? null)
+  const canProgram = activeTab?.type === 'file' && !!activeTab.filePath
+  const canReadBack = !!activeTab // 任何 tab 都可以 read back
 
   const handleResize = (delta: number) => {
     setLogHeight((h) => Math.max(100, Math.min(window.innerHeight / 2, h - delta)))
@@ -102,7 +108,7 @@ export default function FlashPage() {
             <Button
               variant="ghost"
               size="sm"
-              disabled={!isConnected || busy || !filePath}
+              disabled={!isConnected || busy || !canProgram}
               className="h-8 gap-1"
             >
               <Upload className="size-3.5" />
@@ -127,7 +133,7 @@ export default function FlashPage() {
         <Button
           variant="ghost"
           size="sm"
-          disabled={!isConnected || busy || !filePath}
+          disabled={!isConnected || busy || !canProgram}
           onClick={doVerify}
           className="h-8 gap-1.5"
         >
@@ -143,7 +149,7 @@ export default function FlashPage() {
             <Button
               variant="ghost"
               size="sm"
-              disabled={!isConnected || busy}
+              disabled={!isConnected || busy || !canReadBack}
               className="h-8 gap-1"
             >
               <Download className="size-3.5" />
@@ -194,7 +200,7 @@ export default function FlashPage() {
         <div className="w-[280px] shrink-0">
           <InfoPanel />
         </div>
-        {/* 右列：文件面板 */}
+        {/* 右列：文件面板（多 Tab） */}
         <div className="flex-1 min-w-0">
           <FilePanel />
         </div>
@@ -212,6 +218,7 @@ export default function FlashPage() {
       <BinAddressDialog />
       <EraseSectorsDialog />
       <ReadBackDialog />
+      <CompareDialog />
     </div>
   )
 }

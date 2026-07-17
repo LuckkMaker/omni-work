@@ -823,13 +823,15 @@ class PyOCDBackend(BackendInterface):
         size: int = 0,
         output_path: str = "",
     ) -> dict:
-        """读取 Flash 内容并保存到文件
+        """读取 Flash 内容，返回 base64 编码数据
 
         Args:
             read_type: "chip" 遍历所有 flash region，"range" 读取指定范围
             address: 起始地址（range 模式）
             size: 读取大小（range 模式）
-            output_path: 保存文件路径
+            output_path: 可选，如果提供则同时保存到文件
+        Returns:
+            dict: success, base64_data, base_address, bytes_read, duration_ms
         """
         session = self._get_session(probe_uid)
         if not session:
@@ -837,6 +839,7 @@ class PyOCDBackend(BackendInterface):
 
         start_time = time.time()
         try:
+            import base64
             from pyocd.core.memory_map import MemoryType
 
             flash_regions = [r for r in session.target.memory_map if r.type == MemoryType.FLASH]
@@ -847,36 +850,26 @@ class PyOCDBackend(BackendInterface):
 
             chunk_size = 4096
             total_read = 0
+            all_data = bytearray()
 
-            # 计算总大小用于进度
+            # 确定基地址和总大小
             if read_type == "chip":
+                base_addr = flash_regions[0].start
                 total_size = sum(r.length for r in flash_regions)
             else:
+                base_addr = address
                 total_size = size
 
             event_manager.emit("flash.progress", {
                 "phase": "program", "current": 0, "total": total_size, "percent": 0,
             })
 
-            with open(output_path, "wb") as f:
-                if read_type == "chip":
-                    for region in flash_regions:
-                        for offset in range(0, region.length, chunk_size):
-                            read_len = min(chunk_size, region.length - offset)
-                            data = session.target.read_memory_block8(region.start + offset, read_len)
-                            f.write(bytes(data))
-                            total_read += read_len
-                            event_manager.emit("flash.progress", {
-                                "phase": "program",
-                                "current": total_read,
-                                "total": total_size,
-                                "percent": round(total_read / total_size * 100, 2),
-                            })
-                else:
-                    for offset in range(0, size, chunk_size):
-                        read_len = min(chunk_size, size - offset)
-                        data = session.target.read_memory_block8(address + offset, read_len)
-                        f.write(bytes(data))
+            if read_type == "chip":
+                for region in flash_regions:
+                    for offset in range(0, region.length, chunk_size):
+                        read_len = min(chunk_size, region.length - offset)
+                        data = session.target.read_memory_block8(region.start + offset, read_len)
+                        all_data.extend(data)
                         total_read += read_len
                         event_manager.emit("flash.progress", {
                             "phase": "program",
@@ -884,17 +877,35 @@ class PyOCDBackend(BackendInterface):
                             "total": total_size,
                             "percent": round(total_read / total_size * 100, 2),
                         })
+            else:
+                for offset in range(0, size, chunk_size):
+                    read_len = min(chunk_size, size - offset)
+                    data = session.target.read_memory_block8(address + offset, read_len)
+                    all_data.extend(data)
+                    total_read += read_len
+                    event_manager.emit("flash.progress", {
+                        "phase": "program",
+                        "current": total_read,
+                        "total": total_size,
+                        "percent": round(total_read / total_size * 100, 2),
+                    })
 
             event_manager.emit("flash.progress", {
                 "phase": "program", "current": total_read, "total": total_read, "percent": 100,
             })
 
+            # 可选：同时保存到文件
+            if output_path:
+                with open(output_path, "wb") as f:
+                    f.write(bytes(all_data))
+
             duration = int((time.time() - start_time) * 1000)
-            event_manager.log("info", f"Read back {total_read} bytes to {os.path.basename(output_path)} ({duration}ms)")
+            event_manager.log("info", f"Read back {total_read} bytes from 0x{base_addr:08X} ({duration}ms)")
             return {
                 "success": True,
+                "base64_data": base64.b64encode(bytes(all_data)).decode("ascii"),
+                "base_address": base_addr,
                 "bytes_read": total_read,
-                "output_path": output_path,
                 "duration_ms": duration,
             }
         except Exception as e:

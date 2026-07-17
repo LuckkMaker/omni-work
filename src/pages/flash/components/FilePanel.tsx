@@ -1,8 +1,8 @@
-import { useCallback, useState } from 'react'
-import { Upload, FileText, X, Loader2 } from 'lucide-react'
-import { Card, CardContent } from '@/components/ui/card'
-import { Label } from '@/components/ui/label'
+import { useState } from 'react'
+import { Loader2, Save, GitCompare, X, Cpu, FileText } from 'lucide-react'
+import { Button } from '@/components/ui/button'
 import { HexViewer, HexToolbar, type ByteWidth } from './HexViewer'
+import { TabBar } from './TabBar'
 import { useFlashStore } from '@/stores/flash.store'
 import { cn } from '@/lib/utils'
 
@@ -15,162 +15,120 @@ function formatHex(addr: number): string {
   return `0x${addr.toString(16).toUpperCase().padStart(8, '0')}`
 }
 
-function getFileName(path: string): string {
-  const parts = path.replace(/\\/g, '/').split('/')
-  return parts[parts.length - 1] || path
-}
-
 export function FilePanel() {
   const {
-    filePath,
-    fileInfo,
-    fileData,
-    loadingFile,
-    loadFile,
-    clearFile,
+    tabs,
+    activeTabId,
     eraseBefore,
     verifyAfter,
     resetAfter,
     setOption,
+    saveTabAs,
+    setShowCompareDialog,
+    clearDiff,
   } = useFlashStore()
 
-  const [dragOver, setDragOver] = useState(false)
   const [byteWidth, setByteWidth] = useState<ByteWidth>(1)
 
-  const handleDrop = useCallback(async (e: React.DragEvent) => {
-    e.preventDefault()
-    setDragOver(false)
-    const files = e.dataTransfer.files
-    if (files.length > 0) {
-      const file = files[0]
-      const filePath = window.electron?.getPathForFile?.(file)
-      if (!filePath) {
-        console.error('[FilePanel] Failed to get file path from drop event')
-        return
-      }
-
-      const isBin = filePath.toLowerCase().endsWith('.bin')
-      if (isBin) {
-        const { useProbeStore } = await import('@/stores/probe.store')
-        const { getDeviceInfo, pendingTarget } = useProbeStore.getState()
-        const devInfo = getDeviceInfo(pendingTarget || '')
-        const defaultAddr = devInfo?.flash_base_address
-          ? parseInt(devInfo.flash_base_address, 16)
-          : 0x08000000
-        useFlashStore.setState({
-          filePath,
-          binBaseAddress: defaultAddr,
-          showBinAddrDialog: true,
-          fileInfo: null,
-          fileData: null,
-        })
-        return
-      }
-      const { parseFile, readFile } = await import('@/services/file.service')
-      useFlashStore.setState({ loadingFile: true, filePath, fileInfo: null, fileData: null })
-      try {
-        const [info, data] = await Promise.all([parseFile(filePath), readFile(filePath)])
-        useFlashStore.setState({ fileInfo: info, fileData: data, loadingFile: false })
-      } catch (err) {
-        useFlashStore.setState({ loadingFile: false })
-        console.error('[FilePanel] load failed:', err)
-      }
-    }
-  }, [])
+  const activeTab = tabs.find((t) => t.id === activeTabId) ?? null
 
   return (
-    <div className="flex h-full flex-col gap-2">
-      {/* 文件信息 + 烧录选项（合并为一个紧凑 Card） */}
-      <Card>
-        <CardContent className="p-3 space-y-2">
-          {filePath ? (
-            <>
-              {/* 第一行：文件名 + 清除按钮 */}
-              <div className="flex items-center gap-2">
-                <FileText className="size-3.5 shrink-0 text-primary" />
-                <span
-                  className="truncate text-sm font-medium flex-1"
-                  title={filePath}
-                >
-                  {getFileName(filePath)}
-                </span>
-                {fileInfo && (
-                  <span className="text-[11px] text-muted-foreground shrink-0">
-                    <span className="uppercase font-medium">{fileInfo.format}</span>
-                    <span className="mx-1">·</span>
-                    {formatSize(fileInfo.size)}
-                    {fileInfo.entry != null && <>
-                      <span className="mx-1">·</span>
-                      入口 {formatHex(fileInfo.entry)}
-                    </>}
-                  </span>
-                )}
-                <button onClick={clearFile} disabled={loadingFile} className="text-muted-foreground hover:text-foreground shrink-0">
-                  <X className="size-3.5" />
-                </button>
-              </div>
-              {/* 第二行：烧录选项 */}
-              <div className="flex items-center gap-3 text-xs">
-                <label className="flex items-center gap-1 cursor-pointer">
-                  <input type="checkbox" checked={eraseBefore} onChange={(e) => setOption('eraseBefore', e.target.checked)} className="size-3 rounded border-border accent-primary" />
-                  <Label className="cursor-pointer">烧录前擦除</Label>
-                </label>
-                <label className="flex items-center gap-1 cursor-pointer">
-                  <input type="checkbox" checked={verifyAfter} onChange={(e) => setOption('verifyAfter', e.target.checked)} className="size-3 rounded border-border accent-primary" />
-                  <Label className="cursor-pointer">烧录后校验</Label>
-                </label>
-                <label className="flex items-center gap-1 cursor-pointer">
-                  <input type="checkbox" checked={resetAfter} onChange={(e) => setOption('resetAfter', e.target.checked)} className="size-3 rounded border-border accent-primary" />
-                  <Label className="cursor-pointer">烧录后复位</Label>
-                </label>
-              </div>
-              {loadingFile && (
-                <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
-                  <Loader2 className="size-3 animate-spin" />
-                  加载中...
-                </div>
-              )}
-            </>
-          ) : (
-            <div
-              onClick={() => loadFile()}
-              onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
-              onDragLeave={() => setDragOver(false)}
-              onDrop={handleDrop}
-              className={cn(
-                'flex cursor-pointer flex-col items-center justify-center rounded-lg border-2 border-dashed py-6 transition-colors',
-                dragOver ? 'border-primary bg-primary/5' : 'border-muted-foreground/25 hover:border-primary/50 hover:bg-muted/30'
-              )}
-            >
-              <Upload className="mb-1.5 size-5 text-muted-foreground" />
-              <p className="text-sm">拖拽文件到此处或点击选择</p>
-              <p className="mt-0.5 text-xs text-muted-foreground/60">支持 .bin / .hex / .elf / .axf</p>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+    <div className="flex h-full flex-col">
+      {/* Tab 栏 */}
+      <TabBar />
 
-      {/* Hex 预览（工具栏 + 内容，最大化预览区域） */}
-      {fileData && fileData.data && (
-        <Card className="flex flex-1 flex-col min-h-0">
-          {/* 工具栏 */}
-          <div className="shrink-0 border-b border-border px-2 py-1.5 relative">
+      {/* Tab 内容区 */}
+      {activeTab && activeTab.data ? (
+        <>
+          {/* 工具栏：字节宽度 + 跳转 + 烧录选项 + Save As + Compare */}
+          <div className="shrink-0 flex flex-wrap items-center gap-2 border-b border-border px-2 py-1.5 relative">
             <HexToolbar
               byteWidth={byteWidth}
               onByteWidthChange={setByteWidth}
-              baseAddress={fileData.base_address}
-              dataLength={fileData.size}
+              baseAddress={activeTab.baseAddress}
+              dataLength={activeTab.size}
+            />
+
+            {/* 分隔线 */}
+            <div className="h-5 w-px bg-border mx-0.5" />
+
+            {/* 烧录选项 */}
+            <div className="flex items-center gap-2 text-xs">
+              <label className="flex items-center gap-1 cursor-pointer">
+                <input type="checkbox" checked={eraseBefore} onChange={(e) => setOption('eraseBefore', e.target.checked)} className="size-3 rounded border-border accent-primary" />
+                <span>擦除</span>
+              </label>
+              <label className="flex items-center gap-1 cursor-pointer">
+                <input type="checkbox" checked={verifyAfter} onChange={(e) => setOption('verifyAfter', e.target.checked)} className="size-3 rounded border-border accent-primary" />
+                <span>校验</span>
+              </label>
+              <label className="flex items-center gap-1 cursor-pointer">
+                <input type="checkbox" checked={resetAfter} onChange={(e) => setOption('resetAfter', e.target.checked)} className="size-3 rounded border-border accent-primary" />
+                <span>复位</span>
+              </label>
+            </div>
+
+            <div className="h-5 w-px bg-border mx-0.5" />
+
+            {/* Save As + Compare */}
+            <Button variant="ghost" size="sm" onClick={() => saveTabAs(activeTab.id)} className="h-6 gap-1 px-1.5 text-xs">
+              <Save className="size-3" />
+              Save As
+            </Button>
+            {activeTab.diffData ? (
+              <Button variant="ghost" size="sm" onClick={clearDiff} className="h-6 gap-1 px-1.5 text-xs text-red-500">
+                <X className="size-3" />
+                Clear Diff
+              </Button>
+            ) : (
+              <Button variant="ghost" size="sm" onClick={() => setShowCompareDialog(true)} className="h-6 gap-1 px-1.5 text-xs">
+                <GitCompare className="size-3" />
+                Compare
+              </Button>
+            )}
+
+            {/* 右侧：文件信息 */}
+            <div className="ml-auto text-[11px] text-muted-foreground">
+              {activeTab.format && <span className="uppercase font-medium">{activeTab.format}</span>}
+              <span className="mx-1">·</span>
+              {formatSize(activeTab.size)}
+              <span className="mx-1">·</span>
+              {formatHex(activeTab.baseAddress)}
+            </div>
+          </div>
+
+          {/* Hex 内容 */}
+          <div className="flex-1 min-h-0 overflow-hidden">
+            <HexViewer
+              base64Data={activeTab.data}
+              baseAddress={activeTab.baseAddress}
+              byteWidth={byteWidth}
+              diffBase64={activeTab.diffData}
+              diffBaseAddress={activeTab.diffBaseAddress}
             />
           </div>
-          {/* Hex 内容 */}
-          <CardContent className="flex-1 min-h-0 overflow-hidden p-0">
-            <HexViewer
-              base64Data={fileData.data}
-              baseAddress={fileData.base_address}
-              byteWidth={byteWidth}
-            />
-          </CardContent>
-        </Card>
+        </>
+      ) : activeTab && activeTab.loading ? (
+        <div className="flex flex-1 items-center justify-center text-muted-foreground">
+          <Loader2 className="mr-2 size-4 animate-spin" />
+          加载中...
+        </div>
+      ) : (
+        <div className="flex flex-1 flex-col items-center justify-center text-muted-foreground gap-2">
+          {activeTab?.type === 'device' ? (
+            <>
+              <Cpu className="size-8 opacity-40" />
+              <p className="text-sm">Device Memory</p>
+              <p className="text-xs">点击 Read Back 读取设备 Flash 内容</p>
+            </>
+          ) : (
+            <>
+              <FileText className="size-8 opacity-40" />
+              <p className="text-sm">点击 + 打开文件</p>
+              <p className="text-xs">支持 .bin / .hex / .elf / .axf</p>
+            </>
+          )}
+        </div>
       )}
     </div>
   )

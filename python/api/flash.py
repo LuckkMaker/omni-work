@@ -39,7 +39,7 @@ class ReadBackRequest(BaseModel):
     type: str = "chip"  # "chip" | "range"
     address: int = 0
     size: int = 0
-    output_path: str
+    output_path: str = ""
 
 
 @router.post("/probes/{uid}/flash/erase")

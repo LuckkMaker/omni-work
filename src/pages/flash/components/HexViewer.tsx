@@ -10,6 +10,9 @@ interface HexViewerProps {
   base64Data: string
   baseAddress: number
   byteWidth: ByteWidth
+  /** 可选：比较参考数据（base64），存在时高亮差异字节 */
+  diffBase64?: string | null
+  diffBaseAddress?: number
 }
 
 function decodeBase64(base64: string): Uint8Array {
@@ -133,7 +136,7 @@ export function HexToolbar({
   )
 }
 
-export function HexViewer({ base64Data, baseAddress, byteWidth }: HexViewerProps) {
+export function HexViewer({ base64Data, baseAddress, byteWidth, diffBase64, diffBaseAddress }: HexViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const rowRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   const [highlightOffset, setHighlightOffset] = useState<number | null>(null)
@@ -141,51 +144,56 @@ export function HexViewer({ base64Data, baseAddress, byteWidth }: HexViewerProps
   const bytesPerRow = 16 / byteWidth
 
   const data = useMemo(() => decodeBase64(base64Data), [base64Data])
+  const diffData = useMemo(() => diffBase64 ? decodeBase64(diffBase64) : null, [diffBase64])
+
+  // 计算每个字节是否与参考数据不同
+  const isByteDiff = useCallback((offset: number): boolean => {
+    if (!diffData) return false
+    // 计算参考数据中对应的偏移
+    const refOffset = (baseAddress + offset) - (diffBaseAddress ?? baseAddress)
+    if (refOffset < 0 || refOffset >= diffData.length) return offset < data.length
+    if (offset >= data.length) return true
+    return data[offset] !== diffData[refOffset]
+  }, [diffData, baseAddress, diffBaseAddress, data])
 
   const rows = useMemo(() => {
-    const result: { offset: number; addr: string; hex: string; ascii: string }[] = []
+    const result: { offset: number; addr: string; bytes: { hex: string; ascii: string; diff: boolean }[] }[] = []
     for (let offset = 0; offset < data.length; offset += bytesPerRow) {
-      let hexPart = ''
-      let asciiPart = ''
+      const byteCells: { hex: string; ascii: string; diff: boolean }[] = []
       for (let i = 0; i < bytesPerRow; i++) {
         const pos = offset + i * byteWidth
         if (pos + byteWidth <= data.length) {
+          let hex: string
+          let ascii: string
           if (byteWidth === 1) {
-            hexPart += byteToHex(data[pos])
-            asciiPart += byteToAscii(data[pos])
+            hex = byteToHex(data[pos])
+            ascii = byteToAscii(data[pos])
           } else if (byteWidth === 2) {
-            hexPart += wordToHex(readLeU16(data, pos), 2)
-            asciiPart += byteToAscii(data[pos]) + byteToAscii(data[pos + 1])
+            hex = wordToHex(readLeU16(data, pos), 2)
+            ascii = byteToAscii(data[pos]) + byteToAscii(data[pos + 1])
           } else {
-            hexPart += wordToHex(readLeU32(data, pos), 4)
-            asciiPart += byteToAscii(data[pos]) + byteToAscii(data[pos + 1]) + byteToAscii(data[pos + 2]) + byteToAscii(data[pos + 3])
+            hex = wordToHex(readLeU32(data, pos), 4)
+            ascii = byteToAscii(data[pos]) + byteToAscii(data[pos + 1]) + byteToAscii(data[pos + 2]) + byteToAscii(data[pos + 3])
           }
+          // 检查这个 word 内是否有任何字节不同
+          let diff = false
+          for (let j = 0; j < byteWidth; j++) {
+            if (isByteDiff(pos + j)) { diff = true; break }
+          }
+          byteCells.push({ hex, ascii, diff })
         } else {
-          if (byteWidth === 1) {
-            hexPart += '   '
-            asciiPart += ' '
-          } else if (byteWidth === 2) {
-            hexPart += pos < data.length ? byteToHex(data[pos]) + '   ' : '     '
-            asciiPart += pos < data.length ? byteToAscii(data[pos]) : ' '
-          } else {
-            hexPart += '         '
-            asciiPart += '    '
-          }
+          const hexLen = byteWidth === 1 ? 2 : byteWidth === 2 ? 4 : 8
+          byteCells.push({ hex: ' '.repeat(hexLen), ascii: ' '.repeat(byteWidth), diff: false })
         }
-        hexPart += ' '
-        if (byteWidth === 1 && i === 7) hexPart += ' '
-        if (byteWidth === 2 && i === 3) hexPart += ' '
-        if (byteWidth === 4 && i === 1) hexPart += ' '
       }
       result.push({
         offset,
         addr: formatHexAddr(baseAddress + offset),
-        hex: hexPart.trimEnd(),
-        ascii: asciiPart,
+        bytes: byteCells,
       })
     }
     return result
-  }, [data, baseAddress, byteWidth, bytesPerRow])
+  }, [data, baseAddress, byteWidth, bytesPerRow, isByteDiff])
 
   useEffect(() => {
     if (containerRef.current) {
@@ -230,8 +238,29 @@ export function HexViewer({ base64Data, baseAddress, byteWidth }: HexViewerProps
             )}
           >
             <span className="shrink-0 text-muted-foreground">{row.addr}</span>
-            <span className="shrink-0 text-foreground/80">{row.hex}</span>
-            <span className="text-muted-foreground">{row.ascii}</span>
+            {/* Hex bytes */}
+            <span className="shrink-0 flex">
+              {row.bytes.map((cell, i) => (
+                <span key={i} className="flex">
+                  <span className={cn(cell.diff && 'bg-red-500/30 text-red-600 dark:text-red-400 rounded px-0.5')}>
+                    {cell.hex}
+                  </span>
+                  {/* 每个字节间加空格，中间加额外空格 */}
+                  <span>{' '}</span>
+                  {byteWidth === 1 && i === 7 && <span>{' '}</span>}
+                  {byteWidth === 2 && i === 3 && <span>{' '}</span>}
+                  {byteWidth === 4 && i === 1 && <span>{' '}</span>}
+                </span>
+              ))}
+            </span>
+            {/* ASCII */}
+            <span className="text-muted-foreground flex">
+              {row.bytes.map((cell, i) => (
+                <span key={i} className={cn(cell.diff && 'bg-red-500/30 text-red-600 dark:text-red-400 rounded px-0.5')}>
+                  {cell.ascii}
+                </span>
+              ))}
+            </span>
           </div>
         ))
       )}

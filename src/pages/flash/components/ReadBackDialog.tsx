@@ -20,7 +20,6 @@ export function ReadBackDialog() {
   const [mode, setMode] = useState<ReadMode>('chip')
   const [startAddr, setStartAddr] = useState('')
   const [size, setSize] = useState('')
-  const [savePath, setSavePath] = useState('')
   const [error, setError] = useState('')
 
   const targetKey = connectedTarget || pendingTarget || ''
@@ -33,16 +32,9 @@ export function ReadBackDialog() {
       setMode('chip')
       setStartAddr(flashBase)
       setSize(`${flashSize}`)
-      setSavePath('')
       setError('')
     }
   }, [showReadBackDialog, flashBase, flashSize])
-
-  const handleBrowse = async () => {
-    const defaultName = `flash_dump_${Date.now()}.bin`
-    const path = await window.electron?.saveFileDialog?.(defaultName)
-    if (path) setSavePath(path)
-  }
 
   const parseHex = (s: string): number | null => {
     const t = s.trim().toLowerCase()
@@ -61,10 +53,6 @@ export function ReadBackDialog() {
   }
 
   const handleConfirm = () => {
-    if (!savePath) {
-      setError('请选择保存文件路径')
-      return
-    }
     if (mode === 'range') {
       const start = parseHex(startAddr)
       const sz = parseSize(size)
@@ -72,9 +60,9 @@ export function ReadBackDialog() {
         setError('请输入有效的地址和大小')
         return
       }
-      doReadBack('range', savePath, start, sz)
+      doReadBack('range', start, sz)
     } else {
-      doReadBack('chip', savePath)
+      doReadBack('chip')
     }
   }
 
@@ -83,7 +71,7 @@ export function ReadBackDialog() {
       <DialogContent className="max-w-sm">
         <DialogHeader>
           <DialogTitle>读回 Flash</DialogTitle>
-          <DialogDescription>将 Flash 内容读取并保存到文件</DialogDescription>
+          <DialogDescription>读取设备 Flash 内容到当前 tab</DialogDescription>
         </DialogHeader>
         <div className="space-y-3">
           {/* 模式选择 */}
@@ -127,18 +115,6 @@ export function ReadBackDialog() {
               </div>
             </div>
           )}
-
-          {/* 保存路径 */}
-          <div className="flex items-center gap-2">
-            <label className="text-sm w-16 shrink-0">保存到</label>
-            <input
-              value={savePath}
-              readOnly
-              placeholder="点击右侧选择..."
-              className="flex-1 px-2 py-1 text-sm bg-muted/30 border border-border rounded-md outline-none truncate"
-            />
-            <Button variant="outline" size="sm" onClick={handleBrowse}>浏览</Button>
-          </div>
 
           {error && <p className="text-sm text-destructive">{error}</p>}
         </div>

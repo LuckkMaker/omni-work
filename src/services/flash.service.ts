@@ -66,17 +66,17 @@ export async function checkBlank(
   return data
 }
 
-/** 读回 Flash 内容到文件 */
+/** 读回 Flash 内容（返回 base64 数据） */
 export async function readBack(
   uid: string,
   type: 'chip' | 'range',
-  outputPath: string,
   address = 0,
   size = 0
 ): Promise<{
   success: boolean
+  base64_data?: string
+  base_address?: number
   bytes_read?: number
-  output_path?: string
   error?: string
   duration_ms?: number
 }> {
@@ -85,7 +85,7 @@ export async function readBack(
     type,
     address,
     size,
-    output_path: outputPath,
+    output_path: '',
   })
   return data
 }
