@@ -21,9 +21,9 @@ import { Separator } from '@/components/ui/separator'
 import { FilePanel } from './components/FilePanel'
 import { BinAddressDialog } from './components/BinAddressDialog'
 import { EraseSectorsDialog } from './components/EraseSectorsDialog'
-import { ReadBackDialog } from './components/ReadBackDialog'
+import { ReadBackRangeDialog } from './components/ReadBackRangeDialog'
+import { ReadBackSectorsDialog } from './components/ReadBackSectorsDialog'
 import { CompareDialog } from './components/CompareDialog'
-import { InfoPanel } from './components/InfoPanel'
 import { LogConsole, ResizeHandle } from './components/LogConsole'
 import { useFlashStore } from '@/stores/flash.store'
 import { useProbeStore } from '@/stores/probe.store'
@@ -37,11 +37,12 @@ export default function FlashPage() {
     doEraseChip,
     doProgram,
     doVerify,
+    doReadBack,
     doStartApp,
     doReset,
     setShowEraseSectorsDialog,
-    setShowReadBackDialog,
-    setReadBackMode,
+    setShowReadBackRangeDialog,
+    setShowReadBackSectorsDialog,
   } = useFlashStore()
 
   const selectedProbe = useProbeStore((s) => {
@@ -121,8 +122,8 @@ export default function FlashPage() {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
             <DropdownMenuItem onClick={() => doReadBack('chip')}>Entire Chip</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => { setReadBackMode('sectors'); setShowReadBackDialog(true) }}>Sectors...</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => { setReadBackMode('range'); setShowReadBackDialog(true) }}>Range...</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setShowReadBackSectorsDialog(true)}>Sectors...</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setShowReadBackRangeDialog(true)}>Range...</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
 
@@ -147,20 +148,16 @@ export default function FlashPage() {
       {/* 可拖拽分隔 */}
       <ResizeHandle onResize={handleResize} />
 
-      {/* 底部：日志 4/5 + 信息面板 1/5 */}
-      <div className="shrink-0 flex gap-0 border-t border-border" style={{ height: bottomHeight }}>
-        <div className="flex-1 min-w-0">
-          <LogConsole height={bottomHeight} />
-        </div>
-        <div className="w-1/5 min-w-[180px] border-l border-border overflow-hidden">
-          <InfoPanel />
-        </div>
+      {/* 底部：日志（全宽） */}
+      <div className="shrink-0 border-t border-border" style={{ height: bottomHeight }}>
+        <LogConsole height={bottomHeight} />
       </div>
 
       {/* 弹窗 */}
       <BinAddressDialog />
       <EraseSectorsDialog />
-      <ReadBackDialog />
+      <ReadBackRangeDialog />
+      <ReadBackSectorsDialog />
       <CompareDialog />
     </div>
   )

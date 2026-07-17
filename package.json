@@ -11,7 +11,45 @@
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json --composite false",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
     "python:dev": "cd python && ..\\.venv\\Scripts\\python.exe server.py --port 8765",
-    "python:install": "python -m venv .venv && .venv\\Scripts\\pip.exe install -r python/requirements.txt"
+    "python:install": "python -m venv .venv && .venv\\Scripts\\pip.exe install -r python/requirements.txt",
+    "package": "powershell -ExecutionPolicy Bypass -File build.ps1",
+    "package:clean": "powershell -ExecutionPolicy Bypass -File build.ps1 -Clean"
+  },
+  "build": {
+    "appId": "com.geehy.daplink-work",
+    "productName": "DAPLink Work",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "out/**/*",
+      "node_modules/**/*",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "python/dist/daplink-backend",
+        "to": "python",
+        "filter": ["**/*"]
+      }
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": ["x64"]
+        }
+      ],
+      "artifactName": "${productName}-${version}-${arch}-setup.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "DAPLink Work"
+    }
   },
   "dependencies": {
     "@radix-ui/react-alert-dialog": "^1.1.14",

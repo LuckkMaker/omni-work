@@ -1,10 +1,13 @@
 import { useEffect, useRef } from 'react'
 import { wsClient } from '@/services/ws'
 import { useProbeStore } from '@/stores/probe.store'
+import { useFlashStore } from '@/stores/flash.store'
 import type {
   ProbeListData,
   ProbeConnectedData,
   ProbeDisconnectedData,
+  FlashProgressEvent,
+  LogEvent,
 } from '@shared/types'
 
 /**
@@ -55,6 +58,16 @@ export function useProbeWs(port: number | null): void {
       store.fetchProbes()
     })
 
+    // 订阅 Flash 操作进度事件（erase / program / verify / blank）
+    const unsubFlashProgress = wsClient.on('flash.progress', (data) => {
+      useFlashStore.getState().onProgress(data as FlashProgressEvent)
+    })
+
+    // 订阅日志事件
+    const unsubLog = wsClient.on('log', (data) => {
+      useFlashStore.getState().onLog(data as LogEvent)
+    })
+
     // 注意：不在 cleanup 中 disconnect，由 port 变化或组件卸载时处理
     return () => {
       unsubList()
@@ -62,6 +75,8 @@ export function useProbeWs(port: number | null): void {
       unsubDisconnected()
       unsubAdded()
       unsubRemoved()
+      unsubFlashProgress()
+      unsubLog()
     }
   }, [port])
 }

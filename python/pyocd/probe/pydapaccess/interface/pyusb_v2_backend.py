@@ -303,46 +303,57 @@ def _match_cmsis_dap_v2_interface(interface):
     3. bInterfaceSubClass must be 0.
     4. Must have bulk out and bulk in endpoints, with an optional extra bulk in endpoint, in
         that order.
+
+    On Windows, reading the interface name string requires opening the device via libusb.
+    If the device has a non-WinUSB driver (e.g. HID), libusb_open() will fail with
+    NotImplementedError. In this case, we fall back to matching by interface class (0xff),
+    subclass (0), and bulk endpoint layout only. This is slightly less strict but necessary
+    for composite devices where some interfaces have different drivers.
     """
+    # First check the structural requirements that don't need opening the device.
+    # bInterfaceClass must be 0xff (vendor-specific).
+    if (interface.bInterfaceClass != USB_CLASS_VENDOR_SPECIFIC) \
+        or (interface.bInterfaceSubClass != 0):
+        return False
+
+    # Must have either 2 or 3 endpoints.
+    if interface.bNumEndpoints not in (2, 3):
+        return False
+
+    # Endpoint 0 must be bulk out.
+    if not check_ep(interface, 0, usb.util.ENDPOINT_OUT, usb.util.ENDPOINT_TYPE_BULK):
+        return False
+
+    # Endpoint 1 must be bulk in.
+    if not check_ep(interface, 1, usb.util.ENDPOINT_IN, usb.util.ENDPOINT_TYPE_BULK):
+        return False
+
+    # Endpoint 2 is optional. If present it must be bulk in.
+    if (interface.bNumEndpoints == 3) \
+        and not check_ep(interface, 2, usb.util.ENDPOINT_IN, usb.util.ENDPOINT_TYPE_BULK):
+        return False
+
+    # Structural checks passed. Now try to verify the interface name contains "CMSIS-DAP".
     try:
         interface_name = usb.util.get_string(interface.device, interface.iInterface)
 
-        # This tells us whether the interface is CMSIS-DAP, but not whether it's v1 or v2.
         if (interface_name is None) or ("CMSIS-DAP" not in interface_name):
             return False
 
-        # Now check the interface class to distinguish v1 from v2.
-        if (interface.bInterfaceClass != USB_CLASS_VENDOR_SPECIFIC) \
-            or (interface.bInterfaceSubClass != 0):
-            return False
-
-        # Must have either 2 or 3 endpoints.
-        if interface.bNumEndpoints not in (2, 3):
-            return False
-
-        # Endpoint 0 must be bulk out.
-        if not check_ep(interface, 0, usb.util.ENDPOINT_OUT, usb.util.ENDPOINT_TYPE_BULK):
-            return False
-
-        # Endpoint 1 must be bulk in.
-        if not check_ep(interface, 1, usb.util.ENDPOINT_IN, usb.util.ENDPOINT_TYPE_BULK):
-            return False
-
-        # Endpoint 2 is optional. If present it must be bulk in.
-        if (interface.bNumEndpoints == 3) \
-            and not check_ep(interface, 2, usb.util.ENDPOINT_IN, usb.util.ENDPOINT_TYPE_BULK):
-            return False
-
-        # All checks passed, this is a CMSIS-DAPv2 interface!
-        return True
-
     except (UnicodeDecodeError, IndexError):
-        # UnicodeDecodeError exception can be raised if the device has a corrupted interface name.
-        # Certain versions of STLinkV2 are known to have this problem. If we can't read the
-        # interface name, there's no way to tell if it's a CMSIS-DAPv2 interface.
-        #
-        # IndexError can be raised if an endpoint is missing.
-        return False
+        # UnicodeDecodeError: corrupted interface name (some STLinkV2 versions).
+        # IndexError: endpoint missing.
+        # Fall through to accept based on structural checks alone.
+        pass
+    except Exception:
+        # On Windows, libusb_open() may fail with NotImplementedError or USBError
+        # if the interface has a non-WinUSB driver (e.g. HID driver on a composite
+        # device). Since the structural checks (class=0xff, bulk endpoints) already
+        # strongly indicate CMSIS-DAP v2, accept this interface.
+        pass
+
+    # All checks passed, this is a CMSIS-DAPv2 interface!
+    return True
 
 class HasCmsisDapv2Interface:
     """@brief CMSIS-DAPv2 match class to be used with usb.core.find"""
@@ -375,7 +386,9 @@ class HasCmsisDapv2Interface:
                 else:
                     LOG.debug(msg)
             return False
-        except (IndexError, NotImplementedError, ValueError, UnicodeDecodeError) as error:
+        except (IndexError, NotImplementedError, ValueError, UnicodeDecodeError, OSError) as error:
+            # On Windows, NotImplementedError is raised by libusb_open() when the device
+            # has a non-WinUSB driver. OSError covers various Windows USB backend failures.
             return False
 
         if cmsis_dap_interface is None:

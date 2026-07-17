@@ -70,7 +70,7 @@ export function InfoPanel() {
   const speedLabel = SPEED_OPTIONS.find((s) => s.value === pendingSpeed)?.label ?? `${pendingSpeed} Hz`
 
   return (
-    <div className="h-full overflow-y-auto">
+    <div className="overflow-y-auto">
       <CollapsibleSection icon={<Usb className="size-3" />} title="接口信息">
         <Row label="接口" value={pendingInterface.toUpperCase()} />
         <Row label="速度" value={speedLabel} />

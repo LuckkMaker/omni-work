@@ -99,14 +99,15 @@ interface FlashStore {
   showBinAddrDialog: boolean
   pendingBinPath: string | null
   showEraseSectorsDialog: boolean
-  showReadBackDialog: boolean
+  showReadBackRangeDialog: boolean
+  showReadBackSectorsDialog: boolean
   showCompareDialog: boolean
-  /** Read Back 对话框的初始模式 */
-  readBackMode: 'chip' | 'sectors' | 'range'
 
   // ── 烧录状态 ──────────────────────────
   phase: FlashPhase
   progress: number
+  progressCurrent: number
+  progressTotal: number
   busy: boolean
   result: FlashResult | null
   activeNotifId: string | null
@@ -133,9 +134,9 @@ interface FlashStore {
   setPendingBinPath: (path: string | null) => void
   confirmBinAddress: (address: number) => Promise<void>
   setShowEraseSectorsDialog: (show: boolean) => void
-  setShowReadBackDialog: (show: boolean) => void
+  setShowReadBackRangeDialog: (show: boolean) => void
+  setShowReadBackSectorsDialog: (show: boolean) => void
   setShowCompareDialog: (show: boolean) => void
-  setReadBackMode: (mode: 'chip' | 'sectors' | 'range') => void
 
   // ── Flash 操作 ────────────────────────
   doCheckBlank: () => Promise<void>
@@ -169,12 +170,14 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
   showBinAddrDialog: false,
   pendingBinPath: null,
   showEraseSectorsDialog: false,
-  showReadBackDialog: false,
+  showReadBackRangeDialog: false,
+  showReadBackSectorsDialog: false,
   showCompareDialog: false,
-  readBackMode: 'chip',
 
   phase: 'idle',
   progress: 0,
+  progressCurrent: 0,
+  progressTotal: 0,
   busy: false,
   result: null,
   activeNotifId: null,
@@ -307,9 +310,9 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
   },
 
   setShowEraseSectorsDialog: (show) => set({ showEraseSectorsDialog: show }),
-  setShowReadBackDialog: (show) => set({ showReadBackDialog: show }),
+  setShowReadBackRangeDialog: (show) => set({ showReadBackRangeDialog: show }),
+  setShowReadBackSectorsDialog: (show) => set({ showReadBackSectorsDialog: show }),
   setShowCompareDialog: (show) => set({ showCompareDialog: show }),
-  setReadBackMode: (mode) => set({ readBackMode: mode }),
 
   // ── Flash 操作 ────────────────────────
   doCheckBlank: async () => {
@@ -373,24 +376,28 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
     const uid = useProbeStore.getState().selectedUid
     const tab = get().getActiveTab()
     if (!uid || !tab) return
-    set({ showReadBackDialog: false })
-    tab.loading = true
+    set({ showReadBackRangeDialog: false, showReadBackSectorsDialog: false })
     get().updateTab(tab.id, { loading: true })
     await wrapOperation(set, get, '读回', '正在读取 Flash...', async () => {
-      const result = await flashService.readBack(uid, mode, address ?? 0, size ?? 0)
-      if (result.success && result.base64_data) {
-        // 数据直接存入当前 tab
-        get().updateTab(tab.id, {
-          data: result.base64_data,
-          baseAddress: result.base_address ?? 0,
-          size: result.bytes_read ?? 0,
-          loading: false,
-          format: 'bin',
-        })
-        return { success: true, duration_ms: result.duration_ms, bytes_written: result.bytes_read ?? 0 }
+      try {
+        const result = await flashService.readBack(uid, mode, address ?? 0, size ?? 0)
+        if (result.success && result.base64_data) {
+          // 数据直接存入当前 tab
+          get().updateTab(tab.id, {
+            data: result.base64_data,
+            baseAddress: result.base_address ?? 0,
+            size: result.bytes_read ?? 0,
+            loading: false,
+            format: 'bin',
+          })
+          return { success: true, duration_ms: result.duration_ms, bytes_written: result.bytes_read ?? 0 }
+        }
+        get().updateTab(tab.id, { loading: false })
+        return { success: false, error: result.error ?? '读回失败' }
+      } catch (err) {
+        get().updateTab(tab.id, { loading: false })
+        throw err
       }
-      get().updateTab(tab.id, { loading: false })
-      return { success: false, error: result.error ?? '读回失败' }
     }, (r) => `读取 ${formatSize(r.bytes_written)} 到 ${tab.title}`)
   },
 
@@ -511,11 +518,16 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
 
   // ── WebSocket 事件 ────────────────────
   onProgress: (data) => {
-    const phaseMap: Record<string, FlashPhase> = { erase: 'erasing', program: 'programming', verify: 'verifying' }
-    set({ phase: phaseMap[data.phase] ?? get().phase, progress: data.percent })
+    const phaseMap: Record<string, FlashPhase> = { erase: 'erasing', program: 'programming', verify: 'verifying', blank: 'verifying', read: 'reading' }
+    set({
+      phase: phaseMap[data.phase] ?? get().phase,
+      progress: data.percent,
+      progressCurrent: data.current,
+      progressTotal: data.total,
+    })
     const { activeNotifId } = get()
     if (activeNotifId) {
-      const msgMap: Record<string, string> = { erase: '擦除中...', program: '编程中...', verify: '校验中...' }
+      const msgMap: Record<string, string> = { erase: '擦除中...', program: '编程中...', verify: '校验中...', blank: '检查空白中...', read: '读取中...' }
       useNotificationStore.getState().update(activeNotifId, {
         progress: data.percent,
         message: data.total > 0 ? `${msgMap[data.phase] ?? ''} ${formatSize(data.current)} / ${formatSize(data.total)}` : (msgMap[data.phase] ?? ''),
@@ -539,7 +551,7 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
     }
   },
 
-  reset: () => set({ phase: 'idle', progress: 0, busy: false, result: null, logs: [], activeNotifId: null }),
+  reset: () => set({ phase: 'idle', progress: 0, progressCurrent: 0, progressTotal: 0, busy: false, result: null, logs: [], activeNotifId: null }),
 
   clearLogs: () => set({ logs: [] }),
 }))
@@ -570,7 +582,7 @@ async function wrapOperation(
 
   const notif = useNotificationStore.getState()
   const notifId = notif.push({ type: 'progress', title, message: startMsg, progress: 0 })
-  set({ busy: true, progress: 0, result: null, logs: [], activeNotifId: notifId })
+  set({ busy: true, progress: 0, progressCurrent: 0, progressTotal: 0, result: null, logs: [{ level: 'info', message: `── ${title} ──`, timestamp: Date.now() }], activeNotifId: notifId })
   try {
     const result = await fn()
     set({ phase: result.success ? 'done' : 'error', busy: false, result: result as FlashResult, activeNotifId: null })

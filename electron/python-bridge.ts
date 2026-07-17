@@ -49,16 +49,24 @@ export class PythonBridge {
         return
       }
 
-      if (!scriptPath) {
-        reject(new Error('server.py not found.'))
-        return
-      }
-
       // 开发模式下使用固定端口 8765，生产模式用 0（自动分配）
       const portArg = isDev ? '8765' : '0'
 
-      this.proc = spawn(pythonExe, [scriptPath, '--port', portArg], {
-        cwd: join(scriptPath, '..'),
+      // PyInstaller exe 不需要 scriptPath 参数；开发模式需要 server.py
+      const args: string[] = []
+      let cwd: string
+      if (scriptPath) {
+        // 开发模式：python server.py --port 8765
+        args.push(scriptPath, '--port', portArg)
+        cwd = join(scriptPath, '..')
+      } else {
+        // 生产模式：daplink-backend.exe --port 0
+        args.push('--port', portArg)
+        cwd = join(pythonExe, '..')
+      }
+
+      this.proc = spawn(pythonExe, args, {
+        cwd,
         env: { ...process.env, PYTHONUNBUFFERED: '1' },
         windowsHide: true
       })
@@ -126,24 +134,61 @@ export class PythonBridge {
     }
   }
 
+  /**
+   * 获取项目根目录。
+   * 开发模式下 __dirname 是 out/main/，需要向上两级；
+   * 生产模式下使用 process.resourcesPath。
+   */
+  private getProjectRoot(): string {
+    const isDev = !!process.env.ELECTRON_RENDERER_URL
+    if (isDev) {
+      // __dirname = <project>/out/main or <project>/electron
+      // 向上查找直到找到 python/server.py
+      let dir = __dirname
+      for (let i = 0; i < 5; i++) {
+        if (existsSync(join(dir, 'python', 'server.py'))) return dir
+        dir = join(dir, '..')
+      }
+    }
+    return process.resourcesPath ?? __dirname
+  }
+
   private findPython(): string | null {
-    // 优先使用项目虚拟环境
-    const venvPython = join(process.cwd(), '.venv', 'Scripts', 'python.exe')
-    if (existsSync(venvPython)) return venvPython
+    const root = this.getProjectRoot()
 
-    // 生产环境：PyInstaller 产物
-    const bundledPython = join(process.resourcesPath, 'python', 'python.exe')
-    if (existsSync(bundledPython)) return bundledPython
+    // 优先使用项目虚拟环境（开发模式）
+    const venvPython = join(root, '.venv', 'Scripts', 'python.exe')
+    if (existsSync(venvPython)) {
+      console.log(`[PythonBridge] Using venv Python: ${venvPython}`)
+      return venvPython
+    }
 
-    // 系统 Python
+    // 生产环境：PyInstaller 打包的后端 exe
+    // extraResources 将 python/dist/daplink-backend/ 复制到 resources/python/
+    const bundledExe = join(process.resourcesPath ?? '', 'python', 'daplink-backend.exe')
+    if (existsSync(bundledExe)) {
+      console.log(`[PythonBridge] Using bundled backend: ${bundledExe}`)
+      return bundledExe
+    }
+
+    // 系统 Python（可能缺少 libusb_package，不推荐）
+    console.warn('[PythonBridge] venv Python not found, falling back to system Python')
     return 'python'
   }
 
   private findScript(): string | null {
-    const devPath = join(process.cwd(), 'python', 'server.py')
+    const root = this.getProjectRoot()
+    const devPath = join(root, 'python', 'server.py')
     if (existsSync(devPath)) return devPath
 
-    const prodPath = join(process.resourcesPath, 'python', 'server.py')
+    // 生产环境：PyInstaller exe 不需要 script 参数，但 spawn 时需要占位
+    // 实际上 exe 本身就是入口，这里返回 null 让调用方处理
+    const bundledExe = join(process.resourcesPath ?? '', 'python', 'daplink-backend.exe')
+    if (existsSync(bundledExe)) {
+      return null  // exe 自包含，不需要额外脚本
+    }
+
+    const prodPath = join(process.resourcesPath ?? '', 'python', 'server.py')
     if (existsSync(prodPath)) return prodPath
 
     return null

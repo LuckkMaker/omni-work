@@ -8,6 +8,7 @@ import { useProbeWs } from '@/hooks/useProbeWs'
 import { useProbeStore } from '@/stores/probe.store'
 import { resetApiClient } from '@/services/api'
 import { DeviceSwitcher } from '@/components/layout/DeviceSwitcher'
+import { InfoPanel } from '@/pages/flash/components/InfoPanel'
 import { NotificationContainer } from '@/components/NotificationContainer'
 
 const navItems = [
@@ -44,7 +45,7 @@ export default function MainLayout() {
         </div>
 
         {/* 导航菜单 */}
-        <nav className="flex-1 space-y-1 p-3">
+        <nav className="shrink-0 space-y-1 p-3">
           {navItems.map((item) => (
             <NavLink
               key={item.to}
@@ -63,6 +64,11 @@ export default function MainLayout() {
             </NavLink>
           ))}
         </nav>
+
+        {/* 全局信息面板（接口/目标/Flash） */}
+        <div className="flex-1 min-h-0 overflow-y-auto border-t border-border">
+          <InfoPanel />
+        </div>
 
         {/* 底部：后端状态 + 错误提示 */}
         <div className="border-t border-border p-3 space-y-2">

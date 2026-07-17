@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef } from 'react'
+import { useMemo, useState, useRef, useCallback } from 'react'
 import { HexViewer, HexToolbar, type ByteWidth } from './HexViewer'
 
 interface CompareViewProps {
@@ -29,9 +29,9 @@ export function CompareView({
 }: CompareViewProps) {
   const [byteWidth, setByteWidth] = useState<ByteWidth>(1)
 
-  // 用 ref 直接引用两个 HexViewer 的容器 DOM，同步滚动
-  const leftContainerRef = useRef<HTMLDivElement>(null)
-  const rightContainerRef = useRef<HTMLDivElement>(null)
+  // 滚动同步状态
+  const [leftSyncScroll, setLeftSyncScroll] = useState<number | null>(null)
+  const [rightSyncScroll, setRightSyncScroll] = useState<number | null>(null)
   const isSyncing = useRef(false)
 
   const leftBytes = useMemo(() => {
@@ -60,23 +60,21 @@ export function CompareView({
 
   const matchCount = Math.min(leftBytes.length, rightBytes.length) - (diffCount - Math.abs(leftBytes.length - rightBytes.length))
 
-  // 滚动同步：左侧滚动 → 设置右侧 scrollTop
-  const handleLeftScroll = (scrollTop: number) => {
+  // 左侧滚动 → 同步右侧
+  const handleLeftScroll = useCallback((scrollTop: number) => {
     if (isSyncing.current) return
     isSyncing.current = true
-    const rightEl = rightContainerRef.current?.querySelector('.overflow-auto')
-    if (rightEl) rightEl.scrollTop = scrollTop
+    setRightSyncScroll(scrollTop)
     requestAnimationFrame(() => { isSyncing.current = false })
-  }
+  }, [])
 
-  // 右侧滚动 → 设置左侧 scrollTop
-  const handleRightScroll = (scrollTop: number) => {
+  // 右侧滚动 → 同步左侧
+  const handleRightScroll = useCallback((scrollTop: number) => {
     if (isSyncing.current) return
     isSyncing.current = true
-    const leftEl = leftContainerRef.current?.querySelector('.overflow-auto')
-    if (leftEl) leftEl.scrollTop = scrollTop
+    setLeftSyncScroll(scrollTop)
     requestAnimationFrame(() => { isSyncing.current = false })
-  }
+  }, [])
 
   return (
     <div className="flex h-full flex-col">
@@ -98,7 +96,7 @@ export function CompareView({
       {/* 左右双栏 */}
       <div className="flex flex-1 min-h-0">
         {/* 左侧 */}
-        <div ref={leftContainerRef} className="flex-1 min-w-0 border-r border-border flex flex-col">
+        <div className="flex-1 min-w-0 border-r border-border flex flex-col">
           <div className="shrink-0 px-2 py-1 bg-muted/30 text-xs font-medium border-b border-border truncate">
             <span className="text-muted-foreground">Left: </span>
             {leftTitle}
@@ -112,12 +110,13 @@ export function CompareView({
               diffBase64={rightBase64}
               diffBaseAddress={rightBaseAddress}
               onScrollSync={handleLeftScroll}
+              syncScrollTop={leftSyncScroll}
             />
           </div>
         </div>
 
         {/* 右侧 */}
-        <div ref={rightContainerRef} className="flex-1 min-w-0 flex flex-col">
+        <div className="flex-1 min-w-0 flex flex-col">
           <div className="shrink-0 px-2 py-1 bg-muted/30 text-xs font-medium border-b border-border truncate">
             <span className="text-muted-foreground">Right: </span>
             {rightTitle}
@@ -131,6 +130,7 @@ export function CompareView({
               diffBase64={leftBase64}
               diffBaseAddress={leftBaseAddress}
               onScrollSync={handleRightScroll}
+              syncScrollTop={rightSyncScroll}
             />
           </div>
         </div>

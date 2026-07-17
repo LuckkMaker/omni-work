@@ -1,5 +1,5 @@
 import { useEffect, useRef, useMemo, useState, useCallback } from 'react'
-import { Loader2, Search } from 'lucide-react'
+import { Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useNotificationStore } from '@/stores/notification.store'
@@ -19,8 +19,9 @@ interface HexViewerProps {
   syncScrollTop?: number | null
 }
 
-// 全局 ref registry 用于跨组件直接操作 DOM scrollTop（避免 state 往返）
-const syncRegistry = new Map<string, (scrollTop: number) => void>()
+// 虚拟滚动常量
+const ROW_HEIGHT = 20 // 固定行高 px
+const BUFFER_ROWS = 5 // 上下缓冲行数
 
 function decodeBase64(base64: string): Uint8Array {
   const binary = atob(base64)
@@ -143,9 +144,16 @@ export function HexToolbar({
   )
 }
 
-export function HexViewer({ base64Data, baseAddress, byteWidth, diffBase64, diffBaseAddress, onScrollSync }: HexViewerProps) {
+interface VirtualRow {
+  offset: number
+  addr: string
+  bytes: { hex: string; ascii: string; diff: boolean }[]
+}
+
+export function HexViewer({ base64Data, baseAddress, byteWidth, diffBase64, diffBaseAddress, onScrollSync, syncScrollTop }: HexViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const rowRefs = useRef<Map<number, HTMLDivElement>>(new Map())
+  const [scrollTop, setScrollTop] = useState(0)
+  const [viewportHeight, setViewportHeight] = useState(0)
   const [highlightOffset, setHighlightOffset] = useState<number | null>(null)
   const onScrollSyncRef = useRef(onScrollSync)
   onScrollSyncRef.current = onScrollSync
@@ -155,19 +163,33 @@ export function HexViewer({ base64Data, baseAddress, byteWidth, diffBase64, diff
   const data = useMemo(() => decodeBase64(base64Data), [base64Data])
   const diffData = useMemo(() => diffBase64 ? decodeBase64(diffBase64) : null, [diffBase64])
 
-  // 计算每个字节是否与参考数据不同
-  const isByteDiff = useCallback((offset: number): boolean => {
-    if (!diffData) return false
-    // 计算参考数据中对应的偏移
-    const refOffset = (baseAddress + offset) - (diffBaseAddress ?? baseAddress)
-    if (refOffset < 0 || refOffset >= diffData.length) return offset < data.length
-    if (offset >= data.length) return true
-    return data[offset] !== diffData[refOffset]
-  }, [diffData, baseAddress, diffBaseAddress, data])
+  // 总行数（廉价计算，不需要遍历数据）
+  const totalRows = Math.ceil(data.length / bytesPerRow)
+  const totalHeight = totalRows * ROW_HEIGHT
 
-  const rows = useMemo(() => {
-    const result: { offset: number; addr: string; bytes: { hex: string; ascii: string; diff: boolean }[] }[] = []
-    for (let offset = 0; offset < data.length; offset += bytesPerRow) {
+  // 监听容器尺寸
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    setViewportHeight(el.clientHeight)
+    const ro = new ResizeObserver(() => {
+      setViewportHeight(el.clientHeight)
+    })
+    ro.observe(el)
+    return () => ro.disconnect()
+  }, [])
+
+  // 计算可见行范围
+  const visibleStart = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - BUFFER_ROWS)
+  const visibleCount = Math.ceil(viewportHeight / ROW_HEIGHT) + 2 * BUFFER_ROWS
+  const visibleEnd = Math.min(totalRows, visibleStart + visibleCount)
+
+  // 只为可见行生成渲染数据（按需计算，不再预计算全部）
+  const visibleRows = useMemo<VirtualRow[]>(() => {
+    if (data.length === 0) return []
+    const result: VirtualRow[] = []
+    for (let rowIdx = visibleStart; rowIdx < visibleEnd; rowIdx++) {
+      const offset = rowIdx * bytesPerRow
       const byteCells: { hex: string; ascii: string; diff: boolean }[] = []
       for (let i = 0; i < bytesPerRow; i++) {
         const pos = offset + i * byteWidth
@@ -186,8 +208,18 @@ export function HexViewer({ base64Data, baseAddress, byteWidth, diffBase64, diff
           }
           // 检查这个 word 内是否有任何字节不同
           let diff = false
-          for (let j = 0; j < byteWidth; j++) {
-            if (isByteDiff(pos + j)) { diff = true; break }
+          if (diffData) {
+            for (let j = 0; j < byteWidth; j++) {
+              const refOffset = (baseAddress + pos + j) - (diffBaseAddress ?? baseAddress)
+              if (refOffset < 0 || refOffset >= diffData.length) {
+                diff = true
+                break
+              }
+              if (data[pos + j] !== diffData[refOffset]) {
+                diff = true
+                break
+              }
+            }
           }
           byteCells.push({ hex, ascii, diff })
         } else {
@@ -202,24 +234,30 @@ export function HexViewer({ base64Data, baseAddress, byteWidth, diffBase64, diff
       })
     }
     return result
-  }, [data, baseAddress, byteWidth, bytesPerRow, isByteDiff])
+  }, [data, diffData, baseAddress, diffBaseAddress, byteWidth, bytesPerRow, visibleStart, visibleEnd])
 
+  // 数据或字节宽度变化时重置滚动
   useEffect(() => {
     if (containerRef.current) {
       containerRef.current.scrollTop = 0
     }
+    setScrollTop(0)
     setHighlightOffset(null)
   }, [base64Data, byteWidth])
 
+  // 地址跳转：直接设置 scrollTop
   useEffect(() => {
     const handler = (e: Event) => {
       const detail = (e as CustomEvent).detail
       const offset = detail.offset as number
-      const rowIndex = Math.floor(offset / bytesPerRow) * bytesPerRow
-      const el = rowRefs.current.get(rowIndex)
+      const rowIndex = Math.floor(offset / bytesPerRow)
+      const targetTop = rowIndex * ROW_HEIGHT
+      const el = containerRef.current
       if (el) {
-        el.scrollIntoView({ block: 'center', behavior: 'smooth' })
-        setHighlightOffset(rowIndex)
+        // 居中显示
+        const centerOffset = Math.max(0, targetTop - el.clientHeight / 2 + ROW_HEIGHT / 2)
+        el.scrollTop = centerOffset
+        setHighlightOffset(rowIndex * bytesPerRow)
         setTimeout(() => setHighlightOffset(null), 3000)
       }
     }
@@ -227,62 +265,81 @@ export function HexViewer({ base64Data, baseAddress, byteWidth, diffBase64, diff
     return () => window.removeEventListener('hexviewer:jump', handler)
   }, [bytesPerRow])
 
-  // 滚动同步：当本组件滚动时，直接通过 ref 设置另一个组件的 scrollTop
+  // 滚动同步
   const isSyncingRef = useRef(false)
+
+  const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const st = e.currentTarget.scrollTop
+    setScrollTop(st)
+    if (isSyncingRef.current) return
+    onScrollSyncRef.current?.(st)
+  }, [])
+
+  // 外部同步滚动
+  useEffect(() => {
+    if (syncScrollTop !== null && syncScrollTop !== undefined && containerRef.current) {
+      isSyncingRef.current = true
+      containerRef.current.scrollTop = syncScrollTop
+      setScrollTop(syncScrollTop)
+      requestAnimationFrame(() => { isSyncingRef.current = false })
+    }
+  }, [syncScrollTop])
+
+  if (data.length === 0) {
+    return (
+      <div className="flex h-full items-center justify-center text-muted-foreground">
+        无数据
+      </div>
+    )
+  }
 
   return (
     <div
       ref={containerRef}
-      onScroll={(e) => {
-        if (isSyncingRef.current) return
-        onScrollSyncRef.current?.(e.currentTarget.scrollTop)
-      }}
-      className="h-full overflow-auto font-mono text-xs leading-relaxed"
+      onScroll={handleScroll}
+      className="h-full overflow-auto font-mono text-xs"
     >
-      {rows.length === 0 ? (
-        <div className="flex h-full items-center justify-center text-muted-foreground">
-          <Loader2 className="mr-2 size-3 animate-spin" />
-          加载中...
-        </div>
-      ) : (
-        rows.map((row) => (
-          <div
-            key={row.offset}
-            ref={(el) => {
-              if (el) rowRefs.current.set(row.offset, el)
-            }}
-            className={cn(
-              'flex gap-3 px-2 py-0.5 hover:bg-muted/30',
-              highlightOffset === row.offset && 'bg-yellow-500/20 ring-1 ring-yellow-500/50'
-            )}
-          >
-            <span className="shrink-0 text-muted-foreground">{row.addr}</span>
-            {/* Hex bytes */}
-            <span className="shrink-0 flex">
-              {row.bytes.map((cell, i) => (
-                <span key={i} className="flex">
-                  <span className={cn(cell.diff && 'bg-red-500/30 text-red-600 dark:text-red-400 rounded px-0.5')}>
-                    {cell.hex}
+      {/* 撑开总高度，维持滚动条 */}
+      <div style={{ height: totalHeight, position: 'relative' }}>
+        {/* 只渲染可见行，用 absolute 定位偏移 */}
+        <div style={{ position: 'absolute', top: visibleStart * ROW_HEIGHT, left: 0, right: 0 }}>
+          {visibleRows.map((row) => (
+            <div
+              key={row.offset}
+              style={{ height: ROW_HEIGHT }}
+              className={cn(
+                'flex gap-3 px-2 hover:bg-muted/30',
+                highlightOffset === row.offset && 'bg-yellow-500/20 ring-1 ring-yellow-500/50'
+              )}
+            >
+              <span className="shrink-0 text-muted-foreground leading-5">{row.addr}</span>
+              {/* Hex bytes */}
+              <span className="shrink-0 flex leading-5">
+                {row.bytes.map((cell, i) => (
+                  <span key={i} className="flex">
+                    <span className={cn(cell.diff && 'bg-red-500/30 text-red-600 dark:text-red-400 rounded px-0.5')}>
+                      {cell.hex}
+                    </span>
+                    {/* 每个字节间加空格，中间加额外空格 */}
+                    <span>{' '}</span>
+                    {byteWidth === 1 && i === 7 && <span>{' '}</span>}
+                    {byteWidth === 2 && i === 3 && <span>{' '}</span>}
+                    {byteWidth === 4 && i === 1 && <span>{' '}</span>}
                   </span>
-                  {/* 每个字节间加空格，中间加额外空格 */}
-                  <span>{' '}</span>
-                  {byteWidth === 1 && i === 7 && <span>{' '}</span>}
-                  {byteWidth === 2 && i === 3 && <span>{' '}</span>}
-                  {byteWidth === 4 && i === 1 && <span>{' '}</span>}
-                </span>
-              ))}
-            </span>
-            {/* ASCII */}
-            <span className="text-muted-foreground flex">
-              {row.bytes.map((cell, i) => (
-                <span key={i} className={cn(cell.diff && 'bg-red-500/30 text-red-600 dark:text-red-400 rounded px-0.5')}>
-                  {cell.ascii}
-                </span>
-              ))}
-            </span>
-          </div>
-        ))
-      )}
+                ))}
+              </span>
+              {/* ASCII */}
+              <span className="text-muted-foreground flex leading-5">
+                {row.bytes.map((cell, i) => (
+                  <span key={i} className={cn(cell.diff && 'bg-red-500/30 text-red-600 dark:text-red-400 rounded px-0.5')}>
+                    {cell.ascii}
+                  </span>
+                ))}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
     </div>
   )
 }

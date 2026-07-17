@@ -64,7 +64,7 @@ export interface FirmwareFileInfo {
 
 /** 烧录进度事件 */
 export interface FlashProgressEvent {
-  phase: 'erase' | 'program' | 'verify'
+  phase: 'erase' | 'program' | 'verify' | 'blank' | 'read'
   current: number
   total: number
   percent: number

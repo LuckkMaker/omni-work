@@ -15,6 +15,7 @@ const phaseConfig = {
   erasing: { label: '擦除中', icon: Eraser, color: 'text-orange-500' },
   programming: { label: '编程中', icon: Download, color: 'text-blue-500' },
   verifying: { label: '校验中', icon: ShieldCheck, color: 'text-purple-500' },
+  reading: { label: '读取中', icon: Download, color: 'text-cyan-500' },
   done: { label: '完成', icon: CheckCircle2, color: 'text-green-500' },
   error: { label: '错误', icon: XCircle, color: 'text-red-500' },
 } as const
