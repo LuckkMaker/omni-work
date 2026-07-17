@@ -4,7 +4,7 @@ import type { FlashResult } from '@shared/types'
 /** 擦除 Flash */
 export async function eraseFlash(
   uid: string,
-  type: 'chip' | 'sector' = 'chip',
+  type: 'chip' | 'sector' | 'sector_range' = 'chip',
   address = 0,
   size = 0
 ): Promise<FlashResult> {
@@ -17,18 +17,20 @@ export async function eraseFlash(
   return data as FlashResult
 }
 
-/** 烧录固件 */
+/** 编程固件 */
 export async function programFlash(
   uid: string,
   filePath: string,
   verify = true,
-  reset = true
+  reset = true,
+  baseAddress?: number
 ): Promise<FlashResult> {
   const client = await api()
   const { data } = await client.post(`/api/probes/${uid}/flash/program`, {
     file_path: filePath,
     verify,
     reset,
+    base_address: baseAddress,
   })
   return data as FlashResult
 }
@@ -40,6 +42,52 @@ export async function verifyFlash(uid: string, filePath: string): Promise<FlashR
     file_path: filePath,
   })
   return data as FlashResult
+}
+
+/** 检查 Flash 是否为空白 */
+export async function checkBlank(
+  uid: string,
+  address?: number,
+  size?: number
+): Promise<{
+  success: boolean
+  is_blank?: boolean
+  blank_bytes?: number
+  total_bytes?: number
+  first_nonblank_addr?: number | null
+  error?: string
+  duration_ms?: number
+}> {
+  const client = await api()
+  const { data } = await client.post(`/api/probes/${uid}/flash/blank-check`, {
+    address,
+    size,
+  })
+  return data
+}
+
+/** 读回 Flash 内容到文件 */
+export async function readBack(
+  uid: string,
+  type: 'chip' | 'range',
+  outputPath: string,
+  address = 0,
+  size = 0
+): Promise<{
+  success: boolean
+  bytes_read?: number
+  output_path?: string
+  error?: string
+  duration_ms?: number
+}> {
+  const client = await api()
+  const { data } = await client.post(`/api/probes/${uid}/flash/read`, {
+    type,
+    address,
+    size,
+    output_path: outputPath,
+  })
+  return data
 }
 
 /** 复位目标 */

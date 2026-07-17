@@ -9,7 +9,7 @@ router = APIRouter()
 
 
 class EraseRequest(BaseModel):
-    type: str = "chip"  # "chip" | "sector"
+    type: str = "chip"  # "chip" | "sector" | "sector_range"
     address: int = 0
     size: int = 0
 
@@ -18,6 +18,7 @@ class ProgramRequest(BaseModel):
     file_path: str
     verify: bool = True
     reset: bool = True
+    base_address: int | None = None
 
 
 class VerifyRequest(BaseModel):
@@ -29,10 +30,16 @@ class ResetRequest(BaseModel):
     run: bool = True
 
 
-class ReadRequest(BaseModel):
-    address: int
-    size: int
-    output_path: str | None = None
+class BlankCheckRequest(BaseModel):
+    address: int | None = None
+    size: int | None = None
+
+
+class ReadBackRequest(BaseModel):
+    type: str = "chip"  # "chip" | "range"
+    address: int = 0
+    size: int = 0
+    output_path: str
 
 
 @router.post("/probes/{uid}/flash/erase")
@@ -45,7 +52,7 @@ async def erase_flash(uid: str, req: EraseRequest):
 @router.post("/probes/{uid}/flash/program")
 async def program_flash(uid: str, req: ProgramRequest):
     """烧录固件"""
-    result = backend.program(uid, req.file_path, req.verify, req.reset)
+    result = backend.program(uid, req.file_path, req.verify, req.reset, req.base_address)
     event_manager.emit("flash.complete", result.__dict__)
     return result.__dict__
 
@@ -57,15 +64,18 @@ async def verify_flash(uid: str, req: VerifyRequest):
     return result.__dict__
 
 
+@router.post("/probes/{uid}/flash/blank-check")
+async def blank_check(uid: str, req: BlankCheckRequest):
+    """检查 Flash 是否为空白"""
+    result = backend.check_blank(uid, req.address, req.size)
+    return result
+
+
 @router.post("/probes/{uid}/flash/read")
-async def read_flash(uid: str, req: ReadRequest):
-    """读取 Flash 内容"""
-    data = backend.read_memory(uid, req.address, req.size)
-    if req.output_path:
-        with open(req.output_path, "wb") as f:
-            f.write(data)
-        return {"success": True, "bytes_read": len(data), "output_path": req.output_path}
-    return {"success": True, "bytes_read": len(data)}
+async def read_flash(uid: str, req: ReadBackRequest):
+    """读取 Flash 内容并保存到文件"""
+    result = backend.read_back(uid, req.type, req.address, req.size, req.output_path)
+    return result
 
 
 @router.post("/probes/{uid}/reset")

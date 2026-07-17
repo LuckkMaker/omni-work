@@ -112,6 +112,8 @@ export interface ElectronAPI {
   getPythonPort: () => Promise<number | null>
   getPythonStatus: () => Promise<PythonStatus>
   openFileDialog: () => Promise<string | null>
+  saveFileDialog: (defaultName?: string) => Promise<string | null>
+  getPathForFile: (file: File) => string
 }
 
 declare global {

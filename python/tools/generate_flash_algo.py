@@ -16,12 +16,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 import os
+import sys
 import argparse
 import colorama
 from datetime import datetime
 import struct
 import binascii
 import jinja2
+
+# 使用项目内集成的 pyOCD 源码（python/pyocd/），不依赖 pip 安装的 pyocd 包。
+# 脚本可能从任意目录运行，因此将 python/ 目录（即本脚本所在目录的父目录）加入模块搜索路径。
+_PYOCD_SRC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+if _PYOCD_SRC_DIR not in sys.path:
+    sys.path.insert(0, _PYOCD_SRC_DIR)
+
 from pyocd.target.pack.flash_algo import PackFlashAlgo
 from pyocd.utility.mask import align_up
 

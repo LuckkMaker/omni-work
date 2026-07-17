@@ -1,14 +1,15 @@
 import { useEffect, useRef, useMemo, useState, useCallback } from 'react'
 import { Loader2, Search } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { useNotificationStore } from '@/stores/notification.store'
 
-type ByteWidth = 1 | 2 | 4
+export type ByteWidth = 1 | 2 | 4
 
 interface HexViewerProps {
   base64Data: string
   baseAddress: number
+  byteWidth: ByteWidth
 }
 
 function decodeBase64(base64: string): Uint8Array {
@@ -34,7 +35,6 @@ function byteToAscii(b: number): string {
   return b >= 32 && b <= 126 ? String.fromCharCode(b) : '.'
 }
 
-/** 读取小端序多字节值 */
 function readLeU16(data: Uint8Array, offset: number): number {
   return data[offset] | (data[offset + 1] << 8)
 }
@@ -43,18 +43,101 @@ function readLeU32(data: Uint8Array, offset: number): number {
 }
 
 function wordToHex(val: number, width: ByteWidth): string {
-  const hexStr = val.toString(16).toUpperCase().padStart(width * 2, '0')
-  return hexStr
+  return val.toString(16).toUpperCase().padStart(width * 2, '0')
 }
 
-export function HexViewer({ base64Data, baseAddress }: HexViewerProps) {
+/** HexViewer 工具栏（字节宽度切换 + 地址跳转），紧凑布局 */
+export function HexToolbar({
+  byteWidth,
+  onByteWidthChange,
+  baseAddress,
+  dataLength,
+}: {
+  byteWidth: ByteWidth
+  onByteWidthChange: (w: ByteWidth) => void
+  baseAddress: number
+  dataLength: number
+}) {
+  const [jumpAddr, setJumpAddr] = useState('')
+
+  const endAddress = baseAddress + dataLength - 1
+
+  const handleJump = useCallback(() => {
+    const trimmed = jumpAddr.trim().toLowerCase()
+    if (!trimmed) return
+    const addr = parseInt(trimmed, 16)
+    if (isNaN(addr) || addr < 0) {
+      useNotificationStore.getState().push({
+        type: 'warning',
+        title: '地址无效',
+        message: '请输入有效的十六进制地址',
+      })
+      return
+    }
+    if (addr < baseAddress || addr > endAddress) {
+      useNotificationStore.getState().push({
+        type: 'warning',
+        title: '地址超出范围',
+        message: `有效范围 ${formatHexAddr(baseAddress)} ~ ${formatHexAddr(endAddress)}`,
+      })
+      return
+    }
+
+    const offset = addr - baseAddress
+    window.dispatchEvent(new CustomEvent('hexviewer:jump', { detail: { offset } }))
+  }, [jumpAddr, baseAddress, endAddress])
+
+  return (
+    <div className="flex items-center gap-1.5 shrink-0">
+      {/* 字节宽度切换 */}
+      <div className="flex items-center rounded border border-border">
+        {([1, 2, 4] as ByteWidth[]).map((w) => (
+          <button
+            key={w}
+            onClick={() => onByteWidthChange(w)}
+            className={cn(
+              'px-1.5 py-0.5 text-[11px] font-medium transition-colors',
+              byteWidth === w
+                ? 'bg-primary text-primary-foreground'
+                : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+            )}
+          >
+            {w}B
+          </button>
+        ))}
+      </div>
+
+      {/* 地址跳转 — 固定 0x 前缀 */}
+      <div className="flex items-center gap-0.5 ml-auto">
+        <div className="flex items-center h-6 rounded-md border border-border overflow-hidden">
+          <span className="flex items-center px-1.5 h-full text-xs font-mono text-muted-foreground bg-muted/50 border-r border-border">0x</span>
+          <input
+            value={jumpAddr}
+            onChange={(e) => {
+              // 只允许十六进制字符
+              const filtered = e.target.value.replace(/[^0-9a-fA-F]/g, '')
+              setJumpAddr(filtered)
+            }}
+            onKeyDown={(e) => e.key === 'Enter' && handleJump()}
+            placeholder="08000000"
+            spellCheck={false}
+            autoComplete="off"
+            className="h-6 w-20 bg-transparent px-1.5 font-mono text-xs outline-none"
+          />
+        </div>
+        <Button variant="ghost" size="sm" onClick={handleJump} className="h-6 w-6 p-0">
+          <Search className="size-3" />
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+export function HexViewer({ base64Data, baseAddress, byteWidth }: HexViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const rowRefs = useRef<Map<number, HTMLDivElement>>(new Map())
-  const [byteWidth, setByteWidth] = useState<ByteWidth>(1)
-  const [jumpAddr, setJumpAddr] = useState('')
   const [highlightOffset, setHighlightOffset] = useState<number | null>(null)
 
-  // 每行字节数 = 16 / byteWidth
   const bytesPerRow = 16 / byteWidth
 
   const data = useMemo(() => decodeBase64(base64Data), [base64Data])
@@ -69,7 +152,7 @@ export function HexViewer({ base64Data, baseAddress }: HexViewerProps) {
         if (pos + byteWidth <= data.length) {
           if (byteWidth === 1) {
             hexPart += byteToHex(data[pos])
-            for (let j = 0; j < byteWidth; j++) asciiPart += byteToAscii(data[pos + j])
+            asciiPart += byteToAscii(data[pos])
           } else if (byteWidth === 2) {
             hexPart += wordToHex(readLeU16(data, pos), 2)
             asciiPart += byteToAscii(data[pos]) + byteToAscii(data[pos + 1])
@@ -78,7 +161,6 @@ export function HexViewer({ base64Data, baseAddress }: HexViewerProps) {
             asciiPart += byteToAscii(data[pos]) + byteToAscii(data[pos + 1]) + byteToAscii(data[pos + 2]) + byteToAscii(data[pos + 3])
           }
         } else {
-          // 不足一行，填充
           if (byteWidth === 1) {
             hexPart += '   '
             asciiPart += ' '
@@ -91,7 +173,6 @@ export function HexViewer({ base64Data, baseAddress }: HexViewerProps) {
           }
         }
         hexPart += ' '
-        // 每 4 字节加一个空格分隔（以 1B 模式为准）
         if (byteWidth === 1 && i === 7) hexPart += ' '
         if (byteWidth === 2 && i === 3) hexPart += ' '
         if (byteWidth === 4 && i === 1) hexPart += ' '
@@ -106,7 +187,6 @@ export function HexViewer({ base64Data, baseAddress }: HexViewerProps) {
     return result
   }, [data, baseAddress, byteWidth, bytesPerRow])
 
-  // 自动滚动到顶部
   useEffect(() => {
     if (containerRef.current) {
       containerRef.current.scrollTop = 0
@@ -114,96 +194,47 @@ export function HexViewer({ base64Data, baseAddress }: HexViewerProps) {
     setHighlightOffset(null)
   }, [base64Data, byteWidth])
 
-  // 地址跳转
-  const handleJump = useCallback(() => {
-    let addr: number
-    const trimmed = jumpAddr.trim().toLowerCase()
-    if (trimmed.startsWith('0x')) {
-      addr = parseInt(trimmed, 16)
-    } else if (/^[0-9a-f]+$/.test(trimmed)) {
-      addr = parseInt(trimmed, 16)
-    } else {
-      addr = parseInt(trimmed, 10)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail
+      const offset = detail.offset as number
+      const rowIndex = Math.floor(offset / bytesPerRow) * bytesPerRow
+      const el = rowRefs.current.get(rowIndex)
+      if (el) {
+        el.scrollIntoView({ block: 'center', behavior: 'smooth' })
+        setHighlightOffset(rowIndex)
+        setTimeout(() => setHighlightOffset(null), 3000)
+      }
     }
-    if (isNaN(addr)) return
-
-    const offset = addr - baseAddress
-    if (offset < 0 || offset >= data.length) return
-
-    // 找到最近的行
-    const rowIndex = Math.floor(offset / bytesPerRow) * bytesPerRow
-    const el = rowRefs.current.get(rowIndex)
-    if (el) {
-      el.scrollIntoView({ block: 'center', behavior: 'smooth' })
-      setHighlightOffset(rowIndex)
-      // 3 秒后取消高亮
-      setTimeout(() => setHighlightOffset(null), 3000)
-    }
-  }, [jumpAddr, baseAddress, data.length, bytesPerRow])
+    window.addEventListener('hexviewer:jump', handler)
+    return () => window.removeEventListener('hexviewer:jump', handler)
+  }, [bytesPerRow])
 
   return (
-    <div className="flex h-full flex-col">
-      {/* 工具栏 */}
-      <div className="flex items-center gap-2 border-b border-border px-2 py-1.5">
-        {/* 字节宽度切换 */}
-        <div className="flex items-center rounded-md border border-border">
-          {([1, 2, 4] as ByteWidth[]).map((w) => (
-            <button
-              key={w}
-              onClick={() => setByteWidth(w)}
-              className={cn(
-                'px-2.5 py-1 text-xs font-medium transition-colors',
-                byteWidth === w
-                  ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:bg-accent hover:text-foreground'
-              )}
-            >
-              {w}B
-            </button>
-          ))}
+    <div ref={containerRef} className="h-full overflow-auto font-mono text-xs leading-relaxed">
+      {rows.length === 0 ? (
+        <div className="flex h-full items-center justify-center text-muted-foreground">
+          <Loader2 className="mr-2 size-3 animate-spin" />
+          加载中...
         </div>
-
-        {/* 地址跳转 */}
-        <div className="flex items-center gap-1 ml-auto">
-          <Input
-            value={jumpAddr}
-            onChange={(e) => setJumpAddr(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleJump()}
-            placeholder="跳转地址 (hex)"
-            className="h-7 w-36 font-mono text-xs"
-          />
-          <Button variant="ghost" size="sm" onClick={handleJump} className="h-7 px-2">
-            <Search className="size-3.5" />
-          </Button>
-        </div>
-      </div>
-
-      {/* Hex 内容 */}
-      <div ref={containerRef} className="flex-1 overflow-auto font-mono text-xs leading-relaxed">
-        {rows.length === 0 ? (
-          <div className="flex h-full items-center justify-center text-muted-foreground">
-            <Loader2 className="mr-2 size-3 animate-spin" />
-            加载中...
+      ) : (
+        rows.map((row) => (
+          <div
+            key={row.offset}
+            ref={(el) => {
+              if (el) rowRefs.current.set(row.offset, el)
+            }}
+            className={cn(
+              'flex gap-3 px-2 py-0.5 hover:bg-muted/30',
+              highlightOffset === row.offset && 'bg-yellow-500/20 ring-1 ring-yellow-500/50'
+            )}
+          >
+            <span className="shrink-0 text-muted-foreground">{row.addr}</span>
+            <span className="shrink-0 text-foreground/80">{row.hex}</span>
+            <span className="text-muted-foreground">{row.ascii}</span>
           </div>
-        ) : (
-          rows.map((row) => (
-            <div
-              key={row.offset}
-              ref={(el) => {
-                if (el) rowRefs.current.set(row.offset, el)
-              }}
-              className={cn(
-                'flex gap-3 px-2 py-0.5 hover:bg-muted/30',
-                highlightOffset === row.offset && 'bg-yellow-500/20 ring-1 ring-yellow-500/50'
-              )}
-            >
-              <span className="shrink-0 text-muted-foreground">{row.addr}</span>
-              <span className="shrink-0 text-foreground/80">{row.hex}</span>
-              <span className="text-muted-foreground">{row.ascii}</span>
-            </div>
-          ))
-        )}
-      </div>
+        ))
+      )}
     </div>
   )
 }

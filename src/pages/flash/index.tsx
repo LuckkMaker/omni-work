@@ -1,115 +1,217 @@
-import { useEffect, useState, useCallback } from 'react'
-import { Eraser, Download, ShieldCheck, RotateCcw, Loader2 } from 'lucide-react'
+import { useState } from 'react'
+import {
+  Eraser,
+  Upload,
+  CheckCircle,
+  Download,
+  Play,
+  RotateCcw,
+  ScanSearch,
+  ChevronDown,
+  ShieldCheck,
+} from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { Separator } from '@/components/ui/separator'
 import { InfoPanel } from './components/InfoPanel'
 import { FilePanel } from './components/FilePanel'
+import { BinAddressDialog } from './components/BinAddressDialog'
+import { EraseSectorsDialog } from './components/EraseSectorsDialog'
+import { ReadBackDialog } from './components/ReadBackDialog'
 import { LogConsole, ResizeHandle } from './components/LogConsole'
-import { Button } from '@/components/ui/button'
-import { useProbeStore } from '@/stores/probe.store'
 import { useFlashStore } from '@/stores/flash.store'
-import { wsClient } from '@/services/ws'
-import type { FlashProgressEvent, LogEvent, FlashResult } from '@shared/types'
-
-const MIN_LOG_HEIGHT = 100
-const DEFAULT_LOG_HEIGHT = 160
+import { useProbeStore } from '@/stores/probe.store'
 
 export default function FlashPage() {
-  const { getSelectedProbe } = useProbeStore()
-  const {
+  const [logHeight, setLogHeight] = useState(180)
+
+  const { busy,
     filePath,
-    busy,
-    doErase,
+    doCheckBlank,
+    doEraseChip,
     doProgram,
     doVerify,
+    doStartApp,
     doReset,
-    onProgress,
-    onLog,
-    onComplete,
+    setShowEraseSectorsDialog,
+    setShowReadBackDialog,
   } = useFlashStore()
 
-  const [logHeight, setLogHeight] = useState(DEFAULT_LOG_HEIGHT)
+  const selectedProbe = useProbeStore((s) => {
+    const uid = s.selectedUid
+    return uid ? s.probes.find((p) => p.uid === uid) ?? null : null
+  })
+  const isConnected = selectedProbe?.state === 'connected'
 
-  const probe = getSelectedProbe()
-  const isConnected = probe?.state === 'connected'
-  const canOperate = isConnected && !busy
-
-  // 订阅 WebSocket 烧录事件
-  useEffect(() => {
-    const unsubProgress = wsClient.on('flash.progress', (data) => {
-      onProgress(data as FlashProgressEvent)
-    })
-    const unsubLog = wsClient.on('log', (data) => {
-      onLog(data as LogEvent)
-    })
-    const unsubComplete = wsClient.on('flash.complete', (data) => {
-      onComplete(data as FlashResult)
-    })
-    return () => {
-      unsubProgress()
-      unsubLog()
-      unsubComplete()
-    }
-  }, [onProgress, onLog, onComplete])
-
-  // 拖拽调整日志高度（向上拖增大）
-  const handleResize = useCallback((deltaY: number) => {
-    setLogHeight((prev) => {
-      const next = prev - deltaY
-      // 限制：最小 100px，最大页面一半
-      const maxHalf = window.innerHeight / 2
-      return Math.max(MIN_LOG_HEIGHT, Math.min(maxHalf, next))
-    })
-  }, [])
+  const handleResize = (delta: number) => {
+    setLogHeight((h) => Math.max(100, Math.min(window.innerHeight / 2, h - delta)))
+  }
 
   return (
-    <div className="flex h-full flex-col p-4">
-      {/* 顶部标题 + 操作按钮 */}
-      <div className="mb-3 flex items-center justify-between">
-        <div>
-          <h1 className="text-xl font-bold">Flash 烧录</h1>
-          <p className="text-xs text-muted-foreground">固件烧录、擦除、校验</p>
-        </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={doErase} disabled={!canOperate || busy} className="gap-1.5">
-            {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Eraser className="size-3.5" />}
-            擦除
-          </Button>
-          <Button size="sm" onClick={doProgram} disabled={!canOperate || !filePath || busy} className="gap-1.5">
-            {busy ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
-            烧录
-          </Button>
-          <Button variant="outline" size="sm" onClick={doVerify} disabled={!canOperate || !filePath || busy} className="gap-1.5">
-            <ShieldCheck className="size-3.5" />
-            校验
-          </Button>
-          <Button variant="outline" size="sm" onClick={doReset} disabled={!canOperate || busy} className="gap-1.5">
-            <RotateCcw className="size-3.5" />
-            复位
-          </Button>
-        </div>
+    <div className="flex h-full flex-col">
+      {/* 顶部工具栏 */}
+      <div className="flex items-center gap-1 border-b border-border px-3 py-2 shrink-0">
+        {/* Check Blank */}
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={!isConnected || busy}
+          onClick={doCheckBlank}
+          className="h-8 gap-1.5"
+        >
+          <ScanSearch className="size-3.5" />
+          Check Blank
+        </Button>
+
+        <Separator orientation="vertical" className="mx-1 h-5" />
+
+        {/* Erase 下拉 */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={!isConnected || busy}
+              className="h-8 gap-1"
+            >
+              <Eraser className="size-3.5" />
+              Erase
+              <ChevronDown className="size-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem onClick={doEraseChip}>
+              Erase Chip
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setShowEraseSectorsDialog(true)}>
+              Erase Sectors...
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <Separator orientation="vertical" className="mx-1 h-5" />
+
+        {/* Program 下拉 */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={!isConnected || busy || !filePath}
+              className="h-8 gap-1"
+            >
+              <Upload className="size-3.5" />
+              Program
+              <ChevronDown className="size-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem onClick={() => doProgram(false)}>
+              Program
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => doProgram(true)}>
+              <ShieldCheck className="size-3.5 mr-1.5" />
+              Program &amp; Verify
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <Separator orientation="vertical" className="mx-1 h-5" />
+
+        {/* Verify */}
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={!isConnected || busy || !filePath}
+          onClick={doVerify}
+          className="h-8 gap-1.5"
+        >
+          <CheckCircle className="size-3.5" />
+          Verify
+        </Button>
+
+        <Separator orientation="vertical" className="mx-1 h-5" />
+
+        {/* Read Back 下拉 */}
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={!isConnected || busy}
+              className="h-8 gap-1"
+            >
+              <Download className="size-3.5" />
+              Read Back
+              <ChevronDown className="size-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem onClick={() => setShowReadBackDialog(true)}>
+              Entire Chip...
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setShowReadBackDialog(true)}>
+              Range...
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <Separator orientation="vertical" className="mx-1 h-5" />
+
+        {/* Start Application */}
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={!isConnected || busy}
+          onClick={doStartApp}
+          className="h-8 gap-1.5"
+        >
+          <Play className="size-3.5" />
+          Start App
+        </Button>
+
+        {/* Reset */}
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={!isConnected || busy}
+          onClick={doReset}
+          className="h-8 gap-1.5"
+        >
+          <RotateCcw className="size-3.5" />
+          Reset
+        </Button>
       </div>
 
-      {/* 进度通过全局通知显示，不再占用页面空间 */}
-
-      {/* 主体：左右两列 */}
-      <div className="grid min-h-0 flex-1 grid-cols-[280px_1fr] gap-3">
-        {/* 左侧：信息区 */}
-        <div className="overflow-y-auto">
+      {/* 中间：左右两列 */}
+      <div className="flex flex-1 min-h-0 gap-2 p-2">
+        {/* 左列：信息面板 */}
+        <div className="w-[280px] shrink-0">
           <InfoPanel />
         </div>
-
-        {/* 右侧：文件区 */}
-        <div className="min-h-0 overflow-hidden">
+        {/* 右列：文件面板 */}
+        <div className="flex-1 min-w-0">
           <FilePanel />
         </div>
       </div>
 
-      {/* 拖拽分隔条 */}
-      <ResizeHandle onResize={handleResize} expanded={logHeight > DEFAULT_LOG_HEIGHT} />
+      {/* 可拖拽分隔 */}
+      <ResizeHandle onResize={handleResize} />
 
       {/* 底部：日志区 */}
       <div className="shrink-0">
         <LogConsole height={logHeight} />
       </div>
+
+      {/* 弹窗 */}
+      <BinAddressDialog />
+      <EraseSectorsDialog />
+      <ReadBackDialog />
     </div>
   )
 }

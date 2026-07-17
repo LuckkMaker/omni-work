@@ -17,8 +17,11 @@ export async function parseFile(filePath: string): Promise<FirmwareFileInfo> {
 }
 
 /** 读取固件文件数据，返回 base64 编码的二进制数据和地址段 */
-export async function readFile(filePath: string): Promise<FileReadResult> {
+export async function readFile(filePath: string, baseAddress?: number): Promise<FileReadResult> {
   const client = await api()
-  const { data } = await client.post('/api/files/read', { file_path: filePath })
+  const { data } = await client.post('/api/files/read', {
+    file_path: filePath,
+    base_address: baseAddress,
+  })
   return data as FileReadResult
 }

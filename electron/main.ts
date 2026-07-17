@@ -75,6 +75,20 @@ app.whenReady().then(async () => {
     return result.filePaths[0]
   })
 
+  // IPC: 保存文件对话框
+  ipcMain.handle('dialog:save-file', async (_event, defaultName: string) => {
+    const result = await dialog.showSaveDialog(mainWindow!, {
+      title: '保存文件',
+      defaultPath: defaultName || 'flash_dump.bin',
+      filters: [
+        { name: '二进制文件', extensions: ['bin'] },
+        { name: '所有文件', extensions: ['*'] },
+      ],
+    })
+    if (result.canceled) return null
+    return result.filePath
+  })
+
   createWindow()
 
   app.on('activate', () => {

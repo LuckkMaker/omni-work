@@ -65,11 +65,11 @@ from ...coresight.coresight_target import CoreSightTarget
 # from . import target_nRF54L15
 # from . import target_nRF91xx
 # from . import target_S32K344
-from . import target_STM32F103RC
+from .st import target_STM32F103RC
 # from . import target_STM32F051T8
 # from . import target_STM32F412xx
-# from . import target_STM32F429xx
-from . import target_STM32F407xx
+from .st import target_STM32F429xx
+from .st import target_STM32F407xx
 # from . import target_STM32F439xx
 # from . import target_STM32L432xx
 # from . import target_STM32L475xx
@@ -148,10 +148,11 @@ from . import target_STM32F407xx
 # from . import target_Air32F103xx
 # from . import target_AMA3B1KK
 
-from . import target_APM32F403xx
-from . import target_G32F031
-from . import target_G32M3101
-from . import target_G32F002
+from .geehy import target_APM32F403xx
+from .geehy import target_APM32F407xx
+from .geehy import target_G32F031
+from .geehy import target_G32M3101
+from .geehy import target_G32F002
 
 ## @brief Dictionary of all builtin targets.
 #
@@ -161,9 +162,11 @@ from . import target_G32F002
 BUILTIN_TARGETS = {
           'cortex_m': CoreSightTarget,
           'apm32f403xb': target_APM32F403xx.APM32F403xB,
+          'apm32f407xg': target_APM32F407xx.APM32F407xG,
           'g32f002x5' : target_G32F002.G32F002x5,
           'g32f031x8' : target_G32F031.G32F031x8,
           'g32m3101x8' : target_G32M3101.G32M3101x8,
           'stm32f103rc' : target_STM32F103RC.STM32F103RC,
           'stm32f407xg' : target_STM32F407xx.STM32F407xG,
+          'stm32f429xg' : target_STM32F429xx.STM32F429xG,
          }

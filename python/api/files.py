@@ -10,6 +10,7 @@ router = APIRouter()
 
 class ParseRequest(BaseModel):
     file_path: str
+    base_address: int | None = None
 
 
 @router.post("/parse")
@@ -51,7 +52,7 @@ async def read_file(req: ParseRequest):
             data = f.read()
         return {
             "format": "bin",
-            "base_address": 0,
+            "base_address": req.base_address or 0,
             "data": base64.b64encode(data).decode("ascii"),
             "size": len(data),
         }

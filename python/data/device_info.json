@@ -11,6 +11,17 @@
     "ram_base_address": "0x20000000"
   },
   {
+    "part_number": "stm32f429xg",
+    "vendor": "ST",
+    "display_name": "STM32F429xG",
+    "core": "Cortex-M4",
+    "num_cores": 1,
+    "flash_size": 1024,
+    "ram_size": 256,
+    "flash_base_address": "0x08000000",
+    "ram_base_address": "0x20000000"
+  },
+  {
     "part_number": "apm32f403xb",
     "vendor": "Geehy",
     "display_name": "APM32F403xB",
@@ -18,6 +29,17 @@
     "num_cores": 1,
     "flash_size": 128,
     "ram_size": 32,
+    "flash_base_address": "0x08000000",
+    "ram_base_address": "0x20000000"
+  },
+  {
+    "part_number": "apm32f407xg",
+    "vendor": "Geehy",
+    "display_name": "APM32F407xG",
+    "core": "Cortex-M4",
+    "num_cores": 1,
+    "flash_size": 1024,
+    "ram_size": 192,
     "flash_base_address": "0x08000000",
     "ram_base_address": "0x20000000"
   },

@@ -420,6 +420,30 @@ class PyOCDBackend(BackendInterface):
                 event_manager.emit("flash.progress", {
                     "phase": "erase", "current": 1, "total": 1, "percent": 100,
                 })
+            elif erase_type == "sector_range":
+                # 范围擦除：遍历 address ~ address+size 内的所有扇区
+                end_addr = address + size
+                event_manager.log("info", f"Erasing sectors 0x{address:08X}~0x{end_addr:08X}...")
+                flash.init(Flash.Operation.ERASE)
+                try:
+                    cur = address
+                    erased = 0
+                    while cur < end_addr:
+                        flash.erase_sector(cur)
+                        erased += 1
+                        # 获取该地址所在扇区的信息以计算下一个扇区
+                        page_info = flash.get_page_info(cur)
+                        sector_size = page_info.size if page_info else 0x1000
+                        cur += sector_size
+                        event_manager.emit("flash.progress", {
+                            "phase": "erase", "current": erased, "total": 0,
+                            "percent": round(cur / end_addr * 100, 2) if end_addr > address else 100,
+                        })
+                finally:
+                    flash.uninit()
+                event_manager.emit("flash.progress", {
+                    "phase": "erase", "current": 1, "total": 1, "percent": 100,
+                })
             else:
                 event_manager.log("info", f"Erasing sector at 0x{address:08X}...")
                 event_manager.emit("flash.progress", {
@@ -453,6 +477,7 @@ class PyOCDBackend(BackendInterface):
         file_path: str,
         verify: bool = True,
         reset: bool = True,
+        base_address: int | None = None,
     ) -> FlashResult:
         """烧录固件"""
         session = self._get_session(probe_uid)
@@ -470,6 +495,10 @@ class PyOCDBackend(BackendInterface):
 
             event_manager.log("info", f"Programming {file_size} bytes from {os.path.basename(file_path)}...")
 
+            # 烧录前先复位并暂停目标（与 pyocd flash CLI 的 pre_reset 行为一致）
+            # 原因：目标可能正在运行用户代码，Flash 控制器状态未知，直接编程会失败
+            session.target.reset_and_halt()
+
             def progress_callback(percent: float):
                 event_manager.emit("flash.progress", {
                     "phase": "program",
@@ -482,10 +511,13 @@ class PyOCDBackend(BackendInterface):
             ext = os.path.splitext(file_path)[1].lower()
             kwargs = {}
             if ext == ".bin":
-                # BIN 文件需要指定基地址（FileProgrammer 参数名为 base_address）
-                region = session.target.memory_map.get_boot_memory()
-                if region:
-                    kwargs["base_address"] = region.start
+                # BIN 文件需要指定基地址：优先使用用户传入的，回退到 boot_memory
+                if base_address is not None:
+                    kwargs["base_address"] = base_address
+                else:
+                    region = session.target.memory_map.get_boot_memory()
+                    if region:
+                        kwargs["base_address"] = region.start
                 event_manager.log("info", f"BIN file, base address: 0x{kwargs.get('base_address', 0):08X}")
 
             # 计算实际数据大小（HEX/ELF 文件大小 ≠ 数据大小）
@@ -688,6 +720,187 @@ class PyOCDBackend(BackendInterface):
                     if data:
                         segments.append((section.header.sh_addr, data))
         return segments
+
+    def check_blank(
+        self,
+        probe_uid: str,
+        address: int | None = None,
+        size: int | None = None,
+    ) -> dict:
+        """检查 Flash 是否为空白（全 0xFF）
+
+        Args:
+            address: 起始地址，None 则从 flash 起始
+            size: 检查大小，None 则检查整个 flash
+        Returns:
+            dict: success, is_blank, blank_bytes, total_bytes, first_nonblank_addr, duration_ms
+        """
+        session = self._get_session(probe_uid)
+        if not session:
+            return {"success": False, "error": "Not connected"}
+
+        start_time = time.time()
+        try:
+            from pyocd.core.memory_map import MemoryType
+
+            flash_regions = [r for r in session.target.memory_map if r.type == MemoryType.FLASH]
+            if not flash_regions:
+                return {"success": False, "error": "No flash memory found"}
+
+            # 确定检查范围
+            if address is not None and size is not None:
+                regions_to_check = []
+                for r in flash_regions:
+                    if r.start + r.length > address and r.start < address + size:
+                        regions_to_check.append(r)
+            else:
+                regions_to_check = flash_regions
+
+            session.target.halt()
+
+            total_bytes = 0
+            blank_bytes = 0
+            first_nonblank_addr = None
+            chunk_size = 4096
+
+            event_manager.emit("flash.progress", {
+                "phase": "verify", "current": 0, "total": 0, "percent": 0,
+            })
+
+            for region in regions_to_check:
+                start = max(region.start, address) if address else region.start
+                end = min(region.start + region.length, address + size) if (address and size) else region.start + region.length
+                region_total = end - start
+
+                for offset in range(0, region_total, chunk_size):
+                    read_len = min(chunk_size, region_total - offset)
+                    data = session.target.read_memory_block8(start + offset, read_len)
+                    total_bytes += read_len
+
+                    for i, b in enumerate(data):
+                        if b != 0xFF:
+                            if first_nonblank_addr is None:
+                                first_nonblank_addr = start + offset + i
+                        else:
+                            blank_bytes += 1
+
+                    event_manager.emit("flash.progress", {
+                        "phase": "verify",
+                        "current": total_bytes,
+                        "total": sum(r.length for r in regions_to_check),
+                        "percent": round(total_bytes / sum(r.length for r in regions_to_check) * 100, 2) if regions_to_check else 100,
+                    })
+
+            is_blank = (first_nonblank_addr is None)
+            duration = int((time.time() - start_time) * 1000)
+            event_manager.emit("flash.progress", {
+                "phase": "verify", "current": total_bytes, "total": total_bytes, "percent": 100,
+            })
+
+            if is_blank:
+                event_manager.log("info", f"Check blank: PASSED ({total_bytes} bytes all 0xFF, {duration}ms)")
+            else:
+                event_manager.log("info", f"Check blank: FAILED (first non-blank at 0x{first_nonblank_addr:08X}, {duration}ms)")
+
+            return {
+                "success": True,
+                "is_blank": is_blank,
+                "blank_bytes": blank_bytes,
+                "total_bytes": total_bytes,
+                "first_nonblank_addr": first_nonblank_addr,
+                "duration_ms": duration,
+            }
+        except Exception as e:
+            logger.exception("Check blank failed")
+            event_manager.log("error", f"Check blank failed: {e}")
+            return {"success": False, "error": str(e), "duration_ms": int((time.time() - start_time) * 1000)}
+
+    def read_back(
+        self,
+        probe_uid: str,
+        read_type: str = "chip",
+        address: int = 0,
+        size: int = 0,
+        output_path: str = "",
+    ) -> dict:
+        """读取 Flash 内容并保存到文件
+
+        Args:
+            read_type: "chip" 遍历所有 flash region，"range" 读取指定范围
+            address: 起始地址（range 模式）
+            size: 读取大小（range 模式）
+            output_path: 保存文件路径
+        """
+        session = self._get_session(probe_uid)
+        if not session:
+            return {"success": False, "error": "Not connected"}
+
+        start_time = time.time()
+        try:
+            from pyocd.core.memory_map import MemoryType
+
+            flash_regions = [r for r in session.target.memory_map if r.type == MemoryType.FLASH]
+            if not flash_regions:
+                return {"success": False, "error": "No flash memory found"}
+
+            session.target.halt()
+
+            chunk_size = 4096
+            total_read = 0
+
+            # 计算总大小用于进度
+            if read_type == "chip":
+                total_size = sum(r.length for r in flash_regions)
+            else:
+                total_size = size
+
+            event_manager.emit("flash.progress", {
+                "phase": "program", "current": 0, "total": total_size, "percent": 0,
+            })
+
+            with open(output_path, "wb") as f:
+                if read_type == "chip":
+                    for region in flash_regions:
+                        for offset in range(0, region.length, chunk_size):
+                            read_len = min(chunk_size, region.length - offset)
+                            data = session.target.read_memory_block8(region.start + offset, read_len)
+                            f.write(bytes(data))
+                            total_read += read_len
+                            event_manager.emit("flash.progress", {
+                                "phase": "program",
+                                "current": total_read,
+                                "total": total_size,
+                                "percent": round(total_read / total_size * 100, 2),
+                            })
+                else:
+                    for offset in range(0, size, chunk_size):
+                        read_len = min(chunk_size, size - offset)
+                        data = session.target.read_memory_block8(address + offset, read_len)
+                        f.write(bytes(data))
+                        total_read += read_len
+                        event_manager.emit("flash.progress", {
+                            "phase": "program",
+                            "current": total_read,
+                            "total": total_size,
+                            "percent": round(total_read / total_size * 100, 2),
+                        })
+
+            event_manager.emit("flash.progress", {
+                "phase": "program", "current": total_read, "total": total_read, "percent": 100,
+            })
+
+            duration = int((time.time() - start_time) * 1000)
+            event_manager.log("info", f"Read back {total_read} bytes to {os.path.basename(output_path)} ({duration}ms)")
+            return {
+                "success": True,
+                "bytes_read": total_read,
+                "output_path": output_path,
+                "duration_ms": duration,
+            }
+        except Exception as e:
+            logger.exception("Read back failed")
+            event_manager.log("error", f"Read back failed: {e}")
+            return {"success": False, "error": str(e), "duration_ms": int((time.time() - start_time) * 1000)}
 
     def reset(self, probe_uid: str, reset_type: str = "hw", run: bool = True) -> bool:
         """复位目标"""
