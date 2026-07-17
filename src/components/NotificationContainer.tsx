@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react'
-import { Info, CheckCircle2, AlertTriangle, XCircle, Loader2, X } from 'lucide-react'
+import { Info, CheckCircle2, AlertTriangle, XCircle, Loader2, X, Ban } from 'lucide-react'
 import { useNotificationStore, type Notification } from '@/stores/notification.store'
+import { useFlashStore } from '@/stores/flash.store'
 import { cn } from '@/lib/utils'
 
 const typeConfig = {
@@ -52,20 +53,29 @@ function NotificationItem({ notification }: { notification: Notification }) {
         {notification.message && (
           <div className="mt-0.5 text-xs text-muted-foreground break-words">{notification.message}</div>
         )}
-        {/* 进度条 */}
-        {notification.type === 'progress' && notification.progress != null && (
-          <div className="mt-2">
-            <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
-              <div
-                className="h-full rounded-full bg-primary transition-all duration-300"
-                style={{ width: `${notification.progress}%` }}
-              />
-            </div>
-            <div className="mt-1 text-right text-[10px] tabular-nums text-muted-foreground">
-              {notification.progress.toFixed(1)}%
-            </div>
+        {/* 进度条 + 取消按钮 */}
+      {notification.type === 'progress' && notification.progress != null && (
+        <div className="mt-2">
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-muted">
+            <div
+              className="h-full rounded-full bg-primary transition-all duration-300"
+              style={{ width: `${notification.progress}%` }}
+            />
           </div>
-        )}
+          <div className="mt-1 flex items-center justify-between">
+            <span className="text-[10px] tabular-nums text-muted-foreground">
+              {notification.progress.toFixed(1)}%
+            </span>
+            <button
+              onClick={() => useFlashStore.getState().cancelOperation()}
+              className="flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-destructive transition-colors"
+            >
+              <Ban className="size-3" />
+              取消
+            </button>
+          </div>
+        </div>
+      )}
       </div>
 
       {/* 关闭按钮 */}

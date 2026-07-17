@@ -18,18 +18,18 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Separator } from '@/components/ui/separator'
-import { InfoPanel } from './components/InfoPanel'
 import { FilePanel } from './components/FilePanel'
 import { BinAddressDialog } from './components/BinAddressDialog'
 import { EraseSectorsDialog } from './components/EraseSectorsDialog'
 import { ReadBackDialog } from './components/ReadBackDialog'
 import { CompareDialog } from './components/CompareDialog'
+import { InfoPanel } from './components/InfoPanel'
 import { LogConsole, ResizeHandle } from './components/LogConsole'
 import { useFlashStore } from '@/stores/flash.store'
 import { useProbeStore } from '@/stores/probe.store'
 
 export default function FlashPage() {
-  const [logHeight, setLogHeight] = useState(180)
+  const [bottomHeight, setBottomHeight] = useState(200)
 
   const {
     busy,
@@ -41,6 +41,7 @@ export default function FlashPage() {
     doReset,
     setShowEraseSectorsDialog,
     setShowReadBackDialog,
+    setReadBackMode,
   } = useFlashStore()
 
   const selectedProbe = useProbeStore((s) => {
@@ -49,77 +50,51 @@ export default function FlashPage() {
   })
   const isConnected = selectedProbe?.state === 'connected'
 
-  // 获取当前活跃 tab 判断 Program/Verify 是否可用
   const activeTab = useFlashStore((s) => s.tabs.find((t) => t.id === s.activeTabId) ?? null)
   const canProgram = activeTab?.type === 'file' && !!activeTab.filePath
-  const canReadBack = !!activeTab // 任何 tab 都可以 read back
+  const canReadBack = !!activeTab
 
   const handleResize = (delta: number) => {
-    setLogHeight((h) => Math.max(100, Math.min(window.innerHeight / 2, h - delta)))
+    setBottomHeight((h) => Math.max(120, Math.min(window.innerHeight / 2, h - delta)))
   }
 
   return (
     <div className="flex h-full flex-col">
       {/* 顶部工具栏 */}
       <div className="flex items-center gap-1 border-b border-border px-3 py-2 shrink-0">
-        {/* Check Blank */}
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={!isConnected || busy}
-          onClick={doCheckBlank}
-          className="h-8 gap-1.5"
-        >
+        <Button variant="ghost" size="sm" disabled={!isConnected || busy} onClick={doCheckBlank} className="h-8 gap-1.5">
           <ScanSearch className="size-3.5" />
           Check Blank
         </Button>
 
         <Separator orientation="vertical" className="mx-1 h-5" />
 
-        {/* Erase 下拉 */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={!isConnected || busy}
-              className="h-8 gap-1"
-            >
+            <Button variant="ghost" size="sm" disabled={!isConnected || busy} className="h-8 gap-1">
               <Eraser className="size-3.5" />
               Erase
               <ChevronDown className="size-3" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
-            <DropdownMenuItem onClick={doEraseChip}>
-              Erase Chip
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setShowEraseSectorsDialog(true)}>
-              Erase Sectors...
-            </DropdownMenuItem>
+            <DropdownMenuItem onClick={doEraseChip}>Erase Chip</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => setShowEraseSectorsDialog(true)}>Erase Sectors...</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
 
         <Separator orientation="vertical" className="mx-1 h-5" />
 
-        {/* Program 下拉 */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={!isConnected || busy || !canProgram}
-              className="h-8 gap-1"
-            >
+            <Button variant="ghost" size="sm" disabled={!isConnected || busy || !canProgram} className="h-8 gap-1">
               <Upload className="size-3.5" />
               Program
               <ChevronDown className="size-3" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
-            <DropdownMenuItem onClick={() => doProgram(false)}>
-              Program
-            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => doProgram(false)}>Program</DropdownMenuItem>
             <DropdownMenuItem onClick={() => doProgram(true)}>
               <ShieldCheck className="size-3.5 mr-1.5" />
               Program &amp; Verify
@@ -129,89 +104,57 @@ export default function FlashPage() {
 
         <Separator orientation="vertical" className="mx-1 h-5" />
 
-        {/* Verify */}
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={!isConnected || busy || !canProgram}
-          onClick={doVerify}
-          className="h-8 gap-1.5"
-        >
+        <Button variant="ghost" size="sm" disabled={!isConnected || busy || !canProgram} onClick={doVerify} className="h-8 gap-1.5">
           <CheckCircle className="size-3.5" />
           Verify
         </Button>
 
         <Separator orientation="vertical" className="mx-1 h-5" />
 
-        {/* Read Back 下拉 */}
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={!isConnected || busy || !canReadBack}
-              className="h-8 gap-1"
-            >
+            <Button variant="ghost" size="sm" disabled={!isConnected || busy || !canReadBack} className="h-8 gap-1">
               <Download className="size-3.5" />
               Read Back
               <ChevronDown className="size-3" />
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
-            <DropdownMenuItem onClick={() => setShowReadBackDialog(true)}>
-              Entire Chip...
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setShowReadBackDialog(true)}>
-              Range...
-            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => doReadBack('chip')}>Entire Chip</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => { setReadBackMode('sectors'); setShowReadBackDialog(true) }}>Sectors...</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => { setReadBackMode('range'); setShowReadBackDialog(true) }}>Range...</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
 
         <Separator orientation="vertical" className="mx-1 h-5" />
 
-        {/* Start Application */}
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={!isConnected || busy}
-          onClick={doStartApp}
-          className="h-8 gap-1.5"
-        >
+        <Button variant="ghost" size="sm" disabled={!isConnected || busy} onClick={doStartApp} className="h-8 gap-1.5">
           <Play className="size-3.5" />
           Start App
         </Button>
 
-        {/* Reset */}
-        <Button
-          variant="ghost"
-          size="sm"
-          disabled={!isConnected || busy}
-          onClick={doReset}
-          className="h-8 gap-1.5"
-        >
+        <Button variant="ghost" size="sm" disabled={!isConnected || busy} onClick={doReset} className="h-8 gap-1.5">
           <RotateCcw className="size-3.5" />
           Reset
         </Button>
       </div>
 
-      {/* 中间：左右两列 */}
-      <div className="flex flex-1 min-h-0 gap-2 p-2">
-        {/* 左列：信息面板 */}
-        <div className="w-[280px] shrink-0">
-          <InfoPanel />
-        </div>
-        {/* 右列：文件面板（多 Tab） */}
-        <div className="flex-1 min-w-0">
-          <FilePanel />
-        </div>
+      {/* 中间：文件区域（全宽） */}
+      <div className="flex-1 min-h-0 p-2">
+        <FilePanel />
       </div>
 
       {/* 可拖拽分隔 */}
       <ResizeHandle onResize={handleResize} />
 
-      {/* 底部：日志区 */}
-      <div className="shrink-0">
-        <LogConsole height={logHeight} />
+      {/* 底部：日志 4/5 + 信息面板 1/5 */}
+      <div className="shrink-0 flex gap-0 border-t border-border" style={{ height: bottomHeight }}>
+        <div className="flex-1 min-w-0">
+          <LogConsole height={bottomHeight} />
+        </div>
+        <div className="w-1/5 min-w-[180px] border-l border-border overflow-hidden">
+          <InfoPanel />
+        </div>
       </div>
 
       {/* 弹窗 */}

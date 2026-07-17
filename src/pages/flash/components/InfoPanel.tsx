@@ -1,6 +1,7 @@
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Usb, Cpu, MemoryStick } from 'lucide-react'
+import { useState } from 'react'
+import { Usb, Cpu, MemoryStick, ChevronRight } from 'lucide-react'
 import { useProbeStore, SPEED_OPTIONS } from '@/stores/probe.store'
+import { cn } from '@/lib/utils'
 
 function formatHex(addr: number): string {
   return `0x${addr.toString(16).toUpperCase().padStart(8, '0')}`
@@ -17,11 +18,38 @@ function formatKb(kb: number): string {
   return `${kb} KB`
 }
 
-function InfoRow({ label, value }: { label: string; value: string | null | undefined }) {
+function Row({ label, value }: { label: string; value: string | null | undefined }) {
   return (
-    <div className="flex justify-between py-1 text-sm">
-      <span className="text-muted-foreground">{label}</span>
-      <span className="font-mono font-medium">{value ?? '-'}</span>
+    <div className="flex justify-between gap-2 py-0.5 text-[11px] leading-tight">
+      <span className="text-muted-foreground shrink-0">{label}</span>
+      <span className="font-mono text-right truncate">{value ?? '-'}</span>
+    </div>
+  )
+}
+
+function CollapsibleSection({
+  icon,
+  title,
+  defaultOpen = false,
+  children,
+}: {
+  icon: React.ReactNode
+  title: string
+  defaultOpen?: boolean
+  children: React.ReactNode
+}) {
+  const [open, setOpen] = useState(defaultOpen)
+  return (
+    <div className="border-b border-border/50 last:border-b-0">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center gap-1.5 px-2 py-1.5 hover:bg-muted/30 transition-colors"
+      >
+        <ChevronRight className={cn('size-3 transition-transform shrink-0', open && 'rotate-90')} />
+        <span className="text-muted-foreground shrink-0">{icon}</span>
+        <span className="text-xs font-medium truncate">{title}</span>
+      </button>
+      {open && <div className="px-2 pb-1.5 pl-6">{children}</div>}
     </div>
   )
 }
@@ -39,60 +67,32 @@ export function InfoPanel() {
   const target = getSelectedTarget()
   const isConnected = probe?.state === 'connected'
   const deviceInfo = target ? getDeviceInfo(target.part_number) : undefined
-
   const speedLabel = SPEED_OPTIONS.find((s) => s.value === pendingSpeed)?.label ?? `${pendingSpeed} Hz`
 
   return (
-    <div className="space-y-3">
-      {/* 接口信息 */}
-      <Card>
-        <CardHeader className="pb-2">
-          <div className="flex items-center gap-2">
-            <Usb className="size-4 text-muted-foreground" />
-            <CardTitle className="text-sm">接口信息</CardTitle>
-          </div>
-        </CardHeader>
-        <CardContent className="pt-0">
-          <InfoRow label="接口类型" value={pendingInterface.toUpperCase()} />
-          <InfoRow label="速度" value={speedLabel} />
-          <InfoRow label="状态" value={isConnected ? '已连接' : '未连接'} />
-        </CardContent>
-      </Card>
+    <div className="h-full overflow-y-auto">
+      <CollapsibleSection icon={<Usb className="size-3" />} title="接口信息" defaultOpen>
+        <Row label="接口" value={pendingInterface.toUpperCase()} />
+        <Row label="速度" value={speedLabel} />
+        <Row label="状态" value={isConnected ? '已连接' : '未连接'} />
+      </CollapsibleSection>
 
-      {/* 目标设备信息 */}
-      <Card>
-        <CardHeader className="pb-2">
-          <div className="flex items-center gap-2">
-            <Cpu className="size-4 text-muted-foreground" />
-            <CardTitle className="text-sm">目标设备信息</CardTitle>
-          </div>
-        </CardHeader>
-        <CardContent className="pt-0">
-          <InfoRow label="设备" value={deviceInfo?.display_name ?? target?.part_number} />
-          <InfoRow label="制造商" value={deviceInfo?.vendor} />
-          <InfoRow label="内核" value={target?.core} />
-          <InfoRow label="大小端" value={target?.endian ?? 'Little'} />
-          <InfoRow label="Core ID" value={target?.core_id} />
-          <InfoRow label="Target RAM" value={deviceInfo ? `${formatKb(deviceInfo.ram_size)} (${deviceInfo.ram_base_address})` : null} />
-        </CardContent>
-      </Card>
+      <CollapsibleSection icon={<Cpu className="size-3" />} title="目标设备" defaultOpen>
+        <Row label="设备" value={deviceInfo?.display_name ?? target?.part_number} />
+        <Row label="厂商" value={deviceInfo?.vendor} />
+        <Row label="内核" value={target?.core} />
+        <Row label="大小端" value={target?.endian ?? 'Little'} />
+        <Row label="Core ID" value={target?.core_id} />
+        <Row label="RAM" value={deviceInfo ? `${formatKb(deviceInfo.ram_size)} (${deviceInfo.ram_base_address})` : null} />
+      </CollapsibleSection>
 
-      {/* Flash 信息 */}
-      <Card>
-        <CardHeader className="pb-2">
-          <div className="flex items-center gap-2">
-            <MemoryStick className="size-4 text-muted-foreground" />
-            <CardTitle className="text-sm">Flash 信息</CardTitle>
-          </div>
-        </CardHeader>
-        <CardContent className="pt-0">
-          <InfoRow label="Bank" value="Bank 1" />
-          <InfoRow label="基地址" value={target ? formatHex(target.flash_start) : (deviceInfo?.flash_base_address ?? null)} />
-          <InfoRow label="大小" value={target ? formatSize(target.flash_size) : (deviceInfo ? formatKb(deviceInfo.flash_size) : null)} />
-          <InfoRow label="Page 大小" value={target ? formatSize(target.page_size) : null} />
-          <InfoRow label="Sector 大小" value={target ? formatSize(target.sector_size) : null} />
-        </CardContent>
-      </Card>
+      <CollapsibleSection icon={<MemoryStick className="size-3" />} title="Flash 信息" defaultOpen>
+        <Row label="Bank" value="Bank 1" />
+        <Row label="基地址" value={target ? formatHex(target.flash_start) : (deviceInfo?.flash_base_address ?? null)} />
+        <Row label="大小" value={target ? formatSize(target.flash_size) : (deviceInfo ? formatKb(deviceInfo.flash_size) : null)} />
+        <Row label="Page" value={target ? formatSize(target.page_size) : null} />
+        <Row label="Sector" value={target ? formatSize(target.sector_size) : null} />
+      </CollapsibleSection>
     </div>
   )
 }

@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import { Loader2, Save, GitCompare, X, Cpu, FileText } from 'lucide-react'
+import { Loader2, Save, GitCompare, Cpu, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { HexViewer, HexToolbar, type ByteWidth } from './HexViewer'
+import { CompareView } from './CompareView'
 import { TabBar } from './TabBar'
 import { useFlashStore } from '@/stores/flash.store'
-import { cn } from '@/lib/utils'
 
 function formatSize(bytes: number): string {
   if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -25,12 +25,30 @@ export function FilePanel() {
     setOption,
     saveTabAs,
     setShowCompareDialog,
-    clearDiff,
   } = useFlashStore()
 
   const [byteWidth, setByteWidth] = useState<ByteWidth>(1)
 
   const activeTab = tabs.find((t) => t.id === activeTabId) ?? null
+
+  // compare tab 渲染 CompareView
+  if (activeTab?.type === 'compare' && activeTab.data && activeTab.rightData) {
+    return (
+      <div className="flex h-full flex-col">
+        <TabBar />
+        <div className="flex-1 min-h-0">
+          <CompareView
+            leftBase64={activeTab.data}
+            leftBaseAddress={activeTab.baseAddress}
+            leftTitle={activeTab.leftTitle ?? 'Left'}
+            rightBase64={activeTab.rightData}
+            rightBaseAddress={activeTab.rightBaseAddress ?? activeTab.baseAddress}
+            rightTitle={activeTab.rightTitle ?? 'Right'}
+          />
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -75,17 +93,10 @@ export function FilePanel() {
               <Save className="size-3" />
               Save As
             </Button>
-            {activeTab.diffData ? (
-              <Button variant="ghost" size="sm" onClick={clearDiff} className="h-6 gap-1 px-1.5 text-xs text-red-500">
-                <X className="size-3" />
-                Clear Diff
-              </Button>
-            ) : (
-              <Button variant="ghost" size="sm" onClick={() => setShowCompareDialog(true)} className="h-6 gap-1 px-1.5 text-xs">
-                <GitCompare className="size-3" />
-                Compare
-              </Button>
-            )}
+            <Button variant="ghost" size="sm" onClick={() => setShowCompareDialog(true)} className="h-6 gap-1 px-1.5 text-xs">
+              <GitCompare className="size-3" />
+              Compare
+            </Button>
 
             {/* 右侧：文件信息 */}
             <div className="ml-auto text-[11px] text-muted-foreground">
@@ -103,8 +114,6 @@ export function FilePanel() {
               base64Data={activeTab.data}
               baseAddress={activeTab.baseAddress}
               byteWidth={byteWidth}
-              diffBase64={activeTab.diffData}
-              diffBaseAddress={activeTab.diffBaseAddress}
             />
           </div>
         </>

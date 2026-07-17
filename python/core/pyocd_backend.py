@@ -49,8 +49,21 @@ class PyOCDBackend(BackendInterface):
         self._known_probe_uids: set[str] = set()
         self._pending_target: str | None = None  # 连接时使用的目标型号
         self._probe_info_cache: dict[str, ProbeInfo] = {}  # 缓存探针初始信息（避免连接后名称变化）
+        self._cancel_flag: threading.Event = threading.Event()
 
     # ── 探针扫描 ──────────────────────────────────────────────
+
+    def cancel_operation(self):
+        """取消正在进行的 Flash 操作（check_blank / read_back / erase / program）"""
+        self._cancel_flag.set()
+        event_manager.log("warning", "操作取消请求已发送")
+
+    def _check_cancel(self) -> bool:
+        """检查取消标志，如果已取消则重置并返回 True"""
+        if self._cancel_flag.is_set():
+            self._cancel_flag.clear()
+            return True
+        return False
 
     def list_probes(self) -> list[ProbeInfo]:
         """扫描所有已连接的 CMSIS-DAP 探针（缓存初始信息，避免连接后名称变化）"""
@@ -422,25 +435,43 @@ class PyOCDBackend(BackendInterface):
                 })
             elif erase_type == "sector_range":
                 # 范围擦除：遍历 address ~ address+size 内的所有扇区
+                # 关键：需要找到每个地址所在的 region，用 region.sector_size 对齐
+                from pyocd.core.memory_map import MemoryType
+
+                flash_regions = [r for r in session.target.memory_map if r.type == MemoryType.FLASH]
                 end_addr = address + size
                 event_manager.log("info", f"Erasing sectors 0x{address:08X}~0x{end_addr:08X}...")
-                flash.init(Flash.Operation.ERASE)
-                try:
-                    cur = address
-                    erased = 0
-                    while cur < end_addr:
-                        flash.erase_sector(cur)
+
+                cur = address
+                erased = 0
+                while cur < end_addr:
+                    # 找到 cur 所在的 flash region
+                    region = None
+                    for r in flash_regions:
+                        if r.start <= cur < r.start + r.length:
+                            region = r
+                            break
+                    if not region:
+                        event_manager.log("warning", f"No flash region at 0x{cur:08X}, skipping")
+                        cur += 0x1000
+                        continue
+
+                    sector_size = region.sector_size
+                    # 对齐到 sector 边界
+                    sector_aligned = region.start + ((cur - region.start) // sector_size) * sector_size
+
+                    flash = region.flash
+                    flash.init(Flash.Operation.ERASE)
+                    try:
+                        flash.erase_sector(sector_aligned)
                         erased += 1
-                        # 获取该地址所在扇区的信息以计算下一个扇区
-                        page_info = flash.get_page_info(cur)
-                        sector_size = page_info.size if page_info else 0x1000
-                        cur += sector_size
                         event_manager.emit("flash.progress", {
                             "phase": "erase", "current": erased, "total": 0,
-                            "percent": round(cur / end_addr * 100, 2) if end_addr > address else 100,
+                            "percent": round((sector_aligned + sector_size - address) / size * 100, 2) if size > 0 else 100,
                         })
-                finally:
-                    flash.uninit()
+                    finally:
+                        flash.uninit()
+                    cur = sector_aligned + sector_size
                 event_manager.emit("flash.progress", {
                     "phase": "erase", "current": 1, "total": 1, "percent": 100,
                 })
@@ -756,15 +787,26 @@ class PyOCDBackend(BackendInterface):
             else:
                 regions_to_check = flash_regions
 
+            # halt 目标确保 flash 读取稳定（reset_and_halt 在大块读后可能通信不稳）
             session.target.halt()
 
             total_bytes = 0
             blank_bytes = 0
             first_nonblank_addr = None
-            chunk_size = 4096
+            chunk_size = 8192
+
+            # 计算总大小用于进度
+            check_total = 0
+            for region in regions_to_check:
+                if address is not None and size is not None:
+                    start = max(region.start, address)
+                    end = min(region.start + region.length, address + size)
+                    check_total += max(0, end - start)
+                else:
+                    check_total += region.length
 
             event_manager.emit("flash.progress", {
-                "phase": "verify", "current": 0, "total": 0, "percent": 0,
+                "phase": "verify", "current": 0, "total": check_total, "percent": 0,
             })
 
             for region in regions_to_check:
@@ -773,22 +815,36 @@ class PyOCDBackend(BackendInterface):
                 region_total = end - start
 
                 for offset in range(0, region_total, chunk_size):
+                    if self._check_cancel():
+                        event_manager.emit("flash.progress", {
+                            "phase": "verify", "current": total_bytes, "total": check_total, "percent": 100,
+                        })
+                        event_manager.log("warning", f"Check blank cancelled at {total_bytes} bytes")
+                        return {"success": False, "error": "Cancelled", "duration_ms": int((time.time() - start_time) * 1000)}
+
                     read_len = min(chunk_size, region_total - offset)
-                    data = session.target.read_memory_block8(start + offset, read_len)
+                    data = bytes(session.target.read_memory_block8(start + offset, read_len))
                     total_bytes += read_len
 
-                    for i, b in enumerate(data):
-                        if b != 0xFF:
-                            if first_nonblank_addr is None:
-                                first_nonblank_addr = start + offset + i
-                        else:
-                            blank_bytes += 1
+                    # 高效检查：用 bytes.find 找第一个非 0xFF
+                    # 构造一个全 0xFF 的块做对比
+                    if first_nonblank_addr is None:
+                        ff_block = b'\xff' * read_len
+                        if data != ff_block:
+                            # 找到第一个不同的位置
+                            for i in range(read_len):
+                                if data[i] != 0xFF:
+                                    first_nonblank_addr = start + offset + i
+                                    break
+
+                    # 统计 blank bytes（快速方法）
+                    blank_bytes += data.count(0xFF)
 
                     event_manager.emit("flash.progress", {
                         "phase": "verify",
                         "current": total_bytes,
-                        "total": sum(r.length for r in regions_to_check),
-                        "percent": round(total_bytes / sum(r.length for r in regions_to_check) * 100, 2) if regions_to_check else 100,
+                        "total": check_total,
+                        "percent": round(total_bytes / check_total * 100, 2) if check_total > 0 else 100,
                     })
 
             is_blank = (first_nonblank_addr is None)
@@ -826,9 +882,9 @@ class PyOCDBackend(BackendInterface):
         """读取 Flash 内容，返回 base64 编码数据
 
         Args:
-            read_type: "chip" 遍历所有 flash region，"range" 读取指定范围
-            address: 起始地址（range 模式）
-            size: 读取大小（range 模式）
+            read_type: "chip" 遍历所有 flash region，"range"/"sectors" 读取指定范围
+            address: 起始地址（range/sectors 模式）
+            size: 读取大小（range/sectors 模式）
             output_path: 可选，如果提供则同时保存到文件
         Returns:
             dict: success, base64_data, base_address, bytes_read, duration_ms
@@ -846,27 +902,31 @@ class PyOCDBackend(BackendInterface):
             if not flash_regions:
                 return {"success": False, "error": "No flash memory found"}
 
+            # halt 目标确保 flash 读取稳定
             session.target.halt()
 
-            chunk_size = 4096
+            chunk_size = 8192
             total_read = 0
             all_data = bytearray()
 
-            # 确定基地址和总大小
             if read_type == "chip":
+                # 遍历所有 flash region
                 base_addr = flash_regions[0].start
                 total_size = sum(r.length for r in flash_regions)
-            else:
-                base_addr = address
-                total_size = size
 
-            event_manager.emit("flash.progress", {
-                "phase": "program", "current": 0, "total": total_size, "percent": 0,
-            })
+                event_manager.emit("flash.progress", {
+                    "phase": "program", "current": 0, "total": total_size, "percent": 0,
+                })
 
-            if read_type == "chip":
                 for region in flash_regions:
                     for offset in range(0, region.length, chunk_size):
+                        if self._check_cancel():
+                            event_manager.emit("flash.progress", {
+                                "phase": "program", "current": total_read, "total": total_size, "percent": 100,
+                            })
+                            event_manager.log("warning", f"Read back cancelled at {total_read} bytes")
+                            return {"success": False, "error": "Cancelled", "duration_ms": int((time.time() - start_time) * 1000)}
+
                         read_len = min(chunk_size, region.length - offset)
                         data = session.target.read_memory_block8(region.start + offset, read_len)
                         all_data.extend(data)
@@ -878,7 +938,22 @@ class PyOCDBackend(BackendInterface):
                             "percent": round(total_read / total_size * 100, 2),
                         })
             else:
+                # range / sectors 模式：从 address 读取 size 字节
+                base_addr = address
+                total_size = size
+
+                event_manager.emit("flash.progress", {
+                    "phase": "program", "current": 0, "total": total_size, "percent": 0,
+                })
+
                 for offset in range(0, size, chunk_size):
+                    if self._check_cancel():
+                        event_manager.emit("flash.progress", {
+                            "phase": "program", "current": total_read, "total": total_size, "percent": 100,
+                        })
+                        event_manager.log("warning", f"Read back cancelled at {total_read} bytes")
+                        return {"success": False, "error": "Cancelled", "duration_ms": int((time.time() - start_time) * 1000)}
+
                     read_len = min(chunk_size, size - offset)
                     data = session.target.read_memory_block8(address + offset, read_len)
                     all_data.extend(data)

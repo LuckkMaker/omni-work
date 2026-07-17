@@ -11,15 +11,15 @@ import { Button } from '@/components/ui/button'
 import { useFlashStore } from '@/stores/flash.store'
 import { useProbeStore } from '@/stores/probe.store'
 
-type ReadMode = 'chip' | 'range'
+type ReadMode = 'chip' | 'sectors' | 'range'
 
 export function ReadBackDialog() {
-  const { showReadBackDialog, setShowReadBackDialog, doReadBack } = useFlashStore()
+  const { showReadBackDialog, setShowReadBackDialog, doReadBack, readBackMode } = useFlashStore()
   const { getDeviceInfo, pendingTarget, connectedTarget } = useProbeStore()
 
   const [mode, setMode] = useState<ReadMode>('chip')
   const [startAddr, setStartAddr] = useState('')
-  const [size, setSize] = useState('')
+  const [sizeOrCount, setSizeOrCount] = useState('')
   const [error, setError] = useState('')
 
   const targetKey = connectedTarget || pendingTarget || ''
@@ -29,12 +29,12 @@ export function ReadBackDialog() {
 
   useEffect(() => {
     if (showReadBackDialog) {
-      setMode('chip')
+      setMode(readBackMode)
       setStartAddr(flashBase)
-      setSize(`${flashSize}`)
+      setSizeOrCount(readBackMode === 'sectors' ? '1' : '4K')
       setError('')
     }
-  }, [showReadBackDialog, flashBase, flashSize])
+  }, [showReadBackDialog, flashBase, readBackMode])
 
   const parseHex = (s: string): number | null => {
     const t = s.trim().toLowerCase()
@@ -53,16 +53,34 @@ export function ReadBackDialog() {
   }
 
   const handleConfirm = () => {
-    if (mode === 'range') {
-      const start = parseHex(startAddr)
-      const sz = parseSize(size)
-      if (start == null || sz == null || sz <= 0) {
-        setError('请输入有效的地址和大小')
+    if (mode === 'chip') {
+      doReadBack('chip')
+      return
+    }
+
+    const start = parseHex(startAddr)
+    if (start == null) {
+      setError('请输入有效的起始地址')
+      return
+    }
+
+    if (mode === 'sectors') {
+      // sectors 模式：输入扇区数，每个扇区 16KB（第一个 region 的 sector_size）
+      const sectorSize = 0x4000 // 16KB，APM32F407 第一个 region 的 sector_size
+      const count = parseInt(sizeOrCount, 10)
+      if (isNaN(count) || count <= 0) {
+        setError('请输入有效的扇区数')
+        return
+      }
+      doReadBack('range', start, count * sectorSize)
+    } else {
+      // range 模式：输入大小
+      const sz = parseSize(sizeOrCount)
+      if (sz == null || sz <= 0) {
+        setError('请输入有效的大小')
         return
       }
       doReadBack('range', start, sz)
-    } else {
-      doReadBack('chip')
     }
   }
 
@@ -75,10 +93,14 @@ export function ReadBackDialog() {
         </DialogHeader>
         <div className="space-y-3">
           {/* 模式选择 */}
-          <div className="flex gap-4">
+          <div className="flex gap-3 flex-wrap">
             <label className="flex items-center gap-1.5 cursor-pointer">
               <input type="radio" checked={mode === 'chip'} onChange={() => setMode('chip')} className="accent-primary" />
               <span className="text-sm">Entire Chip</span>
+            </label>
+            <label className="flex items-center gap-1.5 cursor-pointer">
+              <input type="radio" checked={mode === 'sectors'} onChange={() => setMode('sectors')} className="accent-primary" />
+              <span className="text-sm">Sectors</span>
             </label>
             <label className="flex items-center gap-1.5 cursor-pointer">
               <input type="radio" checked={mode === 'range'} onChange={() => setMode('range')} className="accent-primary" />
@@ -86,8 +108,8 @@ export function ReadBackDialog() {
             </label>
           </div>
 
-          {/* Range 参数 */}
-          {mode === 'range' && (
+          {/* Sectors / Range 参数 */}
+          {mode !== 'chip' && (
             <div className="space-y-2">
               <div className="flex items-center gap-2">
                 <label className="text-sm w-16 shrink-0">起始地址</label>
@@ -103,16 +125,19 @@ export function ReadBackDialog() {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <label className="text-sm w-16 shrink-0">大小</label>
+                <label className="text-sm w-16 shrink-0">{mode === 'sectors' ? '扇区数' : '大小'}</label>
                 <input
-                  value={size}
-                  onChange={(e) => { setSize(e.target.value); setError('') }}
+                  value={sizeOrCount}
+                  onChange={(e) => { setSizeOrCount(e.target.value); setError('') }}
                   spellCheck={false}
                   autoComplete="off"
-                  placeholder="如 4096 或 4K"
+                  placeholder={mode === 'sectors' ? '如 8' : '如 4096 或 4K'}
                   className="flex-1 px-2 py-1 font-mono text-sm bg-transparent border border-border rounded-md outline-none"
                 />
               </div>
+              {mode === 'sectors' && (
+                <p className="text-xs text-muted-foreground">每个扇区 16KB (0x4000)</p>
+              )}
             </div>
           )}
 

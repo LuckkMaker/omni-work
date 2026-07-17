@@ -8,7 +8,7 @@ import { useNotificationStore } from './notification.store'
 // ── Tab 数据模型 ──────────────────────────
 export interface FlashTab {
   id: string
-  type: 'device' | 'file'
+  type: 'device' | 'file' | 'compare'
   title: string
   filePath?: string
   baseAddress: number
@@ -16,8 +16,11 @@ export interface FlashTab {
   size: number
   format?: string
   loading: boolean
-  diffData?: string | null    // base64 encoded reference data for comparison
-  diffBaseAddress?: number
+  // compare tab 专用
+  rightData?: string | null   // base64 encoded right side data
+  rightBaseAddress?: number
+  rightTitle?: string
+  leftTitle?: string
 }
 
 type FlashPhase = 'idle' | 'erasing' | 'programming' | 'verifying' | 'reading' | 'done' | 'error'
@@ -52,6 +55,8 @@ interface FlashStore {
   showEraseSectorsDialog: boolean
   showReadBackDialog: boolean
   showCompareDialog: boolean
+  /** Read Back 对话框的初始模式 */
+  readBackMode: 'chip' | 'sectors' | 'range'
 
   // ── 烧录状态 ──────────────────────────
   phase: FlashPhase
@@ -84,6 +89,7 @@ interface FlashStore {
   setShowEraseSectorsDialog: (show: boolean) => void
   setShowReadBackDialog: (show: boolean) => void
   setShowCompareDialog: (show: boolean) => void
+  setReadBackMode: (mode: 'chip' | 'sectors' | 'range') => void
 
   // ── Flash 操作 ────────────────────────
   doCheckBlank: () => Promise<void>
@@ -94,8 +100,8 @@ interface FlashStore {
   doReadBack: (mode: 'chip' | 'range', address?: number, size?: number) => Promise<void>
   doStartApp: () => Promise<void>
   doReset: () => Promise<void>
+  cancelOperation: () => Promise<void>
   doCompare: (filePath: string) => Promise<void>
-  clearDiff: () => void
 
   setOption: (key: 'eraseBefore' | 'verifyAfter' | 'resetAfter', value: boolean) => void
 
@@ -118,6 +124,7 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
   showEraseSectorsDialog: false,
   showReadBackDialog: false,
   showCompareDialog: false,
+  readBackMode: 'chip',
 
   phase: 'idle',
   progress: 0,
@@ -244,6 +251,7 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
   setShowEraseSectorsDialog: (show) => set({ showEraseSectorsDialog: show }),
   setShowReadBackDialog: (show) => set({ showReadBackDialog: show }),
   setShowCompareDialog: (show) => set({ showCompareDialog: show }),
+  setReadBackMode: (mode) => set({ readBackMode: mode }),
 
   // ── Flash 操作 ────────────────────────
   doCheckBlank: async () => {
@@ -347,6 +355,30 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
     }, () => '目标已复位')
   },
 
+  cancelOperation: async () => {
+    const uid = useProbeStore.getState().selectedUid
+    if (!uid) return
+    try {
+      await flashService.cancelOperation(uid)
+    } catch (err) {
+      console.error('[flash.store] cancel failed:', err)
+    }
+    // 更新 UI 状态
+    set({ busy: false, phase: 'idle', progress: 0 })
+    const { activeNotifId } = get()
+    if (activeNotifId) {
+      const notif = useNotificationStore.getState()
+      notif.update(activeNotifId, {
+        type: 'warning',
+        title: '操作已取消',
+        message: '用户取消了当前操作',
+        autoClose: true,
+        autoCloseDelay: 3000,
+      })
+      set({ activeNotifId: null })
+    }
+  },
+
   doCompare: async (filePath) => {
     const tab = get().getActiveTab()
     if (!tab?.data) return
@@ -361,7 +393,6 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
       let refData: string
 
       if (isBin) {
-        // bin 文件用 tab 的基地址
         const data = await readFile(filePath, tab.baseAddress)
         refData = data.data
         refBaseAddr = data.base_address
@@ -371,7 +402,29 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
         refBaseAddr = data.base_address
       }
 
-      get().updateTab(tab.id, { diffData: refData, diffBaseAddress: refBaseAddr })
+      // 创建新 compare tab
+      const id = genId()
+      const refFileName = getFileName(filePath)
+      const leftTitle = tab.title
+      const rightTitle = refFileName
+      const compareTitle = `Compare: ${leftTitle} vs ${rightTitle}`
+
+      set((state) => ({
+        tabs: [...state.tabs, {
+          id,
+          type: 'compare' as const,
+          title: compareTitle,
+          baseAddress: tab.baseAddress,
+          data: tab.data,
+          size: tab.size,
+          loading: false,
+          rightData: refData,
+          rightBaseAddress: refBaseAddr,
+          leftTitle,
+          rightTitle,
+        }],
+        activeTabId: id,
+      }))
 
       // 统计差异
       const tabBytes = atob(tab.data)
@@ -395,11 +448,6 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
     } catch (err) {
       notif.update(notifId, { type: 'error', title: '比较失败', message: err instanceof Error ? err.message : '未知错误', autoClose: true, autoCloseDelay: 5000 })
     }
-  },
-
-  clearDiff: () => {
-    const tab = get().getActiveTab()
-    if (tab) get().updateTab(tab.id, { diffData: null, diffBaseAddress: undefined })
   },
 
   setOption: (key, value) => set({ [key]: value } as Partial<FlashStore>),

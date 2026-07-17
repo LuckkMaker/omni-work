@@ -13,6 +13,10 @@ interface HexViewerProps {
   /** 可选：比较参考数据（base64），存在时高亮差异字节 */
   diffBase64?: string | null
   diffBaseAddress?: number
+  /** 可选：滚动同步回调，当本组件滚动时通知另一个组件 */
+  onScrollSync?: (scrollTop: number) => void
+  /** 可选：外部控制的 scrollTop，用于同步滚动 */
+  syncScrollTop?: number | null
 }
 
 function decodeBase64(base64: string): Uint8Array {
@@ -136,10 +140,11 @@ export function HexToolbar({
   )
 }
 
-export function HexViewer({ base64Data, baseAddress, byteWidth, diffBase64, diffBaseAddress }: HexViewerProps) {
+export function HexViewer({ base64Data, baseAddress, byteWidth, diffBase64, diffBaseAddress, onScrollSync, syncScrollTop }: HexViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const rowRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   const [highlightOffset, setHighlightOffset] = useState<number | null>(null)
+  const isSyncingRef = useRef(false)
 
   const bytesPerRow = 16 / byteWidth
 
@@ -218,8 +223,23 @@ export function HexViewer({ base64Data, baseAddress, byteWidth, diffBase64, diff
     return () => window.removeEventListener('hexviewer:jump', handler)
   }, [bytesPerRow])
 
+  // 滚动同步：当外部 syncScrollTop 变化时，更新本组件的 scrollTop
+  useEffect(() => {
+    if (syncScrollTop == null || containerRef.current == null) return
+    isSyncingRef.current = true
+    containerRef.current.scrollTop = syncScrollTop
+    requestAnimationFrame(() => { isSyncingRef.current = false })
+  }, [syncScrollTop])
+
   return (
-    <div ref={containerRef} className="h-full overflow-auto font-mono text-xs leading-relaxed">
+    <div
+      ref={containerRef}
+      onScroll={(e) => {
+        if (isSyncingRef.current) return
+        onScrollSync?.(e.currentTarget.scrollTop)
+      }}
+      className="h-full overflow-auto font-mono text-xs leading-relaxed"
+    >
       {rows.length === 0 ? (
         <div className="flex h-full items-center justify-center text-muted-foreground">
           <Loader2 className="mr-2 size-3 animate-spin" />

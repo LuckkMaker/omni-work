@@ -100,3 +100,10 @@ export async function resetTarget(
   const { data } = await client.post(`/api/probes/${uid}/reset`, { type, run })
   return data
 }
+
+/** 取消正在进行的 Flash 操作 */
+export async function cancelOperation(uid: string): Promise<{ success: boolean }> {
+  const client = await api()
+  const { data } = await client.post(`/api/probes/${uid}/flash/cancel`)
+  return data
+}
