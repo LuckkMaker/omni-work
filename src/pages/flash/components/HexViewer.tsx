@@ -19,6 +19,9 @@ interface HexViewerProps {
   syncScrollTop?: number | null
 }
 
+// 全局 ref registry 用于跨组件直接操作 DOM scrollTop（避免 state 往返）
+const syncRegistry = new Map<string, (scrollTop: number) => void>()
+
 function decodeBase64(base64: string): Uint8Array {
   const binary = atob(base64)
   const bytes = new Uint8Array(binary.length)
@@ -140,11 +143,12 @@ export function HexToolbar({
   )
 }
 
-export function HexViewer({ base64Data, baseAddress, byteWidth, diffBase64, diffBaseAddress, onScrollSync, syncScrollTop }: HexViewerProps) {
+export function HexViewer({ base64Data, baseAddress, byteWidth, diffBase64, diffBaseAddress, onScrollSync }: HexViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const rowRefs = useRef<Map<number, HTMLDivElement>>(new Map())
   const [highlightOffset, setHighlightOffset] = useState<number | null>(null)
-  const isSyncingRef = useRef(false)
+  const onScrollSyncRef = useRef(onScrollSync)
+  onScrollSyncRef.current = onScrollSync
 
   const bytesPerRow = 16 / byteWidth
 
@@ -223,20 +227,15 @@ export function HexViewer({ base64Data, baseAddress, byteWidth, diffBase64, diff
     return () => window.removeEventListener('hexviewer:jump', handler)
   }, [bytesPerRow])
 
-  // 滚动同步：当外部 syncScrollTop 变化时，更新本组件的 scrollTop
-  useEffect(() => {
-    if (syncScrollTop == null || containerRef.current == null) return
-    isSyncingRef.current = true
-    containerRef.current.scrollTop = syncScrollTop
-    requestAnimationFrame(() => { isSyncingRef.current = false })
-  }, [syncScrollTop])
+  // 滚动同步：当本组件滚动时，直接通过 ref 设置另一个组件的 scrollTop
+  const isSyncingRef = useRef(false)
 
   return (
     <div
       ref={containerRef}
       onScroll={(e) => {
         if (isSyncingRef.current) return
-        onScrollSync?.(e.currentTarget.scrollTop)
+        onScrollSyncRef.current?.(e.currentTarget.scrollTop)
       }}
       className="h-full overflow-auto font-mono text-xs leading-relaxed"
     >

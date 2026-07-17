@@ -82,6 +82,7 @@ app.whenReady().then(async () => {
       defaultPath: defaultName || 'flash_dump.bin',
       filters: [
         { name: '二进制文件', extensions: ['bin'] },
+        { name: 'Intel HEX', extensions: ['hex'] },
         { name: '所有文件', extensions: ['*'] },
       ],
     })

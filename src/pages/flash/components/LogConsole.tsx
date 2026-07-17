@@ -1,7 +1,9 @@
 import { useEffect, useRef, useCallback } from 'react'
-import { Terminal } from 'lucide-react'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Terminal, Trash2, Download } from 'lucide-react'
+import { Card, CardContent, CardHeader } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { useFlashStore } from '@/stores/flash.store'
+import { useNotificationStore } from '@/stores/notification.store'
 import { cn } from '@/lib/utils'
 import type { LogEvent } from '@shared/types'
 
@@ -32,7 +34,7 @@ interface LogConsoleProps {
 }
 
 export function LogConsole({ height }: LogConsoleProps) {
-  const { logs } = useFlashStore()
+  const { logs, clearLogs } = useFlashStore()
   const scrollRef = useRef<HTMLDivElement>(null)
 
   // 自动滚动到底部
@@ -42,21 +44,67 @@ export function LogConsole({ height }: LogConsoleProps) {
     }
   }, [logs])
 
+  const handleSave = async () => {
+    if (logs.length === 0) return
+    const savePath = await window.electron?.saveFileDialog?.(`log_${new Date().toISOString().slice(0, 19).replace(/[:-]/g, '')}.log`)
+    if (!savePath) return
+
+    const content = logs.map((log) =>
+      `[${formatTime(log.timestamp)}] [${levelTag[log.level].trim()}] ${log.message}`
+    ).join('\n')
+
+    // 用 base64 编码发送到后端保存
+    const base64 = btoa(unescape(encodeURIComponent(content)))
+    const { api } = await import('@/services/api')
+    const client = await api()
+    await client.post('/api/files/save', { file_path: savePath, data: base64 })
+
+    useNotificationStore.getState().push({
+      type: 'success',
+      title: '日志已保存',
+      message: savePath.split(/[\\/]/).pop() ?? savePath,
+      autoClose: true,
+      autoCloseDelay: 3000,
+    })
+  }
+
   return (
     <Card className="flex flex-col" style={{ height }}>
-      <CardHeader className="shrink-0">
-        <div className="flex items-center gap-2">
-          <Terminal className="size-4 text-muted-foreground" />
-          <CardTitle className="text-sm">日志</CardTitle>
+      <CardHeader className="shrink-0 py-1.5 px-3">
+        <div className="flex items-center gap-1.5">
+          <Terminal className="size-3.5 text-muted-foreground" />
+          <span className="text-xs font-medium">日志</span>
           {logs.length > 0 && (
-            <span className="text-xs text-muted-foreground">({logs.length})</span>
+            <span className="text-[10px] text-muted-foreground">({logs.length})</span>
           )}
+          <div className="ml-auto flex items-center gap-0.5">
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={handleSave}
+              disabled={logs.length === 0}
+              className="h-6 w-6 p-0"
+              title="保存日志"
+            >
+              <Download className="size-3" />
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={clearLogs}
+              disabled={logs.length === 0}
+              className="h-6 w-6 p-0"
+              title="清除日志"
+            >
+              <Trash2 className="size-3" />
+            </Button>
+          </div>
         </div>
       </CardHeader>
       <CardContent className="flex-1 overflow-hidden p-0">
         <div
           ref={scrollRef}
-          className="h-full overflow-y-auto px-4 pb-4 font-mono text-xs leading-relaxed"
+          className="h-full overflow-y-auto px-3 pb-2 font-mono text-xs leading-relaxed"
         >
           {logs.length === 0 ? (
             <div className="flex h-full items-center justify-center text-muted-foreground">

@@ -28,11 +28,11 @@ export function CompareView({
   rightTitle,
 }: CompareViewProps) {
   const [byteWidth, setByteWidth] = useState<ByteWidth>(1)
-  // 滚动同步：leftScroll 同步给 right，rightScroll 同步给 left
-  const [leftSyncScroll, setLeftSyncScroll] = useState<number | null>(null)
-  const [rightSyncScroll, setRightSyncScroll] = useState<number | null>(null)
-  const isLeftScrolling = useRef(false)
-  const isRightScrolling = useRef(false)
+
+  // 用 ref 直接引用两个 HexViewer 的容器 DOM，同步滚动
+  const leftContainerRef = useRef<HTMLDivElement>(null)
+  const rightContainerRef = useRef<HTMLDivElement>(null)
+  const isSyncing = useRef(false)
 
   const leftBytes = useMemo(() => {
     const bin = atob(leftBase64)
@@ -60,6 +60,24 @@ export function CompareView({
 
   const matchCount = Math.min(leftBytes.length, rightBytes.length) - (diffCount - Math.abs(leftBytes.length - rightBytes.length))
 
+  // 滚动同步：左侧滚动 → 设置右侧 scrollTop
+  const handleLeftScroll = (scrollTop: number) => {
+    if (isSyncing.current) return
+    isSyncing.current = true
+    const rightEl = rightContainerRef.current?.querySelector('.overflow-auto')
+    if (rightEl) rightEl.scrollTop = scrollTop
+    requestAnimationFrame(() => { isSyncing.current = false })
+  }
+
+  // 右侧滚动 → 设置左侧 scrollTop
+  const handleRightScroll = (scrollTop: number) => {
+    if (isSyncing.current) return
+    isSyncing.current = true
+    const leftEl = leftContainerRef.current?.querySelector('.overflow-auto')
+    if (leftEl) leftEl.scrollTop = scrollTop
+    requestAnimationFrame(() => { isSyncing.current = false })
+  }
+
   return (
     <div className="flex h-full flex-col">
       {/* 工具栏 */}
@@ -80,7 +98,7 @@ export function CompareView({
       {/* 左右双栏 */}
       <div className="flex flex-1 min-h-0">
         {/* 左侧 */}
-        <div className="flex-1 min-w-0 border-r border-border flex flex-col">
+        <div ref={leftContainerRef} className="flex-1 min-w-0 border-r border-border flex flex-col">
           <div className="shrink-0 px-2 py-1 bg-muted/30 text-xs font-medium border-b border-border truncate">
             <span className="text-muted-foreground">Left: </span>
             {leftTitle}
@@ -93,19 +111,13 @@ export function CompareView({
               byteWidth={byteWidth}
               diffBase64={rightBase64}
               diffBaseAddress={rightBaseAddress}
-              onScrollSync={(scrollTop) => {
-                if (isLeftScrolling.current) return
-                isRightScrolling.current = true
-                setRightSyncScroll(scrollTop)
-                requestAnimationFrame(() => { isRightScrolling.current = false })
-              }}
-              syncScrollTop={leftSyncScroll}
+              onScrollSync={handleLeftScroll}
             />
           </div>
         </div>
 
         {/* 右侧 */}
-        <div className="flex-1 min-w-0 flex flex-col">
+        <div ref={rightContainerRef} className="flex-1 min-w-0 flex flex-col">
           <div className="shrink-0 px-2 py-1 bg-muted/30 text-xs font-medium border-b border-border truncate">
             <span className="text-muted-foreground">Right: </span>
             {rightTitle}
@@ -118,13 +130,7 @@ export function CompareView({
               byteWidth={byteWidth}
               diffBase64={leftBase64}
               diffBaseAddress={leftBaseAddress}
-              onScrollSync={(scrollTop) => {
-                if (isRightScrolling.current) return
-                isLeftScrolling.current = true
-                setLeftSyncScroll(scrollTop)
-                requestAnimationFrame(() => { isLeftScrolling.current = false })
-              }}
-              syncScrollTop={rightSyncScroll}
+              onScrollSync={handleRightScroll}
             />
           </div>
         </div>

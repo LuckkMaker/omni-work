@@ -62,7 +62,7 @@ export async function checkBlank(
   const { data } = await client.post(`/api/probes/${uid}/flash/blank-check`, {
     address,
     size,
-  })
+  }, { timeout: 0 })
   return data
 }
 
@@ -86,7 +86,7 @@ export async function readBack(
     address,
     size,
     output_path: '',
-  })
+  }, { timeout: 0 })
   return data
 }
 

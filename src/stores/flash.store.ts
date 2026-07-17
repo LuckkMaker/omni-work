@@ -44,6 +44,52 @@ function getFileName(path: string): string {
   return parts[parts.length - 1] || path
 }
 
+/** 将二进制数据转换为 Intel HEX 格式字符串 */
+function binaryToIntelHex(bytes: Uint8Array, baseAddress: number): string {
+  const lines: string[] = []
+  let addr = baseAddress
+  let i = 0
+  const recordDataLen = 16 // 每行 16 字节数据
+
+  while (i < bytes.length) {
+    // 检查是否需要扩展线性地址记录（每 64KB 边界）
+    const upperAddr = (addr >> 16) & 0xFFFF
+    const prevUpperAddr = (i === 0) ? -1 : ((baseAddress + i - 1) >> 16) & 0xFFFF
+    if (upperAddr !== prevUpperAddr) {
+      // 扩展线性地址记录 (Type 04)
+      const data = [0x02, 0x00, 0x04, (upperAddr >> 8) & 0xFF, upperAddr & 0xFF]
+      let checksum = 0
+      for (const b of data) checksum += b
+      checksum = (~checksum + 1) & 0xFF
+      lines.push(`:02000004${upperAddr.toString(16).padStart(4, '0').toUpperCase()}${checksum.toString(16).padStart(2, '0').toUpperCase()}`)
+    }
+
+    const len = Math.min(recordDataLen, bytes.length - i)
+    const lowAddr = addr & 0xFFFF
+    const recordType = 0x00 // 数据记录
+
+    // 构建记录
+    let record = `:${len.toString(16).padStart(2, '0').toUpperCase()}${lowAddr.toString(16).padStart(4, '0').toUpperCase()}${recordType.toString(16).padStart(2, '0').toUpperCase()}`
+
+    let checksum = len + (lowAddr >> 8) + (lowAddr & 0xFF) + recordType
+    for (let j = 0; j < len; j++) {
+      const b = bytes[i + j]
+      record += b.toString(16).padStart(2, '0').toUpperCase()
+      checksum += b
+    }
+    checksum = (~checksum + 1) & 0xFF
+    record += checksum.toString(16).padStart(2, '0').toUpperCase()
+    lines.push(record)
+
+    i += len
+    addr += len
+  }
+
+  // 结束记录
+  lines.push(':00000001FF')
+  return lines.join('\n')
+}
+
 interface FlashStore {
   // ── Tab 状态 ──────────────────────────
   tabs: FlashTab[]
@@ -110,6 +156,7 @@ interface FlashStore {
   onLog: (data: LogEvent) => void
   onComplete: (data: FlashResult) => void
   reset: () => void
+  clearLogs: () => void
 }
 
 export const useFlashStore = create<FlashStore>((set, get) => ({
@@ -206,20 +253,31 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
   saveTabAs: async (id) => {
     const tab = get().tabs.find((t) => t.id === id)
     if (!tab?.data) return
-    const defaultName = `${tab.title.replace(/\s+/g, '_')}.bin`
+    // 去除源文件扩展名，只保留纯文件名
+    const rawTitle = tab.title.replace(/\.[^.]+$/, '').replace(/\s+/g, '_')
+    const defaultName = `${rawTitle}.bin`
     const savePath = await window.electron?.saveFileDialog?.(defaultName)
     if (!savePath) return
 
-    // base64 → blob → 写文件通过 Electron
+    // base64 → bytes
     const binary = atob(tab.data)
     const bytes = new Uint8Array(binary.length)
     for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
 
-    // 使用 fetch 写入文件（通过 data URL 下载到临时位置）
-    // 更好的方式：通过 IPC 写文件
     const { api } = await import('@/services/api')
     const client = await api()
-    await client.post('/api/files/save', { file_path: savePath, data: tab.data })
+
+    const isHex = savePath.toLowerCase().endsWith('.hex')
+    if (isHex) {
+      // 转换为 Intel HEX 格式
+      const hexContent = binaryToIntelHex(bytes, tab.baseAddress)
+      // hex 是文本，用 base64 编码后发送
+      const hexBase64 = btoa(hexContent)
+      await client.post('/api/files/save', { file_path: savePath, data: hexBase64 })
+    } else {
+      // bin 格式直接保存 base64 数据
+      await client.post('/api/files/save', { file_path: savePath, data: tab.data })
+    }
     useNotificationStore.getState().push({ type: 'success', title: '另存为', message: `已保存到 ${getFileName(savePath)}`, autoClose: true, autoCloseDelay: 3000 })
   },
 
@@ -328,7 +386,6 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
           size: result.bytes_read ?? 0,
           loading: false,
           format: 'bin',
-          diffData: null,
         })
         return { success: true, duration_ms: result.duration_ms, bytes_written: result.bytes_read ?? 0 }
       }
@@ -483,6 +540,8 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
   },
 
   reset: () => set({ phase: 'idle', progress: 0, busy: false, result: null, logs: [], activeNotifId: null }),
+
+  clearLogs: () => set({ logs: [] }),
 }))
 
 // ── 通用操作包装 ──────────────────────────
@@ -496,6 +555,19 @@ async function wrapOperation(
 ) {
   const uid = useProbeStore.getState().selectedUid
   if (!uid) return
+
+  // 防止重复操作
+  if (get().busy) {
+    useNotificationStore.getState().push({
+      type: 'warning',
+      title: '操作繁忙',
+      message: `正在执行${get().phase === 'erasing' ? '擦除' : get().phase === 'programming' ? '编程' : get().phase === 'verifying' ? '校验' : '操作'}中，请稍候...`,
+      autoClose: true,
+      autoCloseDelay: 3000,
+    })
+    return
+  }
+
   const notif = useNotificationStore.getState()
   const notifId = notif.push({ type: 'progress', title, message: startMsg, progress: 0 })
   set({ busy: true, progress: 0, result: null, logs: [], activeNotifId: notifId })
