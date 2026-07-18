@@ -154,8 +154,11 @@ class PyOCDBackend(BackendInterface):
             # 对 CMSIS-DAP v2 (WinUSB bulk) 提升尤为显著，读取速度可提升 5-10 倍
             'cmsis_dap.deferred_transfers': True,
         }
-        if speed:
-            options['frequency'] = speed
+        # 默认 4MHz SWD 时钟（ST-LINK V2 最高 4.6MHz，V3 最高 9MHz+）。
+        # 用户未指定频率时使用 4MHz，比 pyOCD 默认 1.8MHz 快 ~2.5x，
+        # 对 blank check / flash read 等大块读取操作提升明显。
+        # 若探针不支持该频率，pyOCD 会自动选择最接近的支持值。
+        options['frequency'] = speed if speed else 4000000
         # 接口协议通过 dap_protocol 选项设置
         if interface == 'jtag':
             options['dap_protocol'] = 'jtag'
@@ -967,6 +970,12 @@ class PyOCDBackend(BackendInterface):
     ) -> dict:
         """检查 Flash 是否为空白（全 0xFF）
 
+        优化策略（对标 STM32CubeProgrammer <10s 方案）：
+        1. 提升 SWD 频率至 ST-LINK 支持的最高值（4.6MHz V2 / 9MHz V3）
+        2. 使用 read_memory_block8 读取原始字节，用 C 级 bytes 操作比较
+        3. 大块读取（64KB），仅每 256KB 发送一次进度事件
+        4. 空白检查用 data.count(0xFF) == len(data)（C 级，O(n) 但常数极小）
+
         Args:
             address: 起始地址，None 则从 flash 起始
             size: 检查大小，None 则检查整个 flash
@@ -1000,7 +1009,7 @@ class PyOCDBackend(BackendInterface):
             total_bytes = 0
             blank_bytes = 0
             first_nonblank_addr = None
-            chunk_words = 16384  # 16384 words = 64KB per chunk
+            chunk_size = 65536  # 64KB per chunk — 平衡 USB 吞吐与内存占用
 
             # 计算总大小用于进度
             check_total = 0
@@ -1017,8 +1026,7 @@ class PyOCDBackend(BackendInterface):
                 "phase": "blank", "current": 0, "total": check_total, "percent": 0,
             })
 
-            # 全 0xFFFFFFFF 的 word，用于快速比较
-            FF_WORD = 0xFFFFFFFF
+            last_progress_pct = -1
 
             for region in regions_to_check:
                 start = max(region.start, address) if address else region.start
@@ -1034,42 +1042,39 @@ class PyOCDBackend(BackendInterface):
                         event_manager.log("warning", f"Check blank cancelled at {total_bytes} bytes")
                         return {"success": False, "error": "Cancelled", "duration_ms": int((time.time() - start_time) * 1000)}
 
-                    # 用 block32 批量读取（Flash 总是 4 字节对齐）
-                    read_bytes = min(chunk_words * 4, region_total - offset)
-                    word_count = read_bytes // 4
-                    if word_count == 0:
-                        word_count = 1
-                        read_bytes = 4
-                    words = session.target.read_memory_block32(start + offset, word_count)
+                    # 用 block8 读取原始字节（bytearray），比 block32 返回 list[int] 更高效
+                    read_bytes = min(chunk_size, region_total - offset)
+                    data = session.target.read_memory_block8(start + offset, read_bytes)
 
-                    # 高效检查：逐 word 比较 0xFFFFFFFF
-                    if first_nonblank_addr is None:
-                        for i, w in enumerate(words):
-                            if w != FF_WORD:
-                                # 在这个 word 的 4 字节中找第一个非 0xFF
-                                word_bytes = w.to_bytes(4, 'little')
-                                for j in range(4):
-                                    if word_bytes[j] != 0xFF:
-                                        first_nonblank_addr = start + offset + i * 4 + j
-                                        break
-                                break
+                    # C 级操作：count(0xFF) 是 bytearray 的内置 C 方法，极快
+                    ff_count = data.count(0xFF)
 
-                    # 统计 blank bytes
-                    for w in words:
-                        if w == FF_WORD:
-                            blank_bytes += 4
-                        else:
-                            blank_bytes += w.to_bytes(4, 'little').count(0xFF)
+                    if ff_count == len(data):
+                        # 整块全 0xFF — 最快路径，无需 Python 循环
+                        blank_bytes += len(data)
+                    else:
+                        # 有非 0xFF 字节 — 需要找到位置
+                        blank_bytes += ff_count
+                        if first_nonblank_addr is None:
+                            # Python 循环仅在非空白块中执行（罕见路径）
+                            for i in range(len(data)):
+                                if data[i] != 0xFF:
+                                    first_nonblank_addr = start + offset + i
+                                    break
 
-                    total_bytes += word_count * 4
-                    offset += word_count * 4
+                    total_bytes += read_bytes
+                    offset += read_bytes
 
-                    event_manager.emit("flash.progress", {
-                        "phase": "blank",
-                        "current": total_bytes,
-                        "total": check_total,
-                        "percent": round(total_bytes / check_total * 100, 2) if check_total > 0 else 100,
-                    })
+                    # 减少进度事件频率：仅在百分比变化 >= 5% 时发送
+                    pct = round(total_bytes / check_total * 100, 2) if check_total > 0 else 100
+                    if pct >= last_progress_pct + 5 or pct >= 100:
+                        last_progress_pct = pct
+                        event_manager.emit("flash.progress", {
+                            "phase": "blank",
+                            "current": total_bytes,
+                            "total": check_total,
+                            "percent": pct,
+                        })
 
             is_blank = (first_nonblank_addr is None)
             duration = int((time.time() - start_time) * 1000)

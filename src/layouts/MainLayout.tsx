@@ -1,6 +1,6 @@
 import { useEffect } from 'react'
 import { NavLink, Outlet } from 'react-router-dom'
-import { Zap, Terminal, Radio, Activity, Settings, Cpu } from 'lucide-react'
+import { Zap, Terminal, Radio, Settings, Cpu, Wrench } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useBackendStatus } from '@/hooks/useBackendStatus'
 import { useProbeWs } from '@/hooks/useProbeWs'
@@ -15,8 +15,8 @@ const navItems = [
   { to: '/flash', label: 'Flash', icon: Zap },
   { to: '/commander', label: 'Commander', icon: Terminal },
   { to: '/rtt', label: 'RTT Viewer', icon: Radio },
-  { to: '/swo', label: 'SWO Viewer', icon: Activity },
-  { to: '/scope', label: 'Scope', icon: Cpu },
+  { to: '/monitor', label: 'Monitor', icon: Cpu },
+  { to: '/tools', label: 'Tools', icon: Wrench },
   { to: '/settings', label: '设置', icon: Settings }
 ]
 

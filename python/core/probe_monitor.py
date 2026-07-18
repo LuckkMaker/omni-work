@@ -70,6 +70,19 @@ class ProbeMonitor:
 
                 for uid in removed:
                     event_manager.log("info", f"Probe disconnected: {uid[:16]}")
+                    # 清理 RTT 会话（避免轮询线程访问已失效的 session）
+                    try:
+                        from core.rtt_backend import rtt_backend
+                        if rtt_backend.is_running(uid):
+                            rtt_backend.stop(uid)
+                    except Exception:
+                        pass
+                    # 清理 Commander 会话
+                    try:
+                        from core.commander_backend import commander_backend
+                        commander_backend.reset_context(uid)
+                    except Exception:
+                        pass
                     # 自动断开已消失探针的会话
                     if backend.is_connected(uid):
                         backend.disconnect(uid)
