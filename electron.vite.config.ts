@@ -32,6 +32,7 @@ export default defineConfig({
       }
     },
     build: {
+      emptyOutDir: false,
       rollupOptions: {
         input: {
           index: resolve(__dirname, 'src/index.html')

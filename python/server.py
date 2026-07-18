@@ -13,7 +13,7 @@ import uvicorn
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from api import probes, flash, targets, files, devices
+from api import probes, flash, targets, files, devices, commander
 from core.events import event_manager
 from core.probe_monitor import probe_monitor
 from core.pyocd_backend import backend
@@ -36,6 +36,8 @@ async def lifespan(app: FastAPI):
     # 关闭时清理
     probe_monitor.stop()
     backend.cleanup()
+    from core.commander_backend import commander_backend
+    commander_backend.cleanup_all()
     logger.info("Application shutdown")
 
 
@@ -56,6 +58,7 @@ app.include_router(targets.router, prefix="/api/targets", tags=["targets"])
 app.include_router(devices.router, prefix="/api/devices", tags=["devices"])
 app.include_router(flash.router, prefix="/api", tags=["flash"])
 app.include_router(files.router, prefix="/api/files", tags=["files"])
+app.include_router(commander.router, prefix="/api", tags=["commander"])
 
 
 # WebSocket 端点
