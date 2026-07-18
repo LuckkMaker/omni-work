@@ -66,7 +66,7 @@ app.whenReady().then(async () => {
     const result = await dialog.showOpenDialog(mainWindow!, {
       title: '选择固件文件',
       filters: [
-        { name: '固件文件', extensions: ['bin', 'hex', 'elf'] },
+        { name: '固件文件', extensions: ['bin', 'hex', 'elf', 'axf'] },
         { name: '所有文件', extensions: ['*'] },
       ],
       properties: ['openFile'],

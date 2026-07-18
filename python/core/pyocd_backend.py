@@ -657,14 +657,6 @@ class PyOCDBackend(BackendInterface):
             # 原因：目标可能正在运行用户代码，Flash 控制器状态未知，直接编程会失败
             session.target.reset_and_halt()
 
-            def progress_callback(percent: float):
-                event_manager.emit("flash.progress", {
-                    "phase": "program",
-                    "current": int(file_size * percent / 100),
-                    "total": file_size,
-                    "percent": round(percent, 2),
-                })
-
             # 确定文件格式和基地址
             ext = os.path.splitext(file_path)[1].lower()
             kwargs = {}
@@ -682,6 +674,21 @@ class PyOCDBackend(BackendInterface):
             data_segments = self._extract_file_data(session, file_path, ext)
             actual_data_size = sum(len(d) for _, d in data_segments) if data_segments else file_size
 
+            # 第一阶段：擦除（chip erase 可能耗时较长，在前端展示 Erasing... 状态）
+            event_manager.emit("flash.progress", {
+                "phase": "erase", "current": 0, "total": actual_data_size, "percent": 0,
+            })
+
+            def progress_callback(percent: float):
+                # FlashLoader 报告的是 0.0-1.0 的浮点数，前端需要 0-100 的百分比
+                progress_pct = round(percent * 100, 2)
+                event_manager.emit("flash.progress", {
+                    "phase": "program",
+                    "current": int(file_size * percent),
+                    "total": file_size,
+                    "percent": progress_pct,
+                })
+
             # 使用 chip_erase="chip" 强制全片擦除
             # 原因：chip_erase="auto" 在已擦除的 Flash 上会跳过擦除，导致编程静默失败
             programmer = FileProgrammer(session, progress=progress_callback, chip_erase="chip")
@@ -689,6 +696,11 @@ class PyOCDBackend(BackendInterface):
             # 注意：FileProgrammer.program() 不支持 verify 参数（pyOCD 0.44 的 FlashLoader.commit 中 verify 为 TODO）
             # 烧录后如需校验，调用独立的 verify() 方法
             programmer.program(file_path, **kwargs)
+
+            # 第二阶段完成：发送 program 100% 确保进度条走到终点
+            event_manager.emit("flash.progress", {
+                "phase": "program", "current": actual_data_size, "total": actual_data_size, "percent": 100,
+            })
 
             duration = int((time.time() - start_time) * 1000)
             speed_kbps = (file_size / 1024) / (duration / 1000) if duration > 0 else 0

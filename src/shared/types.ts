@@ -93,7 +93,7 @@ export interface FlashResult {
 
 /** 固件文件信息 */
 export interface FirmwareFileInfo {
-  format: 'bin' | 'hex' | 'elf'
+  format: 'bin' | 'hex' | 'elf' | 'axf'
   size: number
   entry?: number | null
   segments?: { address: number; size: number }[]

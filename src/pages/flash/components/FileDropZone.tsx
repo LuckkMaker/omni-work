@@ -115,7 +115,7 @@ export function FileDropZone() {
           <Upload className="mb-3 size-8 text-muted-foreground" />
           <p className="text-sm font-medium">拖拽固件文件到此处</p>
           <p className="mt-1 text-xs text-muted-foreground">或点击选择文件</p>
-          <p className="mt-3 text-xs text-muted-foreground/60">支持 .bin / .hex / .elf 格式</p>
+          <p className="mt-3 text-xs text-muted-foreground/60">支持 .bin / .hex / .elf / .axf 格式</p>
         </div>
       </CardContent>
     </Card>
