@@ -1,4 +1,4 @@
-"""DAPLink Work - Python 后端入口
+"""Luckk Work - Python 后端入口
 
 启动 FastAPI 服务器，通过 stdout 输出端口信息供 Electron 主进程读取。
 启动时自动初始化探针热插拔监控。
@@ -18,7 +18,7 @@ from core.events import event_manager
 from core.probe_monitor import probe_monitor
 from core.pyocd_backend import backend
 
-logger = logging.getLogger("daplink-work")
+logger = logging.getLogger("luckk-work")
 
 
 @asynccontextmanager
@@ -41,7 +41,7 @@ async def lifespan(app: FastAPI):
     logger.info("Application shutdown")
 
 
-app = FastAPI(title="DAPLink Work Backend", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Luckk Work Backend", version="0.1.0", lifespan=lifespan)
 
 # CORS 配置：允许 Electron 渲染进程（开发模式 localhost:5173/5174）访问
 app.add_middleware(
@@ -76,7 +76,7 @@ async def health():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="DAPLink Work Backend Server")
+    parser = argparse.ArgumentParser(description="Luckk Work Backend Server")
     parser.add_argument("--port", type=int, default=0, help="监听端口 (0=自动分配)")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="监听地址")
     parser.add_argument("--log-level", type=str, default="info",

@@ -1,9 +1,9 @@
 <#
 .SYNOPSIS
-    DAPLink Work 一键打包脚本（Windows）
+    Luckk Work 一键打包脚本（Windows）
 .DESCRIPTION
     自动完成三步构建：
-      1. PyInstaller 打包 Python 后端 -> python/dist/daplink-backend/
+      1. PyInstaller 打包 Python 后端 -> python/dist/luckk-backend/
       2. electron-vite 构建前端       -> out/
       3. electron-builder 生成安装包   -> release/
 
@@ -34,7 +34,7 @@ $ProjectRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 
 Write-Host ""
 Write-Host "==========================================" -ForegroundColor Cyan
-Write-Host "  DAPLink Work Build Script" -ForegroundColor Cyan
+Write-Host "  Luckk Work Build Script" -ForegroundColor Cyan
 Write-Host "==========================================" -ForegroundColor Cyan
 Write-Host ""
 
@@ -96,7 +96,7 @@ if (-not $SkipBackend) {
     Write-Host "[build] Backend packaged successfully." -ForegroundColor Green
 
     # Verify backend exe exists
-    $backendExe = "$ProjectRoot\python\dist\daplink-backend\daplink-backend.exe"
+    $backendExe = "$ProjectRoot\python\dist\luckk-backend\luckk-backend.exe"
     if (-not (Test-Path $backendExe)) {
         Write-Host "ERROR: Backend executable not found at '$backendExe'" -ForegroundColor Red
         exit 1
@@ -176,11 +176,11 @@ if (-not $SkipFrontend) {
 if (-not $SkipBackend) {
     Write-Host ""
     Write-Host "Backend:" -ForegroundColor White
-    $backendExe = "$ProjectRoot\python\dist\daplink-backend"
+    $backendExe = "$ProjectRoot\python\dist\luckk-backend"
     if (Test-Path $backendExe) {
         $totalSize = (Get-ChildItem $backendExe -Recurse | Measure-Object -Property Length -Sum).Sum
         $totalSizeMB = [math]::Round($totalSize / 1MB, 1)
-        Write-Host "  daplink-backend/  ($totalSizeMB MB)" -ForegroundColor Green
+        Write-Host "  luckk-backend/  ($totalSizeMB MB)" -ForegroundColor Green
         Write-Host "  $backendExe" -ForegroundColor DarkGray
     }
 }

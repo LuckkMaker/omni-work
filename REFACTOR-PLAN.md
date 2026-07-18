@@ -174,7 +174,7 @@ python/
 从 Keil 安装目录(`ARM/Flash/ST/`)或 CMSIS-Pack 中获取 `stm32f4xx.flm` 文件,运行:
 
 ```bash
-python tools/generate_flash_algo.py flm/STM32F4xx_FLM/stm32f4xx.flm -o tools/stm32f4xx_algo.py --copyright "DAPLink Work"
+python tools/generate_flash_algo.py flm/STM32F4xx_FLM/stm32f4xx.flm -o tools/stm32f4xx_algo.py --copyright "Luckk Work"
 ```
 
 生成的 `stm32f4xx_algo.py` 包含完整的 `FLASH_ALGO` 字典。`generate_flash_algo.py` 依赖 `pyocd.target.pack.flash_algo.PackFlashAlgo` 解析 FLM(ELF 格式),提取算法指令和符号地址。

@@ -60,7 +60,7 @@ export class PythonBridge {
         args.push(scriptPath, '--port', portArg)
         cwd = join(scriptPath, '..')
       } else {
-        // 生产模式：daplink-backend.exe --port 0
+        // 生产模式：luckk-backend.exe --port 0
         args.push('--port', portArg)
         cwd = join(pythonExe, '..')
       }
@@ -164,8 +164,8 @@ export class PythonBridge {
     }
 
     // 生产环境：PyInstaller 打包的后端 exe
-    // extraResources 将 python/dist/daplink-backend/ 复制到 resources/python/
-    const bundledExe = join(process.resourcesPath ?? '', 'python', 'daplink-backend.exe')
+    // extraResources 将 python/dist/luckk-backend/ 复制到 resources/python/
+    const bundledExe = join(process.resourcesPath ?? '', 'python', 'luckk-backend.exe')
     if (existsSync(bundledExe)) {
       console.log(`[PythonBridge] Using bundled backend: ${bundledExe}`)
       return bundledExe
@@ -183,7 +183,7 @@ export class PythonBridge {
 
     // 生产环境：PyInstaller exe 不需要 script 参数，但 spawn 时需要占位
     // 实际上 exe 本身就是入口，这里返回 null 让调用方处理
-    const bundledExe = join(process.resourcesPath ?? '', 'python', 'daplink-backend.exe')
+    const bundledExe = join(process.resourcesPath ?? '', 'python', 'luckk-backend.exe')
     if (existsSync(bundledExe)) {
       return null  // exe 自包含，不需要额外脚本
     }

@@ -1,5 +1,5 @@
 # pyOCD debugger
-# Copyright (c) 2026 DAPLink Work
+# Copyright (c) 2026 Luckk Work
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");

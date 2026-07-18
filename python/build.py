@@ -8,7 +8,7 @@ Usage:
     python build.py --python PATH      # Use specific Python executable
 
 Output:
-    dist/daplink-backend/daplink-backend.exe   # Executable (Windows)
+    dist/luckk-backend/luckk-backend.exe   # Executable (Windows)
 
 The output is placed in dist/ and is consumed by electron-builder
 when building the Electron installer.
@@ -29,7 +29,7 @@ DIST_DIR = BACKEND_DIR / "dist"
 BUILD_DIR = BACKEND_DIR / "build"
 
 ENTRY_SCRIPT = BACKEND_DIR / "server.py"
-APP_NAME = "daplink-backend"
+APP_NAME = "luckk-backend"
 
 # Required runtime packages that must be importable by the building Python
 REQUIRED_PACKAGES = [
@@ -243,7 +243,7 @@ def build(python_exe: str):
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    parser = argparse.ArgumentParser(description="Build DAPLink Work backend")
+    parser = argparse.ArgumentParser(description="Build Luckk Work backend")
     parser.add_argument(
         "--clean", action="store_true",
         help="Clean build artifacts before building",
