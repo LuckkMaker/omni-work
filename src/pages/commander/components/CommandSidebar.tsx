@@ -50,21 +50,21 @@ interface QuickCommand {
 
 const QUICK_COMMANDS: QuickCommand[] = [
   // Run Control
-  { label: 'Halt', cmd: 'halt', icon: Square, group: 'Run Control' },
-  { label: 'Continue', cmd: 'continue', icon: Play, group: 'Run Control' },
-  { label: 'Step', cmd: 'step', icon: SkipForward, group: 'Run Control' },
-  { label: 'Reset', cmd: 'reset', icon: RotateCcw, group: 'Run Control' },
-  { label: 'Status', cmd: 'status', icon: Search, group: 'Run Control' },
+  { label: 'halt', cmd: 'halt', icon: Square, group: 'Run Control' },
+  { label: 'continue', cmd: 'continue', icon: Play, group: 'Run Control' },
+  { label: 'step', cmd: 'step', icon: SkipForward, group: 'Run Control' },
+  { label: 'reset', cmd: 'reset', icon: RotateCcw, group: 'Run Control' },
+  { label: 'status', cmd: 'status', icon: Search, group: 'Run Control' },
   // Registers
-  { label: 'Regs', cmd: 'reg', icon: Cpu, group: 'Registers' },
-  { label: 'Where', cmd: 'where', icon: TerminalIcon, group: 'Registers' },
+  { label: 'reg', cmd: 'reg', icon: Cpu, group: 'Registers' },
+  { label: 'where', cmd: 'where', icon: TerminalIcon, group: 'Registers' },
   // Memory
-  { label: 'Read32', cmd: 'read32 ', icon: MemoryStick, group: 'Memory' },
-  { label: 'Write32', cmd: 'write32 ', icon: MemoryStick, group: 'Memory' },
-  // Flash
-  { label: 'Load', cmd: 'load ', icon: Download, group: 'Flash' },
-  { label: 'Erase', cmd: 'erase ', icon: Trash2, group: 'Flash' },
-  { label: 'SaveMem', cmd: 'savemem ', icon: Upload, group: 'Flash' },
+  { label: 'read32', cmd: 'read32 ', icon: MemoryStick, group: 'Memory' },
+  { label: 'write32', cmd: 'write32 ', icon: MemoryStick, group: 'Memory' },
+  { label: 'unlock', cmd: 'unlock', icon: MemoryStick, group: 'Memory' },
+  { label: 'erase', cmd: 'erase', icon: Trash2, group: 'Memory' },
+  { label: 'load', cmd: 'load ', icon: Download, group: 'Memory' },
+  { label: 'savemem', cmd: 'savemem ', icon: Upload, group: 'Memory' },
 ]
 
 // 命令参考区的默认/最小/最大高度（px）
@@ -399,7 +399,7 @@ export function CommandSidebar({
         <div className="flex-1 overflow-y-auto p-2">
           {Object.entries(quickGroups).map(([group, cmds]) => (
             <div key={group} className="mb-3">
-              <div className="mb-1 px-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground/70">
+              <div className="mb-1 px-1 text-[11px] font-medium tracking-wide text-muted-foreground/70">
                 {group}
               </div>
               <div className="grid grid-cols-2 gap-1">

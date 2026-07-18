@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { wsClient } from '@/services/ws'
 import { useProbeStore } from '@/stores/probe.store'
 import { useFlashStore } from '@/stores/flash.store'
+import { useNotificationStore } from '@/stores/notification.store'
 import type {
   ProbeListData,
   ProbeConnectedData,
@@ -68,6 +69,24 @@ export function useProbeWs(port: number | null): void {
       useFlashStore.getState().onLog(data as LogEvent)
     })
 
+    // 订阅后端 notification 事件（如 erase 进度通知）
+    const unsubNotification = wsClient.on('notification', (data) => {
+      const n = data as {
+        type?: 'info' | 'success' | 'error' | 'warning'
+        title?: string
+        message?: string
+        autoClose?: boolean
+        autoCloseDelay?: number
+      }
+      useNotificationStore.getState().push({
+        type: (n.type as 'info' | 'success' | 'error' | 'warning') || 'info',
+        title: n.title || '',
+        message: n.message || '',
+        autoClose: n.autoClose ?? true,
+        autoCloseDelay: n.autoCloseDelay ?? 4000,
+      })
+    })
+
     // 注意：不在 cleanup 中 disconnect，由 port 变化或组件卸载时处理
     return () => {
       unsubList()
@@ -77,6 +96,7 @@ export function useProbeWs(port: number | null): void {
       unsubRemoved()
       unsubFlashProgress()
       unsubLog()
+      unsubNotification()
     }
   }, [port])
 }
