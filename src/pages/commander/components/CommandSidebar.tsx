@@ -19,7 +19,7 @@ import {
   Copy,
   Lightbulb,
 } from 'lucide-react'
-import { toast } from 'sonner'
+import { useNotificationStore } from '@/stores/notification.store'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -94,6 +94,68 @@ function extractExamples(extraHelp: string): string[] {
     }
   }
   return examples
+}
+
+/** 基于 usage 字段自动生成示例 */
+function generateExamplesFromUsage(cmd: CommandInfo): string[] {
+  const examples: string[] = []
+  if (!cmd.usage) return examples
+
+  // 解析 usage 中的参数占位符
+  const parts = cmd.usage.split(/\s+/)
+  const required: string[] = []
+  const optional: string[] = []
+  let inOptional = false
+
+  for (const part of parts) {
+    if (part.startsWith('[')) {
+      inOptional = true
+      optional.push(part)
+    } else if (inOptional) {
+      optional.push(part)
+    } else {
+      required.push(part)
+    }
+  }
+
+  // 生成基础示例（只有必需参数）
+  const reqParams = required.map((p) => {
+    const clean = p.replace(/[<>]/g, '')
+    // 根据参数名生成合理的示例值
+    if (/addr/i.test(clean)) return '0x20000000'
+    if (/data/i.test(clean)) return '0xDEADBEEF'
+    if (/val|value/i.test(clean)) return '0x12345678'
+    if (/len|length|count/i.test(clean)) return '16'
+    if (/file|filename/i.test(clean)) return 'firmware.hex'
+    if (/reg/i.test(clean)) return 'r0'
+    if (/core/i.test(clean)) return '0'
+    return clean
+  })
+  examples.push(`${cmd.name} ${reqParams.join(' ')}`.trim())
+
+  // 生成带可选参数的示例
+  if (optional.length > 0) {
+    const optParams = optional.map((p) => {
+      const clean = p.replace(/[[\]<>]/g, '')
+      if (/addr/i.test(clean)) return '0x20000000'
+      if (/data/i.test(clean)) return '0xDEADBEEF'
+      if (/val|value/i.test(clean)) return '0x12345678'
+      if (/len|length|count/i.test(clean)) return '16'
+      if (/file|filename/i.test(clean)) return 'firmware.hex'
+      if (/reg/i.test(clean)) return 'r0'
+      return clean
+    })
+    examples.push(`${cmd.name} ${[...reqParams, ...optParams].join(' ')}`)
+  }
+
+  return examples
+}
+
+/** 获取命令的所有示例（从 extra_help 提取 + 基于 usage 生成） */
+function getCommandExamples(cmd: CommandInfo): string[] {
+  const fromExtraHelp = extractExamples(cmd.extra_help)
+  if (fromExtraHelp.length > 0) return fromExtraHelp
+  return generateExamplesFromUsage(cmd)
 }
 
 export function CommandSidebar({
@@ -172,12 +234,18 @@ export function CommandSidebar({
     navigator.clipboard.writeText(text).catch(() => {})
   }, [])
 
-  /** 处理命令点击：可用则插入，不可用则全局提示 */
+  /** 处理命令点击：可用则插入，不可用则全局通知 */
   const handleCommandClick = useCallback(
     (cmd: CommandInfo) => {
       const canRun = connected || !cmd.requires_connection
       if (!canRun) {
-        toast.warning('该命令需要连接目标设备')
+        useNotificationStore.getState().push({
+          type: 'warning',
+          title: '命令不可用',
+          message: '该命令需要连接目标设备',
+          autoClose: true,
+          autoCloseDelay: 3000,
+        })
         return
       }
       onRunCommand(cmd.name + (cmd.usage ? ' ' : ''))
@@ -185,7 +253,7 @@ export function CommandSidebar({
     [connected, onRunCommand]
   )
 
-  /** 处理示例点击：可用则插入，不可用则全局提示 */
+  /** 处理示例点击：可用则插入，不可用则全局通知 */
   const handleExampleClick = useCallback(
     (example: string) => {
       const cmdText = example.replace(/^[>$!]\s*/, '')
@@ -193,7 +261,13 @@ export function CommandSidebar({
       const cmdInfo = commands.find((c) => c.name === cmdName)
       const requiresConn = cmdInfo?.requires_connection ?? true
       if (requiresConn && !connected) {
-        toast.warning('该命令需要连接目标设备')
+        useNotificationStore.getState().push({
+          type: 'warning',
+          title: '命令不可用',
+          message: '该命令需要连接目标设备',
+          autoClose: true,
+          autoCloseDelay: 3000,
+        })
         return
       }
       onRunCommand(cmdText)
@@ -320,7 +394,7 @@ export function CommandSidebar({
                   {expandedCategory === cat && (
                     <div className="pb-1">
                       {cmds.map((cmd) => {
-                        const examples = extractExamples(cmd.extra_help)
+                        const examples = getCommandExamples(cmd)
                         const canRun = connected || !cmd.requires_connection
                         return (
                           <div
@@ -344,14 +418,15 @@ export function CommandSidebar({
                                 </span>
                               )}
                             </button>
-                            {/* 示例按钮（有示例时显示） */}
+                            {/* 示例按钮（有示例时始终显示） */}
                             {examples.length > 0 && (
                               <button
                                 onClick={() => setExampleCmd(cmd)}
-                                className="shrink-0 opacity-0 transition-opacity group-hover:opacity-100"
+                                className="flex shrink-0 items-center gap-0.5 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 hover:bg-amber-500/20 transition-colors"
                                 title="查看示例"
                               >
-                                <Lightbulb className="size-3 text-amber-500/70 hover:text-amber-500" />
+                                <Lightbulb className="size-2.5" />
+                                <span>示例</span>
                               </button>
                             )}
                           </div>
@@ -408,13 +483,13 @@ export function CommandSidebar({
                 </div>
               )}
               {/* 示例列表 */}
-              {extractExamples(exampleCmd.extra_help).length > 0 && (
+              {getCommandExamples(exampleCmd).length > 0 && (
                 <div>
                   <div className="text-xs font-medium text-muted-foreground mb-1.5">
                     Examples:
                   </div>
                   <div className="space-y-1">
-                    {extractExamples(exampleCmd.extra_help).map((ex, idx) => {
+                    {getCommandExamples(exampleCmd).map((ex, idx) => {
                       const cmdName = ex.replace(/^[>$!]\s*/, '').split(/\s/)[0]
                       const cmdInfo = commands.find((c) => c.name === cmdName)
                       const canRunEx = connected || !(cmdInfo?.requires_connection ?? true)
@@ -443,7 +518,13 @@ export function CommandSidebar({
                                   handleExampleClick(ex)
                                   setExampleCmd(null)
                                 } else {
-                                  toast.warning('该命令需要连接目标设备')
+                                  useNotificationStore.getState().push({
+                                    type: 'warning',
+                                    title: '命令不可用',
+                                    message: '该命令需要连接目标设备',
+                                    autoClose: true,
+                                    autoCloseDelay: 3000,
+                                  })
                                 }
                               }}
                               className={cn(

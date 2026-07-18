@@ -95,7 +95,7 @@ export function NotificationContainer() {
   if (notifications.length === 0) return null
 
   return (
-    <div className="pointer-events-none fixed bottom-8 right-4 z-50 flex max-h-[calc(100vh-3rem)] flex-col-reverse gap-2 overflow-y-auto">
+    <div className="pointer-events-none fixed bottom-8 right-4 z-50 flex max-h-[calc(100vh-3rem)] flex-col-reverse gap-2 overflow-hidden">
       {notifications.map((n) => (
         <NotificationItem key={n.id} notification={n} />
       ))}

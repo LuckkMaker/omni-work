@@ -76,6 +76,114 @@ class CommanderBackend:
         logger.info(f"Commander context created for probe {uid[:16]}")
         return ctx, output_buf, lock
 
+    def _execute_batch(self, uid: str, script_path: str) -> dict:
+        """从文件批量执行 Commander 命令
+
+        读取文本文件，每行作为一条 Commander REPL 命令依次执行。
+        类似 `pyocd commander -x commands.txt` 的功能。
+
+        文件格式：
+            - 每行一条命令（如 "halt"、"read32 0x20000000 16"）
+            - 以 # 开头的行为注释，跳过
+            - 空行跳过
+
+        Args:
+            uid: 探针唯一 ID
+            script_path: 命令脚本文件路径
+
+        Returns:
+            {success, output, error, command}
+        """
+        command = f"run_batch {script_path}"
+
+        if not script_path:
+            return {
+                "success": False,
+                "output": "",
+                "error": "Usage: run_batch <commands.txt>\nExecute Commander commands from a text file, one command per line.\nLines starting with # are comments.",
+                "command": command,
+            }
+
+        import os
+        script_path = os.path.expanduser(script_path)
+        if not os.path.isabs(script_path):
+            script_path = os.path.join(os.path.expanduser('~'), script_path)
+
+        if not os.path.isfile(script_path):
+            return {
+                "success": False,
+                "output": "",
+                "error": f"File not found: {script_path}",
+                "command": command,
+            }
+
+        try:
+            with open(script_path, 'r', encoding='utf-8') as f:
+                lines = f.readlines()
+        except Exception as e:
+            return {
+                "success": False,
+                "output": "",
+                "error": f"Failed to read script: {e}",
+                "command": command,
+            }
+
+        # 获取命令执行上下文
+        result = self._get_or_create_context(uid)
+        if result is None:
+            return {
+                "success": False,
+                "output": "",
+                "error": "Probe not connected. run_batch requires a connected probe.",
+                "command": command,
+            }
+
+        ctx, buf, lock = result
+
+        all_output = []
+        executed = 0
+        failed = 0
+
+        with lock:
+            for line_num, raw_line in enumerate(lines, 1):
+                line = raw_line.strip()
+                # 跳过空行和注释
+                if not line or line.startswith('#'):
+                    continue
+
+                # 清空缓冲
+                buf.seek(0)
+                buf.truncate(0)
+
+                all_output.append(f"$ {line}\n")
+
+                try:
+                    with contextlib.redirect_stdout(buf):
+                        ctx.process_command_line(line)
+                    output = buf.getvalue()
+                    if output:
+                        all_output.append(output)
+                    executed += 1
+                except Exception as e:
+                    output = buf.getvalue()
+                    if output:
+                        all_output.append(output)
+                    exc_type = type(e).__name__
+                    error_msg = str(e) if str(e) else exc_type
+                    all_output.append(f"Error: {error_msg}\n")
+                    failed += 1
+                    logger.warning(f"Batch command '{line}' failed: {exc_type}: {error_msg}")
+
+        summary = f"\n--- Batch complete: {executed} succeeded, {failed} failed ---\n"
+        all_output.append(summary)
+
+        return {
+            "success": failed == 0,
+            "output": ''.join(all_output),
+            "error": None if failed == 0 else f"{failed} commands failed",
+            "command": command,
+        }
+
     def _execute_script(self, uid: str, script_path: str) -> dict:
         """导入并执行 Python 脚本
 
@@ -224,6 +332,10 @@ class CommanderBackend:
         # 拦截 'run <filepath>' 命令：导入并执行 Python 脚本
         if command.startswith('run ') or command == 'run':
             return self._execute_script(uid, command[4:].strip() if len(command) > 4 else '')
+
+        # 拦截 'run_batch <filepath>' 命令：从文件批量执行 Commander 命令
+        if command.startswith('run_batch ') or command == 'run_batch':
+            return self._execute_batch(uid, command[10:].strip() if len(command) > 10 else '')
 
         # 判断命令是否需要连接探针
         # ! 和 $ 前缀命令：! 是 shell 命令（离线可用），$ 是 Python 表达式（需要连接）
@@ -397,9 +509,31 @@ class CommanderBackend:
                 "  elf      - ELF file (if loaded)\n"
                 "  map      - Memory map\n"
                 "  print()  - Output to terminal\n\n"
-                "Example script:\n"
-                "  for addr in range(0x20000000, 0x20000020, 4):\n"
-                "      print(f'0x{addr:08X}: 0x{target.read32(addr):08X}')\n"
+                "Examples:\n"
+                "  run my_script.py\n"
+                "  run ~/debug_script.py\n"
+            ),
+            "requires_connection": True,
+        })
+        commands.append({
+            "name": "run_batch",
+            "aliases": [],
+            "category": "scripts",
+            "usage": "<commands.txt>",
+            "help": "Execute Commander commands from a text file, one command per line. Like 'pyocd commander -x'.",
+            "extra_help": (
+                "Read a text file and execute each line as a Commander REPL command.\n"
+                "Lines starting with # are comments and are skipped. Empty lines are skipped.\n\n"
+                "Equivalent to 'pyocd commander -x commands.txt' on the command line.\n\n"
+                "Examples:\n"
+                "  run_batch commands.txt\n"
+                "  run_batch ~/debug_sequence.txt\n\n"
+                "Example commands.txt:\n"
+                "  # Halt and read registers\n"
+                "  halt\n"
+                "  reg\n"
+                "  read32 0x20000000 16\n"
+                "  continue\n"
             ),
             "requires_connection": True,
         })
