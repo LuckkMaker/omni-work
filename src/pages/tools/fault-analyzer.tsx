@@ -1,9 +1,21 @@
 import { useState, useCallback } from 'react'
-import { Cpu, RefreshCw } from 'lucide-react'
+import {
+  Play,
+  Eraser,
+  RotateCcw,
+  Square,
+  ListOrdered,
+  RefreshCw,
+} from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
-import { Label } from '@/components/ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { Separator } from '@/components/ui/separator'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { useProbeStore } from '@/stores/probe.store'
 import { execCommand } from '@/services/commander.service'
 import { cn } from '@/lib/utils'
@@ -27,7 +39,6 @@ interface FaultBit {
   desc: string
 }
 
-// MMFSR — Memory Management Fault Status Register (CFSR bits 0-7)
 const MMFSR_BITS: FaultBit[] = [
   { bit: 0, name: 'IACCVIOL', desc: '指令访问违例 — 取指时访问了 MPU 禁止的区域' },
   { bit: 1, name: 'DACCVIOL', desc: '数据访问违例 — 读写时访问了 MPU 禁止的区域' },
@@ -37,7 +48,6 @@ const MMFSR_BITS: FaultBit[] = [
   { bit: 7, name: 'MMARVALID', desc: 'MMFAR 包含有效地址' },
 ]
 
-// BFSR — Bus Fault Status Register (CFSR bits 8-15)
 const BFSR_BITS: FaultBit[] = [
   { bit: 8, name: 'IBUSERR', desc: '指令总线错误 — 取指时总线错误' },
   { bit: 9, name: 'PRECISERR', desc: '精确数据总线错误 — BFAR 包含有效地址' },
@@ -48,7 +58,6 @@ const BFSR_BITS: FaultBit[] = [
   { bit: 15, name: 'BFARVALID', desc: 'BFAR 包含有效地址' },
 ]
 
-// UFSR — Usage Fault Status Register (CFSR bits 16-31)
 const UFSR_BITS: FaultBit[] = [
   { bit: 16, name: 'UNDEFINSTR', desc: '未定义指令 — 执行了无效的指令编码' },
   { bit: 17, name: 'INVSTATE', desc: '无效 T 状态 — Thumb 位不正确' },
@@ -59,14 +68,13 @@ const UFSR_BITS: FaultBit[] = [
   { bit: 25, name: 'DIVBYZERO', desc: '除零错误 — 执行了 SDIV/UDIV 且除数为 0' },
 ]
 
-// HFSR — Hard Fault Status Register
 const HFSR_BITS: FaultBit[] = [
   { bit: 1, name: 'VECTTBL', desc: '向量表读取失败 — 取异常向量时总线错误' },
   { bit: 30, name: 'FORCED', desc: '强制 HardFault — 可配置故障（MemManage/Bus/Usage）升级为 HardFault' },
   { bit: 31, name: 'DEBUGEVT', desc: '调试事件触发 — 调试器产生的 HardFault' },
 ]
 
-// ── 组件 ──────────────────────────────────
+// ── 类型 ──────────────────────────────────
 
 interface RegState {
   cfsr: string
@@ -87,15 +95,15 @@ interface StackFrame {
   sp: string
 }
 
+const EMPTY_REGS: RegState = { cfsr: '00000000', hfsr: '00000000', mmfar: '00000000', bfar: '00000000' }
+
+// ── 主组件 ──────────────────────────────────
+
 export default function FaultAnalyzer() {
-  const [regs, setRegs] = useState<RegState>({
-    cfsr: '00000000',
-    hfsr: '00000000',
-    mmfar: '00000000',
-    bfar: '00000000',
-  })
+  const [regs, setRegs] = useState<RegState>(EMPTY_REGS)
   const [stackFrame, setStackFrame] = useState<StackFrame | null>(null)
   const [loading, setLoading] = useState(false)
+  const [regOutput, setRegOutput] = useState<string | null>(null)
 
   const selectedProbe = useProbeStore((s) => {
     const uid = s.selectedUid
@@ -109,7 +117,9 @@ export default function FaultAnalyzer() {
     return parseInt(cleaned, 16) || 0
   }
 
-  const handleReadFromTarget = useCallback(async () => {
+  // ── 工具栏操作 ──────────────────────────────────
+
+  const handleAnalyze = useCallback(async () => {
     if (!uid || !isConnected) return
     setLoading(true)
     try {
@@ -127,24 +137,21 @@ export default function FaultAnalyzer() {
       ])
       setRegs({ cfsr, hfsr, mmfar, bfar })
 
-      // 尝试读取 CPU 异常栈帧（需要目标处于 halt 状态）
+      // 读取 CPU 异常栈帧
       try {
-        // 读取 MSP
         const mspResult = await execCommand(uid, 'reg msp')
         const mspMatch = mspResult.output.match(/0x([0-9a-fA-F]+)/)
         if (mspMatch) {
           const msp = parseInt(mspMatch[1], 16)
-          // 异常栈帧位于 MSP 指向的地址
-          // 偏移: R0(0), R1(4), R2(8), R3(12), R12(16), LR(20), PC(24), xPSR(28)
           const sfRegs = await Promise.all([
-            execCommand(uid, `read32 0x${msp.toString(16)}`),         // R0
-            execCommand(uid, `read32 0x${(msp + 4).toString(16)}`),    // R1
-            execCommand(uid, `read32 0x${(msp + 8).toString(16)}`),    // R2
-            execCommand(uid, `read32 0x${(msp + 12).toString(16)}`),   // R3
-            execCommand(uid, `read32 0x${(msp + 16).toString(16)}`),   // R12
-            execCommand(uid, `read32 0x${(msp + 20).toString(16)}`),   // LR
-            execCommand(uid, `read32 0x${(msp + 24).toString(16)}`),   // PC
-            execCommand(uid, `read32 0x${(msp + 28).toString(16)}`),   // xPSR
+            execCommand(uid, `read32 0x${msp.toString(16)}`),
+            execCommand(uid, `read32 0x${(msp + 4).toString(16)}`),
+            execCommand(uid, `read32 0x${(msp + 8).toString(16)}`),
+            execCommand(uid, `read32 0x${(msp + 12).toString(16)}`),
+            execCommand(uid, `read32 0x${(msp + 16).toString(16)}`),
+            execCommand(uid, `read32 0x${(msp + 20).toString(16)}`),
+            execCommand(uid, `read32 0x${(msp + 24).toString(16)}`),
+            execCommand(uid, `read32 0x${(msp + 28).toString(16)}`),
           ])
           const sfVals = sfRegs.map((r) => {
             const m = r.output.match(/0x([0-9a-fA-F]+)\s*$/m)
@@ -166,110 +173,128 @@ export default function FaultAnalyzer() {
     }
   }, [uid, isConnected])
 
+  const handleClear = useCallback(() => {
+    setRegs(EMPTY_REGS)
+    setStackFrame(null)
+  }, [])
+
+  const handleReset = useCallback(async () => {
+    if (!uid) return
+    try {
+      await execCommand(uid, 'reset')
+    } catch {
+      // 忽略
+    }
+  }, [uid])
+
+  const handleHalt = useCallback(async () => {
+    if (!uid) return
+    try {
+      await execCommand(uid, 'halt')
+    } catch {
+      // 忽略
+    }
+  }, [uid])
+
+  const handleReg = useCallback(async () => {
+    if (!uid) return
+    try {
+      const result = await execCommand(uid, 'reg')
+      setRegOutput(result.output)
+    } catch {
+      // 忽略
+    }
+  }, [uid])
+
+  // ── 派生值 ──────────────────────────────────
+
   const cfsrVal = parseHex(regs.cfsr)
   const hfsrVal = parseHex(regs.hfsr)
   const mmfarVal = parseHex(regs.mmfar)
   const bfarVal = parseHex(regs.bfar)
 
-  // 分解 CFSR
-  const mmfsrVal = cfsrVal & 0xff         // bits 0-7
-  const bfsrVal = (cfsrVal >> 8) & 0xff   // bits 8-15
-  const ufsrVal = (cfsrVal >> 16) & 0xffff // bits 16-31
+  const mmfsrVal = cfsrVal & 0xff
+  const bfsrVal = (cfsrVal >> 8) & 0xff
+  const ufsrVal = (cfsrVal >> 16) & 0xffff
 
   const mmarValid = (mmfsrVal >> 7) & 1
   const bfarValid = (bfsrVal >> 7) & 1
 
-  const hasFault = cfsrVal !== 0 || hfsrVal !== 0
+  const hasData = cfsrVal !== 0 || hfsrVal !== 0 || stackFrame !== null
 
   return (
-    <div className="mx-auto max-w-5xl space-y-5 p-6">
-      {/* 顶层寄存器输入 */}
-      <div className="flex items-end justify-between gap-3">
-        <div className="grid flex-1 grid-cols-4 gap-3">
-        <RegInput
-          label="CFSR"
-          addr={FAULT_ADDRS.CFSR}
-          value={regs.cfsr}
-          onChange={(v) => setRegs({ ...regs, cfsr: v })}
-        />
-        <RegInput
-          label="HFSR"
-          addr={FAULT_ADDRS.HFSR}
-          value={regs.hfsr}
-          onChange={(v) => setRegs({ ...regs, hfsr: v })}
-        />
-        <RegInput
-          label="MMFAR"
-          addr={FAULT_ADDRS.MMFAR}
-          value={regs.mmfar}
-          onChange={(v) => setRegs({ ...regs, mmfar: v })}
-          dimmed={!mmarValid}
-        />
-        <RegInput
-          label="BFAR"
-          addr={FAULT_ADDRS.BFAR}
-          value={regs.bfar}
-          onChange={(v) => setRegs({ ...regs, bfar: v })}
-          dimmed={!bfarValid}
-        />
-        </div>
+    <div className="mx-auto max-w-5xl space-y-4 p-4">
+      {/* 工具栏 */}
+      <div className="flex items-center gap-1 border-b border-border px-1 py-2 shrink-0">
         <Button
-          onClick={handleReadFromTarget}
-          disabled={!isConnected || loading}
-          variant="outline"
+          variant="ghost"
           size="sm"
-          className="shrink-0"
+          disabled={!isConnected || loading}
+          onClick={handleAnalyze}
+          className="h-8 gap-1.5"
         >
-          {loading ? <RefreshCw className="mr-1.5 h-4 w-4 animate-spin" /> : <Cpu className="mr-1.5 h-4 w-4" />}
-          {loading ? '读取中...' : '从目标读取'}
+          {loading ? <RefreshCw className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+          开始分析
+        </Button>
+
+        <Separator orientation="vertical" className="mx-1 h-5" />
+
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={!hasData}
+          onClick={handleClear}
+          className="h-8 gap-1.5"
+        >
+          <Eraser className="size-3.5" />
+          清空数据
+        </Button>
+
+        <Separator orientation="vertical" className="mx-1 h-5" />
+
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={!isConnected}
+          onClick={handleReset}
+          className="h-8 gap-1.5"
+        >
+          <RotateCcw className="size-3.5" />
+          Reset
+        </Button>
+
+        <Separator orientation="vertical" className="mx-1 h-5" />
+
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={!isConnected}
+          onClick={handleHalt}
+          className="h-8 gap-1.5"
+        >
+          <Square className="size-3.5" />
+          Halt
+        </Button>
+
+        <Separator orientation="vertical" className="mx-1 h-5" />
+
+        <Button
+          variant="ghost"
+          size="sm"
+          disabled={!isConnected}
+          onClick={handleReg}
+          className="h-8 gap-1.5"
+        >
+          <ListOrdered className="size-3.5" />
+          Reg
         </Button>
       </div>
 
-      {/* Hard Faults */}
-      <FaultSection
-        title="Hard Faults"
-        register="HFSR"
-        value={hfsrVal}
-        bits={HFSR_BITS}
-        accentColor="text-red-500"
-        borderColor="border-red-500/30"
-      />
-
-      {/* Usage Faults */}
-      <FaultSection
-        title="Usage Faults"
-        register="UFSR"
-        value={ufsrVal}
-        bits={UFSR_BITS}
-        accentColor="text-amber-500"
-        borderColor="border-amber-500/30"
-      />
-
-      {/* Bus Faults */}
-      <FaultSection
-        title="Bus Faults"
-        register="BFSR"
-        value={bfsrVal}
-        bits={BFSR_BITS}
-        accentColor="text-cyan-500"
-        borderColor="border-cyan-500/30"
-      />
-
-      {/* Memory Management Faults */}
-      <FaultSection
-        title="Memory Management Faults"
-        register="MMFSR"
-        value={mmfsrVal}
-        bits={MMFSR_BITS}
-        accentColor="text-purple-500"
-        borderColor="border-purple-500/30"
-      />
-
-      {/* CPU capture during exception */}
+      {/* 1. CPU capture during exception（第一部分） */}
       <Card>
-        <CardHeader>
+        <CardHeader className="pb-3">
           <CardTitle className="flex items-center gap-2 text-sm">
-            <Cpu className="h-4 w-4 text-blue-500" />
+            <CpuIcon />
             CPU capture during exception
           </CardTitle>
         </CardHeader>
@@ -289,57 +314,115 @@ export default function FaultAnalyzer() {
                 <StackReg label="PC" value={stackFrame.pc} highlight />
                 <StackReg label="xPSR" value={stackFrame.xpsr} />
               </div>
-              <div className="rounded-md bg-blue-500/5 border border-blue-500/20 p-3 text-sm">
+              <div className="rounded-md border border-primary/20 bg-primary/5 p-3 text-sm">
                 <span className="text-muted-foreground">故障地址（PC）: </span>
-                <span className="font-mono text-blue-500">0x{stackFrame.pc}</span>
+                <span className="font-mono text-primary">0x{stackFrame.pc}</span>
                 <span className="ml-4 text-muted-foreground">返回地址（LR）: </span>
-                <span className="font-mono text-blue-500">0x{stackFrame.lr}</span>
+                <span className="font-mono text-primary">0x{stackFrame.lr}</span>
               </div>
             </div>
           ) : (
             <div className="py-6 text-center text-sm text-muted-foreground">
               {isConnected
-                ? '点击"从目标读取"获取异常栈帧（需目标处于 halt 状态）'
+                ? '点击"开始分析"获取异常栈帧（需目标处于 halt 状态）'
                 : '连接探针后可从目标读取异常栈帧'}
             </div>
           )}
         </CardContent>
       </Card>
+
+      {/* 2. Hard Faults */}
+      <FaultSection
+        title="Hard Faults"
+        register="HFSR"
+        value={hfsrVal}
+        bits={HFSR_BITS}
+        accent="destructive"
+      />
+
+      {/* 3. Usage Faults */}
+      <FaultSection
+        title="Usage Faults"
+        register="UFSR"
+        value={ufsrVal}
+        bits={UFSR_BITS}
+        accent="warning"
+      />
+
+      {/* 4. Bus Faults */}
+      <FaultSection
+        title="Bus Faults"
+        register="BFSR"
+        value={bfsrVal}
+        bits={BFSR_BITS}
+        accent="info"
+      />
+
+      {/* 5. Memory Management Faults */}
+      <FaultSection
+        title="Memory Management Faults"
+        register="MMFSR"
+        value={mmfsrVal}
+        bits={MMFSR_BITS}
+        accent="secondary"
+      />
+
+      {/* 辅助地址信息 */}
+      {(mmarValid || bfarValid) && (
+        <Card>
+          <CardHeader className="pb-3">
+            <CardTitle className="text-sm">故障地址</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-2">
+            {mmarValid && (
+              <div className="flex items-center gap-3 text-sm">
+                <span className="font-mono text-xs text-muted-foreground">MMFAR</span>
+                <span className="font-mono text-primary">0x{regs.mmfar}</span>
+                <span className="text-xs text-muted-foreground">— Memory Management Fault 地址寄存器</span>
+              </div>
+            )}
+            {bfarValid && (
+              <div className="flex items-center gap-3 text-sm">
+                <span className="font-mono text-xs text-muted-foreground">BFAR</span>
+                <span className="font-mono text-primary">0x{regs.bfar}</span>
+                <span className="text-xs text-muted-foreground">— Bus Fault 地址寄存器</span>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Reg 弹窗 */}
+      <Dialog open={regOutput !== null} onOpenChange={(v) => !v && setRegOutput(null)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>寄存器列表</DialogTitle>
+          </DialogHeader>
+          <pre className="max-h-[60vh] overflow-y-auto rounded-md bg-muted/30 p-3 font-mono text-xs leading-relaxed">
+            {regOutput}
+          </pre>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
 
 // ── 子组件 ──────────────────────────────────
 
-function RegInput({
-  label,
-  addr,
-  value,
-  onChange,
-  dimmed,
-}: {
-  label: string
-  addr: number
-  value: string
-  onChange: (v: string) => void
-  dimmed?: boolean
-}) {
+const accentMap = {
+  destructive: { text: 'text-destructive', border: 'border-destructive/30', bg: 'bg-destructive/10' },
+  warning: { text: 'text-yellow-600 dark:text-yellow-500', border: 'border-yellow-500/30', bg: 'bg-yellow-500/10' },
+  info: { text: 'text-blue-600 dark:text-blue-400', border: 'border-blue-500/30', bg: 'bg-blue-500/10' },
+  secondary: { text: 'text-purple-600 dark:text-purple-400', border: 'border-purple-500/30', bg: 'bg-purple-500/10' },
+} as const
+
+function CpuIcon() {
   return (
-    <div className={cn(dimmed && 'opacity-40')}>
-      <Label className="mb-1 flex items-center justify-between text-xs">
-        <span className="font-mono font-medium">{label}</span>
-        <span className="text-muted-foreground">@0x{addr.toString(16).padStart(8, '0').toUpperCase()}</span>
-      </Label>
-      <div className="relative">
-        <span className="absolute left-2.5 top-1/2 -translate-y-1/2 font-mono text-xs text-muted-foreground">0x</span>
-        <Input
-          value={value}
-          onChange={(e) => onChange(e.target.value.replace(/[^0-9a-fA-F]/g, ''))}
-          placeholder="00000000"
-          className="pl-8 font-mono text-sm"
-        />
-      </div>
-    </div>
+    <svg className="h-4 w-4 text-primary" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+      <rect x="4" y="4" width="16" height="16" rx="2" />
+      <rect x="9" y="9" width="6" height="6" />
+      <path d="M9 1v3M15 1v3M9 20v3M15 20v3M20 9h3M20 14h3M1 9h3M1 14h3" />
+    </svg>
   )
 }
 
@@ -348,28 +431,27 @@ function FaultSection({
   register,
   value,
   bits,
-  accentColor,
-  borderColor,
+  accent,
 }: {
   title: string
   register: string
   value: number
   bits: FaultBit[]
-  accentColor: string
-  borderColor: string
+  accent: keyof typeof accentMap
 }) {
+  const colors = accentMap[accent]
   const activeBits = bits.filter((b) => (value >> b.bit) & 1)
   const hasFault = value !== 0
 
   return (
-    <Card className={cn(borderColor, hasFault && 'border')}>
+    <Card className={cn(hasFault && colors.border)}>
       <CardHeader className="pb-3">
         <div className="flex items-center justify-between">
-          <CardTitle className={cn('flex items-center gap-2 text-sm', accentColor)}>
+          <CardTitle className={cn('flex items-center gap-2 text-sm', colors.text)}>
             {title}
             {hasFault && (
               <span className="flex items-center gap-1 text-xs">
-                <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+                <span className="h-1.5 w-1.5 rounded-full bg-destructive" />
                 {activeBits.length} flag(s) active
               </span>
             )}
@@ -387,7 +469,7 @@ function FaultSection({
                 key={b.bit}
                 className="flex items-start gap-3 rounded-md bg-muted/30 px-3 py-2 text-sm"
               >
-                <span className={cn('font-mono text-xs font-bold', accentColor)}>
+                <span className={cn('font-mono text-xs font-bold', colors.text)}>
                   bit {b.bit}
                 </span>
                 <span className="font-mono text-xs font-medium">{b.name}</span>
@@ -412,7 +494,7 @@ function FaultSection({
                 className={cn(
                   'flex h-7 w-7 items-center justify-center rounded text-[10px] font-mono font-bold transition-colors',
                   isActive
-                    ? cn('bg-opacity-20', accentColor.replace('text-', 'bg-'))
+                    ? cn(colors.bg, colors.text)
                     : 'bg-muted/30 text-muted-foreground'
                 )}
               >
@@ -438,10 +520,10 @@ function StackReg({
   return (
     <div className={cn(
       'rounded-md border p-2',
-      highlight ? 'border-blue-500/40 bg-blue-500/5' : 'border-border bg-muted/20'
+      highlight ? 'border-primary/40 bg-primary/5' : 'border-border bg-muted/20'
     )}>
       <div className="text-xs text-muted-foreground">{label}</div>
-      <div className={cn('font-mono text-sm font-medium', highlight && 'text-blue-500')}>
+      <div className={cn('font-mono text-sm font-medium', highlight && 'text-primary')}>
         0x{value}
       </div>
     </div>

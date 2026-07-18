@@ -65,6 +65,9 @@ export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
 
     // 接收数据缓冲（用于保存到文件）
     const dataBufferRef = useRef<Uint8Array[]>([])
+    const totalBufferSizeRef = useRef(0)
+    // 字节统计节流缓冲
+    const pendingBytesRef = useRef(0)
 
     // 同步 store 状态到 ref（供 WebSocket 回调访问最新值）
     const selectedUpChannelRef = useRef(0)
@@ -99,6 +102,7 @@ export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
       },
       clearData: () => {
         dataBufferRef.current = []
+        totalBufferSizeRef.current = 0
       },
       focus: () => termRef.current?.focus(),
       zoom: (delta: number) => {
@@ -227,13 +231,15 @@ export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
 
         // 保存到缓冲
         dataBufferRef.current.push(bytes)
+        totalBufferSizeRef.current += bytes.length
         // 限制缓冲大小（~10MB）
-        const totalSize = dataBufferRef.current.reduce((s, b) => s + b.length, 0)
-        if (totalSize > 10 * 1024 * 1024) {
-          dataBufferRef.current.shift()
+        if (totalBufferSizeRef.current > 10 * 1024 * 1024) {
+          const removed = dataBufferRef.current.shift()
+          if (removed) totalBufferSizeRef.current -= removed.length
         }
 
-        addBytesReceived(bytes.length)
+        // 节流更新字节统计（累积后批量提交，避免高频 set 导致 re-render）
+        pendingBytesRef.current += bytes.length
 
         // 写入终端
         if (displayModeRef.current === 'hex') {
@@ -258,6 +264,17 @@ export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
         unsubData()
         unsubError()
       }
+    }, [addBytesReceived])
+
+    // 节流刷新字节统计（每 200ms 批量提交）
+    useEffect(() => {
+      const timer = setInterval(() => {
+        if (pendingBytesRef.current > 0) {
+          addBytesReceived(pendingBytesRef.current)
+          pendingBytesRef.current = 0
+        }
+      }, 200)
+      return () => clearInterval(timer)
     }, [addBytesReceived])
 
     // 显示模式切换时显示提示

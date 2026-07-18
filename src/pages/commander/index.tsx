@@ -9,8 +9,8 @@ import { cn } from '@/lib/utils'
 export default function CommanderPage() {
   const terminalApiRef = useRef<TerminalApi | null>(null)
 
-  // 侧边栏折叠状态
-  const [collapsed, setCollapsed] = useState(false)
+  // 侧边栏折叠状态（默认折叠）
+  const [collapsed, setCollapsed] = useState(true)
 
   const selectedProbe = useProbeStore((s) => {
     const uid = s.selectedUid

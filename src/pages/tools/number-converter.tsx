@@ -3,11 +3,15 @@ import { RotateCcw } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
+import { useToolsStore } from '@/stores/tools.store'
 
 export default function NumberConverter() {
-  const [decimal, setDecimal] = useState('0')
-  const [hex, setHex] = useState('0x0')
-  const [binary, setBinary] = useState('0')
+  // 从持久化 store 读取值
+  const decimal = useToolsStore((s) => s.ncDecimal)
+  const hex = useToolsStore((s) => s.ncHex)
+  const binary = useToolsStore((s) => s.ncBinary)
+  const setNcValues = useToolsStore((s) => s.setNcValues)
+
   const [error, setError] = useState('')
 
   // 核心数值（无符号 32 位），所有输入最终同步到这个值
@@ -21,14 +25,15 @@ export default function NumberConverter() {
 
   const updateAll = useCallback((val: number, except?: 'dec' | 'hex' | 'bin') => {
     const v = val >>> 0
-    if (except !== 'dec') setDecimal(String(v))
-    if (except !== 'hex') setHex('0x' + v.toString(16).toUpperCase())
-    if (except !== 'bin') setBinary(v.toString(2))
+    const newDec = except !== 'dec' ? String(v) : decimal
+    const newHex = except !== 'hex' ? '0x' + v.toString(16).toUpperCase() : hex
+    const newBin = except !== 'bin' ? v.toString(2) : binary
+    setNcValues(newDec, newHex, newBin)
     setError('')
-  }, [])
+  }, [decimal, hex, binary, setNcValues])
 
   const handleDecimalChange = useCallback((v: string) => {
-    setDecimal(v)
+    setNcValues(v, hex, binary)
     const cleaned = v.trim()
     if (cleaned === '') {
       updateAll(0, 'dec')
@@ -44,11 +49,11 @@ export default function NumberConverter() {
       return
     }
     updateAll(num, 'dec')
-  }, [updateAll])
+  }, [hex, binary, setNcValues, updateAll])
 
   const handleHexChange = useCallback((v: string) => {
     const cleaned = v.replace(/^0x/i, '').trim()
-    setHex(v)
+    setNcValues(decimal, v, binary)
     if (cleaned === '') {
       updateAll(0, 'hex')
       return
@@ -59,11 +64,11 @@ export default function NumberConverter() {
     }
     const num = parseInt(cleaned, 16)
     updateAll(num, 'hex')
-  }, [updateAll])
+  }, [decimal, binary, setNcValues, updateAll])
 
   const handleBinaryChange = useCallback((v: string) => {
     const cleaned = v.replace(/^0b/i, '').trim()
-    setBinary(v)
+    setNcValues(decimal, hex, v)
     if (cleaned === '') {
       updateAll(0, 'bin')
       return
@@ -74,7 +79,7 @@ export default function NumberConverter() {
     }
     const num = parseInt(cleaned, 2)
     updateAll(num, 'bin')
-  }, [updateAll])
+  }, [decimal, hex, setNcValues, updateAll])
 
   const handleToggleBit = useCallback((bitIndex: number) => {
     const newVal = (value ^ (1 << bitIndex)) >>> 0
@@ -86,7 +91,6 @@ export default function NumberConverter() {
   }, [updateAll])
 
   // 生成 32 位的位信息（bit 31 在左，bit 0 在右）
-  const bits = Array.from({ length: 32 }, (_, i) => 31 - i)
   const bitValue = (bitIndex: number) => (value >> bitIndex) & 1
 
   return (
@@ -131,10 +135,10 @@ export default function NumberConverter() {
       </div>
 
       {error && (
-        <p className="text-sm text-red-500">{error}</p>
+        <p className="text-sm text-destructive">{error}</p>
       )}
 
-      {/* 32 位 bit 可视化与勾选 */}
+      {/* 32 位 bit 可视化与勾选 — 两行显示，每行 16 位 */}
       <div className="rounded-lg border border-border bg-card p-5">
         <div className="mb-3 flex items-center justify-between">
           <h3 className="text-sm font-semibold">32-bit Binary</h3>
@@ -143,40 +147,44 @@ export default function NumberConverter() {
           </span>
         </div>
 
-        {/* 8 组 4-bit，从 bit 31（左）到 bit 0（右） */}
-        <div className="flex items-stretch justify-center gap-2">
-          {Array.from({ length: 8 }, (_, groupIdx) => {
-            // groupIdx 0 = bits 31-28（最左），groupIdx 7 = bits 3-0（最右）
-            const startBit = 31 - groupIdx * 4
-            return (
-              <div key={groupIdx} className="flex flex-col items-center">
-                <div className="mb-1 text-[10px] font-mono text-muted-foreground">
-                  {startBit}-{startBit - 3}
-                </div>
-                <div className="flex gap-1">
-                  {Array.from({ length: 4 }, (_, bitInGroup) => {
-                    const bitIndex = startBit - bitInGroup
-                    const isSet = bitValue(bitIndex) === 1
-                    return (
-                      <button
-                        key={bitIndex}
-                        onClick={() => handleToggleBit(bitIndex)}
-                        className={cn(
-                          'flex h-7 w-7 items-center justify-center rounded border-2 text-xs font-bold font-mono transition-all',
-                          isSet
-                            ? 'border-teal-500 bg-teal-500 text-white'
-                            : 'border-border bg-background text-muted-foreground hover:border-teal-400'
-                        )}
-                        title={`Bit ${bitIndex} — ${isSet ? '1' : '0'} (点击切换)`}
-                      >
-                        {isSet ? '1' : '0'}
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-            )
-          })}
+        {/* 两行，每行 4 组 4-bit */}
+        <div className="flex flex-col items-center gap-3">
+          {[0, 1].map((rowIdx) => (
+            <div key={rowIdx} className="flex items-stretch justify-center gap-2">
+              {Array.from({ length: 4 }, (_, groupInRow) => {
+                const groupIdx = rowIdx * 4 + groupInRow
+                const startBit = 31 - groupIdx * 4
+                return (
+                  <div key={groupIdx} className="flex flex-col items-center">
+                    <div className="mb-1 text-[10px] font-mono text-muted-foreground">
+                      {startBit}-{startBit - 3}
+                    </div>
+                    <div className="flex gap-1">
+                      {Array.from({ length: 4 }, (_, bitInGroup) => {
+                        const bitIndex = startBit - bitInGroup
+                        const isSet = bitValue(bitIndex) === 1
+                        return (
+                          <button
+                            key={bitIndex}
+                            onClick={() => handleToggleBit(bitIndex)}
+                            className={cn(
+                              'flex h-7 w-7 items-center justify-center rounded border-2 text-xs font-bold font-mono transition-all',
+                              isSet
+                                ? 'border-primary bg-primary text-primary-foreground'
+                                : 'border-border bg-background text-muted-foreground hover:border-primary/60'
+                            )}
+                            title={`Bit ${bitIndex} — ${isSet ? '1' : '0'} (点击切换)`}
+                          >
+                            {isSet ? '1' : '0'}
+                          </button>
+                        )
+                      })}
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          ))}
         </div>
 
         {/* 分组标签 */}
@@ -187,7 +195,7 @@ export default function NumberConverter() {
               className="col-span-2 rounded bg-muted/40 px-2 py-1 text-center"
             >
               <div className="text-[10px] text-muted-foreground">{label}</div>
-              <div className="font-mono text-xs text-teal-600">
+              <div className="font-mono text-xs text-primary">
                 0x{((value >> ((3 - i) * 8)) & 0xFF).toString(16).padStart(2, '0').toUpperCase()}
               </div>
             </div>

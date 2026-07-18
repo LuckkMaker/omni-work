@@ -35,7 +35,7 @@ class RttSendTextRequest(BaseModel):
 
 
 @router.get("/probes/{uid}/rtt/status")
-async def rtt_status(uid: str):
+def rtt_status(uid: str):
     """查询 RTT 状态"""
     return {
         "running": rtt_backend.is_running(uid),
@@ -44,10 +44,12 @@ async def rtt_status(uid: str):
 
 
 @router.post("/probes/{uid}/rtt/start")
-async def rtt_start(uid: str, req: RttStartRequest):
+def rtt_start(uid: str, req: RttStartRequest):
     """启动 RTT 会话
 
     在目标 RAM 中搜索 SEGGER RTT 控制块，解析通道，恢复目标运行并开始轮询。
+    注意：使用同步函数（非 async），FastAPI 会自动放入线程池执行，
+    避免 time.sleep 和 SWD 操作阻塞事件循环。
     """
     result = rtt_backend.start(
         uid,
@@ -62,13 +64,13 @@ async def rtt_start(uid: str, req: RttStartRequest):
 
 
 @router.post("/probes/{uid}/rtt/stop")
-async def rtt_stop(uid: str):
+def rtt_stop(uid: str):
     """停止 RTT 会话"""
     return rtt_backend.stop(uid)
 
 
 @router.get("/probes/{uid}/rtt/channels")
-async def rtt_channels(uid: str):
+def rtt_channels(uid: str):
     """获取 RTT 通道信息"""
     result = rtt_backend.get_channels(uid)
     if not result["success"]:
@@ -77,7 +79,7 @@ async def rtt_channels(uid: str):
 
 
 @router.post("/probes/{uid}/rtt/send")
-async def rtt_send(uid: str, req: RttSendRequest):
+def rtt_send(uid: str, req: RttSendRequest):
     """发送二进制数据到 down channel"""
     import base64
     try:
@@ -91,7 +93,7 @@ async def rtt_send(uid: str, req: RttSendRequest):
 
 
 @router.post("/probes/{uid}/rtt/send-text")
-async def rtt_send_text(uid: str, req: RttSendTextRequest):
+def rtt_send_text(uid: str, req: RttSendTextRequest):
     """发送文本数据到 down channel"""
     result = rtt_backend.send_text(uid, req.text, req.channel, req.append_newline)
     if not result["success"]:

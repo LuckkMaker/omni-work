@@ -3,6 +3,7 @@ import { wsClient } from '@/services/ws'
 import { useProbeStore } from '@/stores/probe.store'
 import { useFlashStore } from '@/stores/flash.store'
 import { useNotificationStore } from '@/stores/notification.store'
+import { useRttStore } from '@/stores/rtt.store'
 import type {
   ProbeListData,
   ProbeConnectedData,
@@ -65,8 +66,14 @@ export function useProbeWs(port: number | null): void {
     })
 
     // 订阅日志事件
+    // RTT 日志只推送到 RTT store，其他日志只推送到 Flash store，各自独立
     const unsubLog = wsClient.on('log', (data) => {
-      useFlashStore.getState().onLog(data as LogEvent)
+      const logEvent = data as LogEvent
+      if (logEvent.message && logEvent.message.includes('RTT')) {
+        useRttStore.getState().addLog(logEvent)
+      } else {
+        useFlashStore.getState().onLog(logEvent)
+      }
     })
 
     // 订阅后端 notification 事件（如 erase 进度通知）

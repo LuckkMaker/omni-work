@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { RttChannel } from '@/services/rtt.service'
+import type { LogEvent } from '@shared/types'
 
 export type DisplayMode = 'text' | 'hex'
 
@@ -30,6 +31,8 @@ interface RttState {
   searchAddress: string
   /** 控制块搜索范围（hex 字符串，空则自动） */
   searchSize: string
+  /** RTT 日志 */
+  logs: LogEvent[]
 
   setRunning: (running: boolean) => void
   setStarting: (starting: boolean) => void
@@ -43,6 +46,8 @@ interface RttState {
   setAutoWrap: (autoWrap: boolean) => void
   setSearchAddress: (addr: string) => void
   setSearchSize: (size: string) => void
+  addLog: (log: LogEvent) => void
+  clearLogs: () => void
   reset: () => void
 }
 
@@ -60,6 +65,7 @@ export const useRttStore = create<RttState>((set) => ({
   autoWrap: true,
   searchAddress: '',
   searchSize: '',
+  logs: [],
 
   setRunning: (running) => set({ running }),
   setStarting: (starting) => set({ starting }),
@@ -73,6 +79,8 @@ export const useRttStore = create<RttState>((set) => ({
   setAutoWrap: (autoWrap) => set({ autoWrap }),
   setSearchAddress: (addr) => set({ searchAddress: addr }),
   setSearchSize: (size) => set({ searchSize: size }),
+  addLog: (log) => set((s) => ({ logs: [...s.logs, log].slice(-500) })),
+  clearLogs: () => set({ logs: [] }),
   reset: () =>
     set({
       running: false,

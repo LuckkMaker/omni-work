@@ -1,9 +1,10 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
 import * as echarts from 'echarts'
-import { Upload, FileText } from 'lucide-react'
+import { Upload, FileText, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { api } from '@/services/api'
 import { cn } from '@/lib/utils'
+import { useToolsStore } from '@/stores/tools.store'
 
 // ── 类型定义 ──────────────────────────────────
 
@@ -70,6 +71,8 @@ interface MapAnalysis {
   top_stack: MapEntry[]
 }
 
+type TabKey = 'rom' | 'ram' | 'stack' | 'all'
+
 // ── 工具函数 ──────────────────────────────────
 
 function formatBytes(bytes: number): string {
@@ -101,7 +104,14 @@ export default function MapAnalyzer() {
   const [fileName, setFileName] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [activeTab, setActiveTab] = useState<'rom' | 'ram' | 'stack' | 'all'>('rom')
+
+  // 从持久化 store 读取配置
+  const activeTab = useToolsStore((s) => s.maActiveTab) as TabKey
+  const sortKey = useToolsStore((s) => s.maSortKey) as keyof MapEntry
+  const sortDir = useToolsStore((s) => s.maSortDir)
+  const setMaTab = useToolsStore((s) => s.setMaTab)
+  const setMaSort = useToolsStore((s) => s.setMaSort)
+
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   // ECharts refs
@@ -240,16 +250,38 @@ export default function MapAnalyzer() {
     return () => chart.dispose()
   }, [analysis, activeTab])
 
-  // ── 表格数据 ──────────────────────────────────
+  // ── 表格数据（带排序）──────────────────────────
+
+  const handleSort = useCallback((key: keyof MapEntry) => {
+    if (sortKey === key) {
+      setMaSort(key, sortDir === 'asc' ? 'desc' : 'asc')
+    } else {
+      setMaSort(key, 'desc')
+    }
+  }, [sortKey, sortDir, setMaSort])
 
   const tableData = (() => {
     if (!analysis) return []
+    let data: MapEntry[]
     switch (activeTab) {
-      case 'rom': return analysis.top_rom
-      case 'ram': return analysis.top_ram
-      case 'stack': return analysis.top_stack
-      case 'all': return analysis.entries.sort((a, b) => b.rom - a.rom)
+      case 'rom': data = analysis.top_rom; break
+      case 'ram': data = analysis.top_ram; break
+      case 'stack': data = analysis.top_stack; break
+      case 'all': data = [...analysis.entries]; break
     }
+    // 排序
+    const sorted = [...data].sort((a, b) => {
+      const av = (a[sortKey] as number | string) ?? 0
+      const bv = (b[sortKey] as number | string) ?? 0
+      let cmp: number
+      if (typeof av === 'number' && typeof bv === 'number') {
+        cmp = av - bv
+      } else {
+        cmp = String(av).localeCompare(String(bv))
+      }
+      return sortDir === 'asc' ? cmp : -cmp
+    })
+    return sorted
   })()
 
   return (
@@ -278,7 +310,7 @@ export default function MapAnalyzer() {
         {fileName && (
           <p className="mt-2 text-xs text-muted-foreground">已加载: {fileName}</p>
         )}
-        {error && <p className="mt-2 text-xs text-red-500">{error}</p>}
+        {error && <p className="mt-2 text-xs text-destructive">{error}</p>}
       </div>
 
       {/* 分析结果 */}
@@ -294,12 +326,12 @@ export default function MapAnalyzer() {
 
           {/* 摘要卡片 */}
           <div className="grid grid-cols-6 gap-3">
-            <SummaryCard label="ROM Total" value={analysis.summary.total_rom} color="text-blue-500" />
-            <SummaryCard label="RAM Total" value={analysis.summary.total_ram} color="text-green-500" />
-            <SummaryCard label="Code" value={analysis.summary.code} color="text-blue-500" />
-            <SummaryCard label="RO Data" value={analysis.summary.ro_data} color="text-cyan-500" />
-            <SummaryCard label="RW Data" value={analysis.summary.rw_data} color="text-green-500" />
-            <SummaryCard label="ZI Data" value={analysis.summary.zi_data} color="text-purple-500" />
+            <SummaryCard label="ROM Total" value={analysis.summary.total_rom} color="text-primary" />
+            <SummaryCard label="RAM Total" value={analysis.summary.total_ram} color="text-primary" />
+            <SummaryCard label="Code" value={analysis.summary.code} color="text-primary" />
+            <SummaryCard label="RO Data" value={analysis.summary.ro_data} color="text-primary" />
+            <SummaryCard label="RW Data" value={analysis.summary.rw_data} color="text-primary" />
+            <SummaryCard label="ZI Data" value={analysis.summary.zi_data} color="text-primary" />
           </div>
 
           {/* 内存区域使用率 */}
@@ -323,7 +355,7 @@ export default function MapAnalyzer() {
                         <div
                           className={cn(
                             'h-full rounded-full transition-all',
-                            pct > 90 ? 'bg-red-500' : pct > 70 ? 'bg-yellow-500' : 'bg-blue-500'
+                            pct > 90 ? 'bg-destructive' : pct > 70 ? 'bg-yellow-500' : 'bg-primary'
                           )}
                           style={{ width: `${Math.min(pct, 100)}%` }}
                         />
@@ -372,7 +404,7 @@ export default function MapAnalyzer() {
               ] as const).map((tab) => (
                 <button
                   key={tab.key}
-                  onClick={() => setActiveTab(tab.key)}
+                  onClick={() => setMaTab(tab.key)}
                   className={cn(
                     'px-4 py-2 text-sm font-medium transition-colors',
                     activeTab === tab.key
@@ -388,21 +420,21 @@ export default function MapAnalyzer() {
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-card">
                   <tr className="border-b border-border text-left text-muted-foreground">
-                    <th className="py-2 pl-3 pr-2 font-medium">名称</th>
-                    <th className="py-2 px-2 font-medium">类别</th>
-                    <th className="py-2 px-2 text-right font-medium">Code</th>
-                    <th className="py-2 px-2 text-right font-medium">RO</th>
-                    <th className="py-2 px-2 text-right font-medium">RW</th>
-                    <th className="py-2 px-2 text-right font-medium">ZI</th>
-                    <th className="py-2 px-2 text-right font-medium">ROM</th>
-                    <th className="py-2 px-2 text-right font-medium">RAM</th>
-                    {activeTab === 'stack' && <th className="py-2 pr-3 text-right font-medium">Stack</th>}
+                    <SortHeader label="名称" sortKey="name" currentSort={sortKey} sortDir={sortDir} onSort={handleSort} className="py-2 pl-3 pr-2" />
+                    <SortHeader label="类别" sortKey="category" currentSort={sortKey} sortDir={sortDir} onSort={handleSort} className="py-2 px-2" />
+                    <SortHeader label="Code" sortKey="code" currentSort={sortKey} sortDir={sortDir} onSort={handleSort} className="py-2 px-2 text-right" align="right" />
+                    <SortHeader label="RO" sortKey="ro_data" currentSort={sortKey} sortDir={sortDir} onSort={handleSort} className="py-2 px-2 text-right" align="right" />
+                    <SortHeader label="RW" sortKey="rw_data" currentSort={sortKey} sortDir={sortDir} onSort={handleSort} className="py-2 px-2 text-right" align="right" />
+                    <SortHeader label="ZI" sortKey="zi_data" currentSort={sortKey} sortDir={sortDir} onSort={handleSort} className="py-2 px-2 text-right" align="right" />
+                    <SortHeader label="ROM" sortKey="rom" currentSort={sortKey} sortDir={sortDir} onSort={handleSort} className="py-2 px-2 text-right" align="right" />
+                    <SortHeader label="RAM" sortKey="ram" currentSort={sortKey} sortDir={sortDir} onSort={handleSort} className="py-2 px-2 text-right" align="right" />
+                    {activeTab === 'stack' && <SortHeader label="Stack" sortKey="stack" currentSort={sortKey} sortDir={sortDir} onSort={handleSort} className="py-2 pr-3 text-right" align="right" />}
                   </tr>
                 </thead>
                 <tbody className="font-mono">
                   {tableData.slice(0, 200).map((entry, i) => (
                     <tr key={i} className="border-b border-border/50 hover:bg-muted/20">
-                      <td className="py-1.5 pl-3 pr-2 text-blue-500" title={entry.name}>
+                      <td className="py-1.5 pl-3 pr-2 text-primary" title={entry.name}>
                         <span className="block max-w-xs truncate">{entry.name}</span>
                       </td>
                       <td className="py-1.5 px-2 text-muted-foreground">{entry.category}</td>
@@ -410,10 +442,10 @@ export default function MapAnalyzer() {
                       <td className="py-1.5 px-2 text-right">{entry.ro_data > 0 ? formatBytesCompact(entry.ro_data) : '-'}</td>
                       <td className="py-1.5 px-2 text-right">{entry.rw_data > 0 ? formatBytesCompact(entry.rw_data) : '-'}</td>
                       <td className="py-1.5 px-2 text-right">{entry.zi_data > 0 ? formatBytesCompact(entry.zi_data) : '-'}</td>
-                      <td className="py-1.5 px-2 text-right text-blue-500">{entry.rom > 0 ? formatBytesCompact(entry.rom) : '-'}</td>
-                      <td className="py-1.5 px-2 text-right text-green-500">{entry.ram > 0 ? formatBytesCompact(entry.ram) : '-'}</td>
+                      <td className="py-1.5 px-2 text-right text-primary">{entry.rom > 0 ? formatBytesCompact(entry.rom) : '-'}</td>
+                      <td className="py-1.5 px-2 text-right text-primary">{entry.ram > 0 ? formatBytesCompact(entry.ram) : '-'}</td>
                       {activeTab === 'stack' && (
-                        <td className="py-1.5 pr-3 text-right text-amber-500">
+                        <td className="py-1.5 pr-3 text-right text-primary">
                           {entry.stack ? formatBytesCompact(entry.stack) : '-'}
                         </td>
                       )}
@@ -440,5 +472,44 @@ function SummaryCard({ label, value, color }: { label: string; value: number; co
       <div className="text-xs text-muted-foreground">{label}</div>
       <div className={cn('mt-1 text-lg font-bold font-mono', color)}>{formatBytes(value)}</div>
     </div>
+  )
+}
+
+function SortHeader({
+  label,
+  sortKey,
+  currentSort,
+  sortDir,
+  onSort,
+  className,
+  align,
+}: {
+  label: string
+  sortKey: keyof MapEntry
+  currentSort: keyof MapEntry
+  sortDir: 'asc' | 'desc'
+  onSort: (key: keyof MapEntry) => void
+  className?: string
+  align?: 'right'
+}) {
+  const isActive = currentSort === sortKey
+  return (
+    <th className={className}>
+      <button
+        onClick={() => onSort(sortKey)}
+        className={cn(
+          'inline-flex items-center gap-1 font-medium transition-colors hover:text-foreground',
+          align === 'right' && 'flex-row-reverse',
+          isActive && 'text-primary'
+        )}
+      >
+        {label}
+        {isActive ? (
+          sortDir === 'asc' ? <ArrowUp className="h-3 w-3" /> : <ArrowDown className="h-3 w-3" />
+        ) : (
+          <ArrowUpDown className="h-3 w-3 opacity-30" />
+        )}
+      </button>
+    </th>
   )
 }

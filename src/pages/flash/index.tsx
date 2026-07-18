@@ -22,7 +22,7 @@ import { FilePanel } from './components/FilePanel'
 import { BinAddressDialog } from './components/BinAddressDialog'
 import { ReadBackRangeDialog } from './components/ReadBackRangeDialog'
 import { CompareDialog } from './components/CompareDialog'
-import { LogConsole, ResizeHandle } from './components/LogConsole'
+import { LogConsole, ResizeHandle } from '@/components/LogConsole'
 import { useFlashStore } from '@/stores/flash.store'
 import { useProbeStore } from '@/stores/probe.store'
 
@@ -63,29 +63,6 @@ export default function FlashPage() {
     <div className="flex h-full flex-col">
       {/* 顶部工具栏 */}
       <div className="flex items-center gap-1 border-b border-border px-3 py-2 shrink-0">
-        <Button variant="ghost" size="sm" disabled={!isConnected || busy} onClick={doCheckBlank} className="h-8 gap-1.5">
-          <ScanSearch className="size-3.5" />
-          Check Blank
-        </Button>
-
-        <Separator orientation="vertical" className="mx-1 h-5" />
-
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" disabled={!isConnected || busy} className="h-8 gap-1">
-              <Eraser className="size-3.5" />
-              Erase
-              <ChevronDown className="size-3" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
-            <DropdownMenuItem onClick={doEraseChip}>Erase Chip</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => doEraseSelectedSectors()}>Erase Sectors...</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        <Separator orientation="vertical" className="mx-1 h-5" />
-
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="sm" disabled={!isConnected || busy || !canProgram} className="h-8 gap-1">
@@ -100,6 +77,22 @@ export default function FlashPage() {
               <ShieldCheck className="size-3.5 mr-1.5" />
               Program &amp; Verify
             </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <Separator orientation="vertical" className="mx-1 h-5" />
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="sm" disabled={!isConnected || busy} className="h-8 gap-1">
+              <Eraser className="size-3.5" />
+              Erase
+              <ChevronDown className="size-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem onClick={doEraseChip}>Erase Chip</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => doEraseSelectedSectors()}>Erase Sectors...</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
 
@@ -134,9 +127,18 @@ export default function FlashPage() {
           Start App
         </Button>
 
+        <Separator orientation="vertical" className="mx-1 h-5" />
+
         <Button variant="ghost" size="sm" disabled={!isConnected || busy} onClick={doReset} className="h-8 gap-1.5">
           <RotateCcw className="size-3.5" />
           Reset
+        </Button>
+
+        <Separator orientation="vertical" className="mx-1 h-5" />
+
+        <Button variant="ghost" size="sm" disabled={!isConnected || busy} onClick={doCheckBlank} className="h-8 gap-1.5">
+          <ScanSearch className="size-3.5" />
+          Check Blank
         </Button>
       </div>
 
@@ -150,7 +152,7 @@ export default function FlashPage() {
 
       {/* 底部：日志（全宽） */}
       <div className="shrink-0 border-t border-border" style={{ height: bottomHeight }}>
-        <LogConsole />
+        <FlashLogConsole />
       </div>
 
       {/* 弹窗 */}
@@ -159,4 +161,11 @@ export default function FlashPage() {
       <CompareDialog />
     </div>
   )
+}
+
+/** Flash 日志控制台（响应式订阅 flash store） */
+function FlashLogConsole() {
+  const logs = useFlashStore((s) => s.logs)
+  const clearLogs = useFlashStore((s) => s.clearLogs)
+  return <LogConsole logs={logs} onClear={clearLogs} title="日志" />
 }
