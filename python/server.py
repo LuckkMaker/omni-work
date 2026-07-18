@@ -13,7 +13,7 @@ import uvicorn
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from api import probes, flash, targets, files, devices, commander, rtt
+from api import probes, flash, targets, files, devices, commander, rtt, tools
 from core.events import event_manager
 from core.probe_monitor import probe_monitor
 from core.pyocd_backend import backend
@@ -62,6 +62,7 @@ app.include_router(flash.router, prefix="/api", tags=["flash"])
 app.include_router(files.router, prefix="/api/files", tags=["files"])
 app.include_router(commander.router, prefix="/api", tags=["commander"])
 app.include_router(rtt.router, prefix="/api", tags=["rtt"])
+app.include_router(tools.router, prefix="/api", tags=["tools"])
 
 
 # WebSocket 端点

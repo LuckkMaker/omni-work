@@ -83,27 +83,61 @@ class RTTBackend:
         try:
             from pyocd.debug.rtt import RTTControlBlock
 
-            event_manager.log("info", f"RTT: searching for control block" +
-                              (f" at 0x{address:08X}" if address is not None else " (auto-detect)") +
-                              "...")
+            # 固件必须先运行才能将 "SEGGER RTT" 控制块标识写入 RAM。
+            # 我们的连接默认使用 connect_mode='halt'（pyOCD 默认值），
+            # 因此刚连接或刚下载完的目标处于 halt 状态，固件尚未运行。
+            # 这里恢复目标运行，并给予足够时间让固件完成 RTT 初始化。
+            event_manager.log("info", "RTT: ensuring target is running to initialize control block...")
+            try:
+                # 无论当前状态如何，都尝试 resume（幂等操作）
+                target.resume()
+            except Exception:
+                pass
 
-            # halt 目标以便安全地搜索控制块
-            target.halt()
+            # 等待固件初始化 RTT 控制块。
+            # SEGGER RTT 初始化通常在 main() 早期完成，1 秒足够。
+            time.sleep(1.0)
 
-            cb = RTTControlBlock.from_target(
-                target,
-                address=address,
-                size=size,
-                control_block_id=b'SEGGER RTT',
-            )
-            cb.start()
+            # 搜索控制块（可在目标运行时读取 RAM）
+            cb = None
+            max_retries = 3
+            last_error = None
+            for attempt in range(max_retries):
+                event_manager.log("info", f"RTT: searching for control block" +
+                                  (f" at 0x{address:08X}" if address is not None else " (auto-detect)") +
+                                  f" (attempt {attempt + 1}/{max_retries})...")
+                try:
+                    cb = RTTControlBlock.from_target(
+                        target,
+                        address=address,
+                        size=size,
+                    )
+                    cb.start()
+                    if len(cb.up_channels) > 0:
+                        last_error = None
+                        break
+                    last_error = "No up channels found"
+                    cb = None
+                except Exception as search_err:
+                    last_error = str(search_err)
+                    event_manager.log("warning", f"RTT: search attempt {attempt + 1} failed: {search_err}")
+                    # 确保目标在运行，等待更长时间后重试
+                    try:
+                        target.resume()
+                    except Exception:
+                        pass
+                    time.sleep(1.5)
+
+            if cb is None or len(cb.up_channels) == 0:
+                msg = f"Control block not found after {max_retries} attempts"
+                if last_error:
+                    msg += f" (last error: {last_error})"
+                msg += ". Ensure firmware has RTT initialized and is running."
+                event_manager.log("error", f"RTT: {msg}")
+                return {"success": False, "error": msg}
 
             num_up = len(cb.up_channels)
             num_down = len(cb.down_channels)
-
-            if num_up == 0:
-                event_manager.log("error", "RTT: no up channels found")
-                return {"success": False, "error": "No up channels found. Ensure firmware has RTT initialized."}
 
             event_manager.log("info", f"RTT: control block found, {num_up} up channels, {num_down} down channels")
 
@@ -122,8 +156,12 @@ class RTTBackend:
                 self._running[uid] = running
                 self._locks[uid] = threading.Lock()
 
-            # 恢复目标运行，使固件可以写入 RTT 缓冲区
-            target.resume()
+            # 确保目标继续运行（搜索时可能被短暂 halt）
+            try:
+                if target.get_state().is_halted():
+                    target.resume()
+            except Exception:
+                pass
 
             event_manager.log("info", f"RTT: started (up={up_channel}, down={down_channel})")
             event_manager.emit("rtt.started", {"uid": uid})

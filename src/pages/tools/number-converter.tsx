@@ -1,250 +1,232 @@
 import { useState, useCallback } from 'react'
-import { Binary } from 'lucide-react'
+import { RotateCcw } from 'lucide-react'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
 
-type Base = 'hex' | 'dec' | 'bin' | 'oct'
-
-const BASE_INFO: Record<Base, { label: string; prefix: string; radix: number }> = {
-  hex: { label: '十六进制', prefix: '0x', radix: 16 },
-  dec: { label: '十进制', prefix: '', radix: 10 },
-  bin: { label: '二进制', prefix: '0b', radix: 2 },
-  oct: { label: '八进制', prefix: '0o', radix: 8 },
-}
-
 export default function NumberConverter() {
-  const [inputBase, setInputBase] = useState<Base>('hex')
-  const [inputValue, setInputValue] = useState('')
+  const [decimal, setDecimal] = useState('0')
+  const [hex, setHex] = useState('0x0')
+  const [binary, setBinary] = useState('0')
   const [error, setError] = useState('')
 
+  // 核心数值（无符号 32 位），所有输入最终同步到这个值
   const value = (() => {
-    if (!inputValue.trim()) return null
     try {
-      const cleaned = inputValue.trim().replace(/^0x/i, '').replace(/^0b/i, '').replace(/^0o/i, '')
-      const num = parseInt(cleaned, BASE_INFO[inputBase].radix)
-      if (isNaN(num)) return null
-      return num >>> 0 // 转为无符号 32 位
+      return parseInt(decimal, 10) >>> 0
     } catch {
-      return null
+      return 0
     }
   })()
 
-  const handleInputChange = useCallback((v: string) => {
-    setInputValue(v)
+  const updateAll = useCallback((val: number, except?: 'dec' | 'hex' | 'bin') => {
+    const v = val >>> 0
+    if (except !== 'dec') setDecimal(String(v))
+    if (except !== 'hex') setHex('0x' + v.toString(16).toUpperCase())
+    if (except !== 'bin') setBinary(v.toString(2))
     setError('')
-    // 验证输入
-    if (v.trim()) {
-      const cleaned = v.trim().replace(/^0x/i, '').replace(/^0b/i, '').replace(/^0o/i, '')
-      const radix = BASE_INFO[inputBase].radix
-      const valid = radix === 16 ? /^[0-9a-fA-F]+$/ : radix === 10 ? /^\d+$/ : radix === 2 ? /^[01]+$/ : /^[0-7]+$/
-      if (!valid.test(cleaned)) {
-        setError(`无效的${BASE_INFO[inputBase].label}输入`)
-      }
+  }, [])
+
+  const handleDecimalChange = useCallback((v: string) => {
+    setDecimal(v)
+    const cleaned = v.trim()
+    if (cleaned === '') {
+      updateAll(0, 'dec')
+      return
     }
-  }, [inputBase])
+    if (!/^\d+$/.test(cleaned)) {
+      setError('十进制输入包含非法字符')
+      return
+    }
+    const num = parseInt(cleaned, 10)
+    if (num > 0xFFFFFFFF) {
+      setError('数值超出 32 位无符号范围')
+      return
+    }
+    updateAll(num, 'dec')
+  }, [updateAll])
 
-  const conversions: Record<Base, string> = {
-    hex: value !== null ? value.toString(16).toUpperCase() : '',
-    dec: value !== null ? value.toString(10) : '',
-    bin: value !== null ? value.toString(2) : '',
-    oct: value !== null ? value.toString(8) : '',
-  }
+  const handleHexChange = useCallback((v: string) => {
+    const cleaned = v.replace(/^0x/i, '').trim()
+    setHex(v)
+    if (cleaned === '') {
+      updateAll(0, 'hex')
+      return
+    }
+    if (!/^[0-9a-fA-F]+$/.test(cleaned)) {
+      setError('十六进制输入包含非法字符')
+      return
+    }
+    const num = parseInt(cleaned, 16)
+    updateAll(num, 'hex')
+  }, [updateAll])
 
-  // ASCII 表示
-  const ascii = value !== null && value >= 0 && value <= 0x10ffff
-    ? String.fromCodePoint(value).replace(/[^\x20-\x7E]/g, '.')
-    : ''
-  const asciiInfo = value !== null && value >= 32 && value < 127
-    ? `可打印字符: '${ascii}'`
-    : value !== null && value < 32
-    ? `控制字符: ${getControlCharName(value)}`
-    : ''
+  const handleBinaryChange = useCallback((v: string) => {
+    const cleaned = v.replace(/^0b/i, '').trim()
+    setBinary(v)
+    if (cleaned === '') {
+      updateAll(0, 'bin')
+      return
+    }
+    if (!/^[01]+$/.test(cleaned)) {
+      setError('二进制输入包含非法字符')
+      return
+    }
+    const num = parseInt(cleaned, 2)
+    updateAll(num, 'bin')
+  }, [updateAll])
 
-  // 位域分析
-  const bits = value !== null ? value.toString(2).padStart(32, '0') : ''
+  const handleToggleBit = useCallback((bitIndex: number) => {
+    const newVal = (value ^ (1 << bitIndex)) >>> 0
+    updateAll(newVal)
+  }, [value, updateAll])
+
+  const handleReset = useCallback(() => {
+    updateAll(0)
+  }, [updateAll])
+
+  // 生成 32 位的位信息（bit 31 在左，bit 0 在右）
+  const bits = Array.from({ length: 32 }, (_, i) => 31 - i)
+  const bitValue = (bitIndex: number) => (value >> bitIndex) & 1
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6 p-6">
-      {/* 标题 */}
-      <div className="flex items-center gap-3">
-        <Binary className="h-6 w-6 text-green-500" />
-        <div>
-          <h1 className="text-xl font-bold">Number Converter</h1>
-          <p className="text-sm text-muted-foreground">进制转换与位域分析</p>
+    <div className="mx-auto max-w-5xl space-y-6 p-6">
+      {/* 操作栏 */}
+      <div className="flex items-center justify-end">
+        <Button variant="outline" size="sm" onClick={handleReset}>
+          <RotateCcw className="mr-1.5 h-4 w-4" />
+          重置
+        </Button>
+      </div>
+
+      {/* 输入字段 */}
+      <div className="grid grid-cols-3 gap-4">
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-muted-foreground">Decimal value</label>
+          <Input
+            value={decimal}
+            onChange={(e) => handleDecimalChange(e.target.value)}
+            className="font-mono"
+            placeholder="0"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-muted-foreground">Hex value</label>
+          <Input
+            value={hex}
+            onChange={(e) => handleHexChange(e.target.value)}
+            className="font-mono"
+            placeholder="0x0"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <label className="text-xs font-medium text-muted-foreground">Binary value</label>
+          <Input
+            value={binary}
+            onChange={(e) => handleBinaryChange(e.target.value)}
+            className="font-mono"
+            placeholder="0"
+          />
         </div>
       </div>
 
-      {/* 输入 */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-sm">输入</CardTitle>
-        </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="flex gap-1">
-            {(Object.keys(BASE_INFO) as Base[]).map((base) => (
-              <Button
-                key={base}
-                variant={inputBase === base ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => {
-                  setInputBase(base)
-                  setInputValue('')
-                  setError('')
-                }}
-                className="text-xs"
-              >
-                {BASE_INFO[base].label}
-              </Button>
-            ))}
-          </div>
-          <div className="relative">
-            <span className="absolute left-3 top-1/2 -translate-y-1/2 font-mono text-sm text-muted-foreground">
-              {BASE_INFO[inputBase].prefix}
-            </span>
-            <Input
-              value={inputValue}
-              onChange={(e) => handleInputChange(e.target.value)}
-              placeholder={`输入${BASE_INFO[inputBase].label}数值...`}
-              className={cn('pl-12 font-mono text-lg', error && 'border-red-500')}
-            />
-          </div>
-          {error && <p className="text-xs text-red-500">{error}</p>}
-        </CardContent>
-      </Card>
-
-      {/* 转换结果 */}
-      {value !== null && !error && (
-        <>
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm">转换结果</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-2">
-              {(Object.keys(BASE_INFO) as Base[]).map((base) => (
-                <div
-                  key={base}
-                  className={cn(
-                    'flex items-center justify-between rounded-lg px-4 py-3',
-                    base === inputBase ? 'bg-primary/5' : 'bg-muted/30'
-                  )}
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-muted-foreground">{BASE_INFO[base].label}</span>
-                    <span className="font-mono text-xs text-muted-foreground">{BASE_INFO[base].prefix}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <code className="font-mono text-base font-semibold">
-                      {conversions[base]}
-                    </code>
-                    <button
-                      onClick={() => navigator.clipboard.writeText(BASE_INFO[base].prefix + conversions[base])}
-                      className="text-xs text-muted-foreground hover:text-foreground"
-                      title="复制"
-                    >
-                      复制
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </CardContent>
-          </Card>
-
-          {/* 字符信息 */}
-          {asciiInfo && (
-            <Card>
-              <CardContent className="py-4">
-                <div className="flex items-center gap-3">
-                  <span className="text-xs text-muted-foreground">ASCII:</span>
-                  <span className="font-mono text-base">{asciiInfo}</span>
-                </div>
-              </CardContent>
-            </Card>
-          )}
-
-          {/* 位域分析 */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-sm">位域分析（32 位）</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="flex flex-wrap gap-1 font-mono text-sm">
-                {bits.split('').map((bit, i) => (
-                  <span
-                    key={i}
-                    className={cn(
-                      'flex h-7 w-7 items-center justify-center rounded text-xs',
-                      bit === '1' ? 'bg-green-500/20 text-green-500' : 'bg-muted/30 text-muted-foreground'
-                    )}
-                    title={`Bit ${31 - i}`}
-                  >
-                    {bit}
-                  </span>
-                ))}
-              </div>
-              <div className="mt-2 flex justify-between font-mono text-xs text-muted-foreground">
-                <span>Bit 31</span>
-                <span>Bit 0</span>
-              </div>
-              <div className="mt-3 grid grid-cols-4 gap-2 text-xs">
-                <BitGroup label="Byte 3" bits={bits.substring(0, 8)} value={value !== null ? (value >>> 24) & 0xff : 0} />
-                <BitGroup label="Byte 2" bits={bits.substring(8, 16)} value={value !== null ? (value >>> 16) & 0xff : 0} />
-                <BitGroup label="Byte 1" bits={bits.substring(16, 24)} value={value !== null ? (value >>> 8) & 0xff : 0} />
-                <BitGroup label="Byte 0" bits={bits.substring(24, 32)} value={value !== null ? value & 0xff : 0} />
-              </div>
-            </CardContent>
-          </Card>
-        </>
+      {error && (
+        <p className="text-sm text-red-500">{error}</p>
       )}
+
+      {/* 32 位 bit 可视化与勾选 */}
+      <div className="rounded-lg border border-border bg-card p-5">
+        <div className="mb-3 flex items-center justify-between">
+          <h3 className="text-sm font-semibold">32-bit Binary</h3>
+          <span className="font-mono text-sm text-muted-foreground">
+            {value.toString(2).padStart(32, '0').match(/.{1,4}/g)?.join(' ')}
+          </span>
+        </div>
+
+        {/* 8 组 4-bit，从 bit 31（左）到 bit 0（右） */}
+        <div className="flex items-stretch justify-center gap-2">
+          {Array.from({ length: 8 }, (_, groupIdx) => {
+            // groupIdx 0 = bits 31-28（最左），groupIdx 7 = bits 3-0（最右）
+            const startBit = 31 - groupIdx * 4
+            return (
+              <div key={groupIdx} className="flex flex-col items-center">
+                <div className="mb-1 text-[10px] font-mono text-muted-foreground">
+                  {startBit}-{startBit - 3}
+                </div>
+                <div className="flex gap-1">
+                  {Array.from({ length: 4 }, (_, bitInGroup) => {
+                    const bitIndex = startBit - bitInGroup
+                    const isSet = bitValue(bitIndex) === 1
+                    return (
+                      <button
+                        key={bitIndex}
+                        onClick={() => handleToggleBit(bitIndex)}
+                        className={cn(
+                          'flex h-7 w-7 items-center justify-center rounded border-2 text-xs font-bold font-mono transition-all',
+                          isSet
+                            ? 'border-teal-500 bg-teal-500 text-white'
+                            : 'border-border bg-background text-muted-foreground hover:border-teal-400'
+                        )}
+                        title={`Bit ${bitIndex} — ${isSet ? '1' : '0'} (点击切换)`}
+                      >
+                        {isSet ? '1' : '0'}
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+
+        {/* 分组标签 */}
+        <div className="mt-3 grid grid-cols-8 gap-2 border-t border-border pt-2">
+          {['Byte 3', 'Byte 2', 'Byte 1', 'Byte 0'].map((label, i) => (
+            <div
+              key={label}
+              className="col-span-2 rounded bg-muted/40 px-2 py-1 text-center"
+            >
+              <div className="text-[10px] text-muted-foreground">{label}</div>
+              <div className="font-mono text-xs text-teal-600">
+                0x{((value >> ((3 - i) * 8)) & 0xFF).toString(16).padStart(2, '0').toUpperCase()}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* 额外信息 */}
+      <div className="grid grid-cols-3 gap-4">
+        <InfoCard label="八进制" value={'0o' + value.toString(8)} />
+        <InfoCard
+          label="字符"
+          value={value >= 32 && value < 127 ? `'${String.fromCharCode(value)}'` : '—'}
+        />
+        <InfoCard
+          label="位计数"
+          value={`${popcount(value)} bit(s) set`}
+        />
+      </div>
     </div>
   )
 }
 
-function BitGroup({ label, bits, value }: { label: string; bits: string; value: number }) {
+function InfoCard({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-md bg-muted/20 p-2 text-center">
-      <div className="text-muted-foreground">{label}</div>
-      <div className="mt-1 font-mono text-xs">{bits}</div>
-      <div className="mt-0.5 font-mono text-xs text-green-500">0x{value.toString(16).padStart(2, '0')}</div>
+    <div className="rounded-lg border border-border bg-card p-3">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className="mt-1 font-mono text-sm font-medium">{value}</div>
     </div>
   )
 }
 
-function getControlCharName(code: number): string {
-  const names: Record<number, string> = {
-    0: 'NUL (空字符)',
-    1: 'SOH',
-    2: 'STX',
-    3: 'ETX',
-    4: 'EOT',
-    5: 'ENQ',
-    6: 'ACK',
-    7: 'BEL (响铃)',
-    8: 'BS (退格)',
-    9: 'HT (水平制表)',
-    10: 'LF (换行)',
-    11: 'VT (垂直制表)',
-    12: 'FF (换页)',
-    13: 'CR (回车)',
-    14: 'SO',
-    15: 'SI',
-    16: 'DLE',
-    17: 'DC1',
-    18: 'DC2',
-    19: 'DC3',
-    20: 'DC4',
-    21: 'NAK',
-    22: 'SYN',
-    23: 'ETB',
-    24: 'CAN',
-    25: 'EM',
-    26: 'SUB',
-    27: 'ESC (转义)',
-    28: 'FS',
-    29: 'GS',
-    30: 'RS',
-    31: 'US',
+/** 计算二进制中 1 的个数 */
+function popcount(n: number): number {
+  let count = 0
+  let v = n >>> 0
+  while (v) {
+    count += v & 1
+    v >>>= 1
   }
-  return names[code] || `控制字符 ${code}`
+  return count
 }

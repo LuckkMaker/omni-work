@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef } from 'react'
-import { FileCheck2, Upload, FileText, Copy, Check } from 'lucide-react'
+import { Upload, FileText, Copy, Check } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { cn } from '@/lib/utils'
@@ -27,10 +27,7 @@ export default function FileChecksum() {
     setResult(null)
 
     try {
-      // CRC32 通过自定义实现
       const crc32Promise = computeCRC32(file, setProgress)
-
-      // SHA 系列通过 Web Crypto API
       const md5Promise = computeHashWithSubtleCrypto(file, 'MD5').catch(() => '不支持（浏览器未实现 MD5）')
       const sha1Promise = computeHashWithSubtleCrypto(file, 'SHA-1')
       const sha256Promise = computeHashWithSubtleCrypto(file, 'SHA-256')
@@ -49,7 +46,7 @@ export default function FileChecksum() {
         sha256,
         size: file.size,
       })
-    } catch (e) {
+    } catch {
       setResult({
         crc32: '计算失败',
         md5: '计算失败',
@@ -63,15 +60,11 @@ export default function FileChecksum() {
     }
   }, [])
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    const file = e.dataTransfer.files[0]
-    if (file) void handleFile(file)
-  }, [handleFile])
-
   const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) void handleFile(file)
+    // 重置 input 以便可以重复选择同一文件
+    e.target.value = ''
   }, [handleFile])
 
   const handleCopy = useCallback((text: string, label: string) => {
@@ -83,32 +76,14 @@ export default function FileChecksum() {
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 p-6">
-      {/* 标题 */}
-      <div className="flex items-center gap-3">
-        <FileCheck2 className="h-6 w-6 text-purple-500" />
-        <div>
-          <h1 className="text-xl font-bold">File Checksum</h1>
-          <p className="text-sm text-muted-foreground">文件校验和计算（CRC32 / MD5 / SHA-1 / SHA-256）</p>
-        </div>
-      </div>
-
-      {/* 文件上传 */}
-      <div
-        onDrop={handleDrop}
-        onDragOver={(e) => e.preventDefault()}
-        className={cn(
-          'flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-border py-10 transition-colors',
-          'hover:border-primary/50 hover:bg-muted/20'
-        )}
-      >
+      {/* 文件选择 */}
+      <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-border py-10 transition-colors hover:border-primary/50 hover:bg-muted/20">
         <FileText className="mb-3 h-10 w-10 text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">
-          拖放文件到此处，或
-        </p>
+        <p className="text-sm text-muted-foreground">点击下方按钮选择文件</p>
         <Button
           variant="outline"
           size="sm"
-          className="mt-2"
+          className="mt-3"
           onClick={() => fileInputRef.current?.click()}
           disabled={computing}
         >
@@ -122,7 +97,9 @@ export default function FileChecksum() {
           onChange={handleFileInput}
         />
         {fileName && (
-          <p className="mt-2 text-xs text-muted-foreground">已选择: {fileName} ({formatBytes(result?.size ?? 0)})</p>
+          <p className="mt-2 text-xs text-muted-foreground">
+            已选择: {fileName} ({formatBytes(result?.size ?? 0)})
+          </p>
         )}
       </div>
 
@@ -226,7 +203,6 @@ function formatBytes(bytes: number): string {
   return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`
 }
 
-/** 使用 Web Crypto API 计算哈希 */
 async function computeHashWithSubtleCrypto(file: File, algorithm: string): Promise<string> {
   try {
     const buffer = await file.arrayBuffer()
@@ -238,9 +214,7 @@ async function computeHashWithSubtleCrypto(file: File, algorithm: string): Promi
   }
 }
 
-/** CRC32 计算（分块处理大文件） */
 async function computeCRC32(file: File, onProgress: (pct: number) => void): Promise<number> {
-  // CRC32 查表法
   const crcTable = (() => {
     const table = new Uint32Array(256)
     for (let i = 0; i < 256; i++) {
@@ -254,7 +228,7 @@ async function computeCRC32(file: File, onProgress: (pct: number) => void): Prom
   })()
 
   let crc = 0xffffffff
-  const chunkSize = 4 * 1024 * 1024 // 4MB 分块
+  const chunkSize = 4 * 1024 * 1024
   let offset = 0
 
   while (offset < file.size) {
@@ -266,7 +240,6 @@ async function computeCRC32(file: File, onProgress: (pct: number) => void): Prom
     }
     offset += chunkSize
     onProgress(Math.round((offset / file.size) * 100))
-    // 让出主线程
     await new Promise((r) => setTimeout(r, 0))
   }
 

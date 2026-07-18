@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
-import { PanelLeftClose, PanelLeftOpen } from 'lucide-react'
+import { PanelRightClose, PanelRightOpen } from 'lucide-react'
 import { RttTerminal, type RttTerminalApi } from './components/RttTerminal'
 import { ConfigPanel } from './components/ConfigPanel'
 import { InputBar } from './components/InputBar'
@@ -29,14 +29,12 @@ export default function RttPage() {
 
   // WebSocket 事件订阅
   useEffect(() => {
-    // rtt.started: 后端确认 RTT 已启动
     const unsubStarted = wsClient.on('rtt.started', (data: unknown) => {
       const payload = data as { uid: string }
       if (payload.uid !== uidRef.current) return
       setRunning(true)
     })
 
-    // rtt.stopped: RTT 已停止（用户操作或探针断开）
     const unsubStopped = wsClient.on('rtt.stopped', (data: unknown) => {
       const payload = data as { uid: string; reason: string }
       if (payload.uid !== uidRef.current) return
@@ -76,43 +74,11 @@ export default function RttPage() {
 
   return (
     <div className="flex h-full overflow-hidden">
-      {/* 左侧配置面板 */}
-      {!sidebarCollapsed && (
-        <div className="flex w-64 flex-col border-r border-border bg-card/50">
-          <div className="flex items-center justify-between border-b border-border px-4 py-3">
-            <h2 className="text-sm font-semibold">RTT 配置</h2>
-            <button
-              onClick={handleToggleSidebar}
-              className="text-muted-foreground hover:text-foreground"
-              title="折叠侧边栏"
-            >
-              <PanelLeftClose className="h-4 w-4" />
-            </button>
-          </div>
-          <div className="flex-1 overflow-y-auto">
-            <ConfigPanel
-              uid={uid}
-              connected={isConnected}
-              terminalRef={terminalRef}
-            />
-          </div>
-        </div>
-      )}
-
-      {/* 右侧终端区域 */}
+      {/* 左侧终端区域 */}
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* 顶栏 */}
         <div className="flex items-center justify-between border-b border-border px-4 py-2">
           <div className="flex items-center gap-2">
-            {sidebarCollapsed && (
-              <button
-                onClick={handleToggleSidebar}
-                className="text-muted-foreground hover:text-foreground"
-                title="展开侧边栏"
-              >
-                <PanelLeftOpen className="h-4 w-4" />
-              </button>
-            )}
             <h1 className="text-sm font-semibold">RTT Viewer</h1>
             {running && (
               <span className="flex items-center gap-1.5 text-xs text-green-500">
@@ -121,13 +87,18 @@ export default function RttPage() {
               </span>
             )}
           </div>
-          <div className="text-xs text-muted-foreground">
-            {selectedProbe ? (
-              <>
-                {selectedProbe.vendor} {selectedProbe.product}
-              </>
-            ) : (
-              '未选择探针'
+          <div className="flex items-center gap-3">
+            <span className="text-xs text-muted-foreground">
+              {selectedProbe ? `${selectedProbe.vendor} ${selectedProbe.product}` : '未选择探针'}
+            </span>
+            {!sidebarCollapsed && (
+              <button
+                onClick={handleToggleSidebar}
+                className="text-muted-foreground hover:text-foreground"
+                title="折叠配置面板"
+              >
+                <PanelRightClose className="h-4 w-4" />
+              </button>
             )}
           </div>
         </div>
@@ -153,6 +124,42 @@ export default function RttPage() {
         {/* 输入栏 */}
         <InputBar uid={uid} running={running} />
       </div>
+
+      {/* 右侧配置面板 */}
+      {!sidebarCollapsed && (
+        <div className="flex w-64 flex-col border-l border-border bg-card/50">
+          <div className="flex items-center justify-between border-b border-border px-4 py-3">
+            <h2 className="text-sm font-semibold">RTT 配置</h2>
+            {sidebarCollapsed && (
+              <button
+                onClick={handleToggleSidebar}
+                className="text-muted-foreground hover:text-foreground"
+                title="展开配置面板"
+              >
+                <PanelRightOpen className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+          <div className="flex-1 overflow-y-auto">
+            <ConfigPanel
+              uid={uid}
+              connected={isConnected}
+              terminalRef={terminalRef}
+            />
+          </div>
+        </div>
+      )}
+
+      {/* 折叠时显示展开按钮 */}
+      {sidebarCollapsed && (
+        <button
+          onClick={handleToggleSidebar}
+          className="flex items-center border-l border-border bg-card/50 px-1 text-muted-foreground hover:text-foreground"
+          title="展开配置面板"
+        >
+          <PanelRightOpen className="h-4 w-4" />
+        </button>
+      )}
     </div>
   )
 }

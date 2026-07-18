@@ -1,5 +1,5 @@
 import { useState, useCallback } from 'react'
-import { AlertOctagon, Cpu } from 'lucide-react'
+import { Cpu, RefreshCw } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -8,44 +8,65 @@ import { useProbeStore } from '@/stores/probe.store'
 import { execCommand } from '@/services/commander.service'
 import { cn } from '@/lib/utils'
 
-// ── Cortex-M 故障寄存器定义 ──────────────────
-
-const CFSR_BITS: Record<number, string> = {
-  0: 'IACCVIOL — 指令访问违例（MemManage）',
-  1: 'DACCVIOL — 数据访问违例（MemManage）',
-  3: 'MUNSTKERR — 异常返回出栈错误（MemManage）',
-  4: 'MSTKERR — 异常入栈错误（MemManage）',
-  5: 'MLSPERR — 浮点延迟栈错误（MemManage）',
-  7: 'MMARVALID — MMFAR 包含有效地址',
-  8: 'IBUSERR — 指令总线错误（BusFault）',
-  9: 'PRECISERR — 精确数据总线错误（BusFault）',
-  10: 'IMPRECISERR — 不精确数据总线错误（BusFault）',
-  11: 'UNSTKERR — 异常返回出栈错误（BusFault）',
-  12: 'STKERR — 异常入栈错误（BusFault）',
-  13: 'LSPERR — 浮点延迟栈错误（BusFault）',
-  15: 'BFARVALID — BFAR 包含有效地址',
-  16: 'UNDEFINSTR — 未定义指令（UsageFault）',
-  17: 'INVSTATE — 无效 T 状态（UsageFault）',
-  18: 'INVPC — 异常返回 PC 无效（UsageFault）',
-  19: 'NOCP — 协处理器不可用（UsageFault）',
-  20: 'STKOF — 栈溢出（UsageFault, ARMv8-M）',
-  24: 'UNALIGNED — 未对齐访问（UsageFault）',
-  25: 'DIVBYZERO — 除零错误（UsageFault）',
-}
-
-const HFSR_BITS: Record<number, string> = {
-  1: 'VECTTBL — 向量表读取失败',
-  30: 'FORCED — 强制 HardFault（可配置故障升级）',
-  31: 'DEBUGEVT — 调试事件触发',
-}
+// ── Cortex-M 故障寄存器地址 ──────────────────
 
 const FAULT_ADDRS = {
   CFSR: 0xe000ed28,
   HFSR: 0xe000ed2c,
+  DFSR: 0xe000ed30,
   MMFAR: 0xe000ed34,
   BFAR: 0xe000ed38,
   AFSR: 0xe000ed3c,
 }
+
+// ── 故障位定义 ──────────────────────────────────
+
+interface FaultBit {
+  bit: number
+  name: string
+  desc: string
+}
+
+// MMFSR — Memory Management Fault Status Register (CFSR bits 0-7)
+const MMFSR_BITS: FaultBit[] = [
+  { bit: 0, name: 'IACCVIOL', desc: '指令访问违例 — 取指时访问了 MPU 禁止的区域' },
+  { bit: 1, name: 'DACCVIOL', desc: '数据访问违例 — 读写时访问了 MPU 禁止的区域' },
+  { bit: 3, name: 'MUNSTKERR', desc: '异常返回出栈错误 — MemManage' },
+  { bit: 4, name: 'MSTKERR', desc: '异常入栈错误 — MemManage' },
+  { bit: 5, name: 'MLSPERR', desc: '浮点延迟栈错误 — MemManage' },
+  { bit: 7, name: 'MMARVALID', desc: 'MMFAR 包含有效地址' },
+]
+
+// BFSR — Bus Fault Status Register (CFSR bits 8-15)
+const BFSR_BITS: FaultBit[] = [
+  { bit: 8, name: 'IBUSERR', desc: '指令总线错误 — 取指时总线错误' },
+  { bit: 9, name: 'PRECISERR', desc: '精确数据总线错误 — BFAR 包含有效地址' },
+  { bit: 10, name: 'IMPRECISERR', desc: '不精确数据总线错误' },
+  { bit: 11, name: 'UNSTKERR', desc: '异常返回出栈错误 — BusFault' },
+  { bit: 12, name: 'STKERR', desc: '异常入栈错误 — BusFault' },
+  { bit: 13, name: 'LSPERR', desc: '浮点延迟栈错误 — BusFault' },
+  { bit: 15, name: 'BFARVALID', desc: 'BFAR 包含有效地址' },
+]
+
+// UFSR — Usage Fault Status Register (CFSR bits 16-31)
+const UFSR_BITS: FaultBit[] = [
+  { bit: 16, name: 'UNDEFINSTR', desc: '未定义指令 — 执行了无效的指令编码' },
+  { bit: 17, name: 'INVSTATE', desc: '无效 T 状态 — Thumb 位不正确' },
+  { bit: 18, name: 'INVPC', desc: '异常返回 PC 无效 — LR 值非法' },
+  { bit: 19, name: 'NOCP', desc: '协处理器不可用 — 尝试执行 FPU 指令但 FPU 未使能' },
+  { bit: 20, name: 'STKOF', desc: '栈溢出 — 8 位递减栈计数器下溢 (ARMv8-M)' },
+  { bit: 24, name: 'UNALIGNED', desc: '未对齐访问 — 产生了未对齐的内存访问' },
+  { bit: 25, name: 'DIVBYZERO', desc: '除零错误 — 执行了 SDIV/UDIV 且除数为 0' },
+]
+
+// HFSR — Hard Fault Status Register
+const HFSR_BITS: FaultBit[] = [
+  { bit: 1, name: 'VECTTBL', desc: '向量表读取失败 — 取异常向量时总线错误' },
+  { bit: 30, name: 'FORCED', desc: '强制 HardFault — 可配置故障（MemManage/Bus/Usage）升级为 HardFault' },
+  { bit: 31, name: 'DEBUGEVT', desc: '调试事件触发 — 调试器产生的 HardFault' },
+]
+
+// ── 组件 ──────────────────────────────────
 
 interface RegState {
   cfsr: string
@@ -54,13 +75,26 @@ interface RegState {
   bfar: string
 }
 
+interface StackFrame {
+  r0: string
+  r1: string
+  r2: string
+  r3: string
+  r12: string
+  lr: string
+  pc: string
+  xpsr: string
+  sp: string
+}
+
 export default function FaultAnalyzer() {
   const [regs, setRegs] = useState<RegState>({
-    cfsr: '',
-    hfsr: '',
-    mmfar: '',
-    bfar: '',
+    cfsr: '00000000',
+    hfsr: '00000000',
+    mmfar: '00000000',
+    bfar: '00000000',
   })
+  const [stackFrame, setStackFrame] = useState<StackFrame | null>(null)
   const [loading, setLoading] = useState(false)
 
   const selectedProbe = useProbeStore((s) => {
@@ -79,13 +113,12 @@ export default function FaultAnalyzer() {
     if (!uid || !isConnected) return
     setLoading(true)
     try {
-      // 通过 Commander 的 read32 命令读取故障寄存器
       const readReg = async (addr: number): Promise<string> => {
         const result = await execCommand(uid, `read32 0x${addr.toString(16)}`)
-        // pyOCD 输出格式: "0xe000ed28: 0x00000000"
         const match = result.output.match(/0x([0-9a-fA-F]+)\s*$/m)
-        return match ? match[1].padStart(8, '0') : '00000000'
+        return match ? match[1].padStart(8, '0').toLowerCase() : '00000000'
       }
+
       const [cfsr, hfsr, mmfar, bfar] = await Promise.all([
         readReg(FAULT_ADDRS.CFSR),
         readReg(FAULT_ADDRS.HFSR),
@@ -93,6 +126,39 @@ export default function FaultAnalyzer() {
         readReg(FAULT_ADDRS.BFAR),
       ])
       setRegs({ cfsr, hfsr, mmfar, bfar })
+
+      // 尝试读取 CPU 异常栈帧（需要目标处于 halt 状态）
+      try {
+        // 读取 MSP
+        const mspResult = await execCommand(uid, 'reg msp')
+        const mspMatch = mspResult.output.match(/0x([0-9a-fA-F]+)/)
+        if (mspMatch) {
+          const msp = parseInt(mspMatch[1], 16)
+          // 异常栈帧位于 MSP 指向的地址
+          // 偏移: R0(0), R1(4), R2(8), R3(12), R12(16), LR(20), PC(24), xPSR(28)
+          const sfRegs = await Promise.all([
+            execCommand(uid, `read32 0x${msp.toString(16)}`),         // R0
+            execCommand(uid, `read32 0x${(msp + 4).toString(16)}`),    // R1
+            execCommand(uid, `read32 0x${(msp + 8).toString(16)}`),    // R2
+            execCommand(uid, `read32 0x${(msp + 12).toString(16)}`),   // R3
+            execCommand(uid, `read32 0x${(msp + 16).toString(16)}`),   // R12
+            execCommand(uid, `read32 0x${(msp + 20).toString(16)}`),   // LR
+            execCommand(uid, `read32 0x${(msp + 24).toString(16)}`),   // PC
+            execCommand(uid, `read32 0x${(msp + 28).toString(16)}`),   // xPSR
+          ])
+          const sfVals = sfRegs.map((r) => {
+            const m = r.output.match(/0x([0-9a-fA-F]+)\s*$/m)
+            return m ? m[1].padStart(8, '0').toLowerCase() : '00000000'
+          })
+          setStackFrame({
+            r0: sfVals[0], r1: sfVals[1], r2: sfVals[2], r3: sfVals[3],
+            r12: sfVals[4], lr: sfVals[5], pc: sfVals[6], xpsr: sfVals[7],
+            sp: mspMatch[1].padStart(8, '0').toLowerCase(),
+          })
+        }
+      } catch {
+        // 读取栈帧失败，忽略
+      }
     } catch {
       // 忽略
     } finally {
@@ -105,156 +171,145 @@ export default function FaultAnalyzer() {
   const mmfarVal = parseHex(regs.mmfar)
   const bfarVal = parseHex(regs.bfar)
 
-  const activeCfsrBits = Object.entries(CFSR_BITS)
-    .filter(([bit]) => (cfsrVal >> Number(bit)) & 1)
-    .map(([bit, desc]) => ({ bit: Number(bit), desc }))
+  // 分解 CFSR
+  const mmfsrVal = cfsrVal & 0xff         // bits 0-7
+  const bfsrVal = (cfsrVal >> 8) & 0xff   // bits 8-15
+  const ufsrVal = (cfsrVal >> 16) & 0xffff // bits 16-31
 
-  const activeHfsrBits = Object.entries(HFSR_BITS)
-    .filter(([bit]) => (hfsrVal >> Number(bit)) & 1)
-    .map(([bit, desc]) => ({ bit: Number(bit), desc }))
+  const mmarValid = (mmfsrVal >> 7) & 1
+  const bfarValid = (bfsrVal >> 7) & 1
 
   const hasFault = cfsrVal !== 0 || hfsrVal !== 0
-  const mmarValid = (cfsrVal >> 7) & 1
-  const bfarValid = (cfsrVal >> 15) & 1
 
   return (
-    <div className="mx-auto max-w-4xl space-y-6 p-6">
-      {/* 标题 */}
-      <div className="flex items-center justify-between">
-        <div className="flex items-center gap-3">
-          <AlertOctagon className="h-6 w-6 text-orange-500" />
-          <div>
-            <h1 className="text-xl font-bold">Fault Analyzer</h1>
-            <p className="text-sm text-muted-foreground">Cortex-M 故障寄存器解码与分析</p>
-          </div>
+    <div className="mx-auto max-w-5xl space-y-5 p-6">
+      {/* 顶层寄存器输入 */}
+      <div className="flex items-end justify-between gap-3">
+        <div className="grid flex-1 grid-cols-4 gap-3">
+        <RegInput
+          label="CFSR"
+          addr={FAULT_ADDRS.CFSR}
+          value={regs.cfsr}
+          onChange={(v) => setRegs({ ...regs, cfsr: v })}
+        />
+        <RegInput
+          label="HFSR"
+          addr={FAULT_ADDRS.HFSR}
+          value={regs.hfsr}
+          onChange={(v) => setRegs({ ...regs, hfsr: v })}
+        />
+        <RegInput
+          label="MMFAR"
+          addr={FAULT_ADDRS.MMFAR}
+          value={regs.mmfar}
+          onChange={(v) => setRegs({ ...regs, mmfar: v })}
+          dimmed={!mmarValid}
+        />
+        <RegInput
+          label="BFAR"
+          addr={FAULT_ADDRS.BFAR}
+          value={regs.bfar}
+          onChange={(v) => setRegs({ ...regs, bfar: v })}
+          dimmed={!bfarValid}
+        />
         </div>
         <Button
           onClick={handleReadFromTarget}
           disabled={!isConnected || loading}
           variant="outline"
           size="sm"
+          className="shrink-0"
         >
-          <Cpu className="mr-1.5 h-4 w-4" />
+          {loading ? <RefreshCw className="mr-1.5 h-4 w-4 animate-spin" /> : <Cpu className="mr-1.5 h-4 w-4" />}
           {loading ? '读取中...' : '从目标读取'}
         </Button>
       </div>
 
-      {/* 寄存器输入 */}
+      {/* Hard Faults */}
+      <FaultSection
+        title="Hard Faults"
+        register="HFSR"
+        value={hfsrVal}
+        bits={HFSR_BITS}
+        accentColor="text-red-500"
+        borderColor="border-red-500/30"
+      />
+
+      {/* Usage Faults */}
+      <FaultSection
+        title="Usage Faults"
+        register="UFSR"
+        value={ufsrVal}
+        bits={UFSR_BITS}
+        accentColor="text-amber-500"
+        borderColor="border-amber-500/30"
+      />
+
+      {/* Bus Faults */}
+      <FaultSection
+        title="Bus Faults"
+        register="BFSR"
+        value={bfsrVal}
+        bits={BFSR_BITS}
+        accentColor="text-cyan-500"
+        borderColor="border-cyan-500/30"
+      />
+
+      {/* Memory Management Faults */}
+      <FaultSection
+        title="Memory Management Faults"
+        register="MMFSR"
+        value={mmfsrVal}
+        bits={MMFSR_BITS}
+        accentColor="text-purple-500"
+        borderColor="border-purple-500/30"
+      />
+
+      {/* CPU capture during exception */}
       <Card>
         <CardHeader>
-          <CardTitle className="text-sm">故障寄存器</CardTitle>
+          <CardTitle className="flex items-center gap-2 text-sm">
+            <Cpu className="h-4 w-4 text-blue-500" />
+            CPU capture during exception
+          </CardTitle>
         </CardHeader>
-        <CardContent className="space-y-3">
-          <div className="grid grid-cols-2 gap-4">
-            <RegInput
-              label="CFSR"
-              addr={FAULT_ADDRS.CFSR}
-              value={regs.cfsr}
-              onChange={(v) => setRegs({ ...regs, cfsr: v })}
-            />
-            <RegInput
-              label="HFSR"
-              addr={FAULT_ADDRS.HFSR}
-              value={regs.hfsr}
-              onChange={(v) => setRegs({ ...regs, hfsr: v })}
-            />
-            <RegInput
-              label="MMFAR"
-              addr={FAULT_ADDRS.MMFAR}
-              value={regs.mmfar}
-              onChange={(v) => setRegs({ ...regs, mmfar: v })}
-              dimmed={!mmarValid}
-            />
-            <RegInput
-              label="BFAR"
-              addr={FAULT_ADDRS.BFAR}
-              value={regs.bfar}
-              onChange={(v) => setRegs({ ...regs, bfar: v })}
-              dimmed={!bfarValid}
-            />
-          </div>
+        <CardContent>
+          {stackFrame ? (
+            <div className="space-y-3">
+              <div className="text-xs text-muted-foreground">
+                异常栈帧（从 MSP = 0x{stackFrame.sp} 读取）
+              </div>
+              <div className="grid grid-cols-4 gap-3">
+                <StackReg label="R0" value={stackFrame.r0} />
+                <StackReg label="R1" value={stackFrame.r1} />
+                <StackReg label="R2" value={stackFrame.r2} />
+                <StackReg label="R3" value={stackFrame.r3} />
+                <StackReg label="R12" value={stackFrame.r12} />
+                <StackReg label="LR" value={stackFrame.lr} highlight />
+                <StackReg label="PC" value={stackFrame.pc} highlight />
+                <StackReg label="xPSR" value={stackFrame.xpsr} />
+              </div>
+              <div className="rounded-md bg-blue-500/5 border border-blue-500/20 p-3 text-sm">
+                <span className="text-muted-foreground">故障地址（PC）: </span>
+                <span className="font-mono text-blue-500">0x{stackFrame.pc}</span>
+                <span className="ml-4 text-muted-foreground">返回地址（LR）: </span>
+                <span className="font-mono text-blue-500">0x{stackFrame.lr}</span>
+              </div>
+            </div>
+          ) : (
+            <div className="py-6 text-center text-sm text-muted-foreground">
+              {isConnected
+                ? '点击"从目标读取"获取异常栈帧（需目标处于 halt 状态）'
+                : '连接探针后可从目标读取异常栈帧'}
+            </div>
+          )}
         </CardContent>
       </Card>
-
-      {/* 分析结果 */}
-      {hasFault ? (
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2 text-sm">
-              <span className="h-2 w-2 rounded-full bg-red-500" />
-              故障分析结果
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {/* CFSR 解码 */}
-            {activeCfsrBits.length > 0 && (
-              <div>
-                <h3 className="mb-2 text-xs font-medium text-muted-foreground">CFSR — 可配置故障状态</h3>
-                <div className="space-y-1.5">
-                  {activeCfsrBits.map(({ bit, desc }) => (
-                    <div key={bit} className="flex items-center gap-2 rounded-md bg-muted/30 px-3 py-1.5 text-sm">
-                      <span className="font-mono text-xs text-orange-500">bit {bit}</span>
-                      <span>{desc}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* HFSR 解码 */}
-            {activeHfsrBits.length > 0 && (
-              <div>
-                <h3 className="mb-2 text-xs font-medium text-muted-foreground">HFSR — HardFault 状态</h3>
-                <div className="space-y-1.5">
-                  {activeHfsrBits.map(({ bit, desc }) => (
-                    <div key={bit} className="flex items-center gap-2 rounded-md bg-muted/30 px-3 py-1.5 text-sm">
-                      <span className="font-mono text-xs text-red-500">bit {bit}</span>
-                      <span>{desc}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* 故障地址 */}
-            {(mmarValid || bfarValid) && (
-              <div>
-                <h3 className="mb-2 text-xs font-medium text-muted-foreground">故障地址</h3>
-                <div className="flex gap-4">
-                  {mmarValid && (
-                    <div className="rounded-md bg-muted/30 px-3 py-2 text-sm">
-                      <span className="text-muted-foreground">MMFAR: </span>
-                      <span className="font-mono">0x{mmfarVal.toString(16).padStart(8, '0')}</span>
-                    </div>
-                  )}
-                  {bfarValid && (
-                    <div className="rounded-md bg-muted/30 px-3 py-2 text-sm">
-                      <span className="text-muted-foreground">BFAR: </span>
-                      <span className="font-mono">0x{bfarVal.toString(16).padStart(8, '0')}</span>
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-
-            {/* 故障类型推断 */}
-            <div className="rounded-md border border-orange-500/30 bg-orange-500/5 p-3">
-              <h3 className="mb-1 text-xs font-medium text-orange-500">故障类型推断</h3>
-              <p className="text-sm">{inferFaultType(cfsrVal, hfsrVal)}</p>
-            </div>
-          </CardContent>
-        </Card>
-      ) : (
-        <div className="flex items-center justify-center rounded-lg border border-dashed border-border py-12">
-          <div className="text-center">
-            <p className="text-sm text-muted-foreground">输入故障寄存器值或从目标读取</p>
-            <p className="mt-1 text-xs text-muted-foreground">CFSR / HFSR 全为 0 时无故障</p>
-          </div>
-        </div>
-      )}
     </div>
   )
 }
+
+// ── 子组件 ──────────────────────────────────
 
 function RegInput({
   label,
@@ -273,7 +328,7 @@ function RegInput({
     <div className={cn(dimmed && 'opacity-40')}>
       <Label className="mb-1 flex items-center justify-between text-xs">
         <span className="font-mono font-medium">{label}</span>
-        <span className="text-muted-foreground">0x{addr.toString(16).padStart(8, '0').toUpperCase()}</span>
+        <span className="text-muted-foreground">@0x{addr.toString(16).padStart(8, '0').toUpperCase()}</span>
       </Label>
       <div className="relative">
         <span className="absolute left-2.5 top-1/2 -translate-y-1/2 font-mono text-xs text-muted-foreground">0x</span>
@@ -281,40 +336,114 @@ function RegInput({
           value={value}
           onChange={(e) => onChange(e.target.value.replace(/[^0-9a-fA-F]/g, ''))}
           placeholder="00000000"
-          className="pl-8 font-mono"
+          className="pl-8 font-mono text-sm"
         />
       </div>
     </div>
   )
 }
 
-function inferFaultType(cfsr: number, hfsr: number): string {
-  const forced = (hfsr >> 30) & 1
-  const vecttbl = (hfsr >> 1) & 1
-  const debugevt = (hfsr >> 31) & 1
+function FaultSection({
+  title,
+  register,
+  value,
+  bits,
+  accentColor,
+  borderColor,
+}: {
+  title: string
+  register: string
+  value: number
+  bits: FaultBit[]
+  accentColor: string
+  borderColor: string
+}) {
+  const activeBits = bits.filter((b) => (value >> b.bit) & 1)
+  const hasFault = value !== 0
 
-  if (vecttbl) return '向量表读取失败 — 检查向量表是否正确映射到地址 0x00000000'
-  if (debugevt) return '调试事件触发的 HardFault — 检查调试配置'
+  return (
+    <Card className={cn(borderColor, hasFault && 'border')}>
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className={cn('flex items-center gap-2 text-sm', accentColor)}>
+            {title}
+            {hasFault && (
+              <span className="flex items-center gap-1 text-xs">
+                <span className="h-1.5 w-1.5 rounded-full bg-red-500" />
+                {activeBits.length} flag(s) active
+              </span>
+            )}
+          </CardTitle>
+          <span className="font-mono text-xs text-muted-foreground">
+            {register} = 0x{value.toString(16).padStart(8, '0').toUpperCase()}
+          </span>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {hasFault ? (
+          <div className="space-y-1.5">
+            {activeBits.map((b) => (
+              <div
+                key={b.bit}
+                className="flex items-start gap-3 rounded-md bg-muted/30 px-3 py-2 text-sm"
+              >
+                <span className={cn('font-mono text-xs font-bold', accentColor)}>
+                  bit {b.bit}
+                </span>
+                <span className="font-mono text-xs font-medium">{b.name}</span>
+                <span className="flex-1 text-xs text-muted-foreground">{b.desc}</span>
+              </div>
+            ))}
+          </div>
+        ) : (
+          <div className="py-2 text-center text-xs text-muted-foreground">
+            无 {title} 标志位
+          </div>
+        )}
 
-  const iaccviol = cfsr & 1
-  const daccviol = (cfsr >> 1) & 1
-  const ibuserr = (cfsr >> 8) & 1
-  const preciserr = (cfsr >> 9) & 1
-  const impreciserr = (cfsr >> 10) & 1
-  const undefinstr = (cfsr >> 16) & 1
-  const invstate = (cfsr >> 17) & 1
-  const invpc = (cfsr >> 18) & 1
-  const unaligned = (cfsr >> 24) & 1
-  const divbyzero = (cfsr >> 25) & 1
+        {/* 位域可视化 */}
+        <div className="mt-3 flex flex-wrap gap-1">
+          {bits.map((b) => {
+            const isActive = (value >> b.bit) & 1
+            return (
+              <div
+                key={b.bit}
+                title={`${b.name}: ${b.desc}`}
+                className={cn(
+                  'flex h-7 w-7 items-center justify-center rounded text-[10px] font-mono font-bold transition-colors',
+                  isActive
+                    ? cn('bg-opacity-20', accentColor.replace('text-', 'bg-'))
+                    : 'bg-muted/30 text-muted-foreground'
+                )}
+              >
+                {isActive ? '1' : '0'}
+              </div>
+            )
+          })}
+        </div>
+      </CardContent>
+    </Card>
+  )
+}
 
-  if (forced) {
-    if (iaccviol || daccviol) return 'MemManage 故障升级为 HardFault — 可能访问了 MPU 保护的区域'
-    if (ibuserr || preciserr || impreciserr) return 'BusFault 升级为 HardFault — 可能访问了无效地址或外设未使能'
-    if (undefinstr) return 'UsageFault 升级为 HardFault — 执行了未定义指令，检查函数指针'
-    if (invstate) return 'UsageFault 升级为 HardFault — 无效的 Thumb 状态，检查函数指针声明'
-    if (invpc) return 'UsageFault 升级为 HardFault — 异常返回 PC 无效'
-    if (unaligned) return 'UsageFault 升级为 HardFault — 未对齐的内存访问'
-    if (divbyzero) return 'UsageFault 升级为 HardFault — 除零错误'
-  }
-  return '检测到故障状态位，请查看上方详细解码'
+function StackReg({
+  label,
+  value,
+  highlight,
+}: {
+  label: string
+  value: string
+  highlight?: boolean
+}) {
+  return (
+    <div className={cn(
+      'rounded-md border p-2',
+      highlight ? 'border-blue-500/40 bg-blue-500/5' : 'border-border bg-muted/20'
+    )}>
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className={cn('font-mono text-sm font-medium', highlight && 'text-blue-500')}>
+        0x{value}
+      </div>
+    </div>
+  )
 }

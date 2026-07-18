@@ -1,104 +1,272 @@
-import { useState, useCallback, useRef } from 'react'
-import { FileBarChart, Upload, FileText } from 'lucide-react'
+import { useState, useCallback, useRef, useEffect } from 'react'
+import * as echarts from 'echarts'
+import { Upload, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { api } from '@/services/api'
 import { cn } from '@/lib/utils'
 
-interface MemoryRegion {
-  name: string
-  origin: number
-  length: number
-  used: number
+// ── 类型定义 ──────────────────────────────────
+
+interface MapMeta {
+  source_file: string
+  component: string
+  tool: string
+  generated_at: string
 }
 
-interface SectionInfo {
+interface MapSummary {
+  code: number
+  ro_data: number
+  rw_data: number
+  zi_data: number
+  total_rom: number
+  total_ram: number
+  total_ro: number
+  flash_used: number
+  flash_capacity: number
+  ram_used: number
+  ram_capacity: number
+}
+
+interface MapRegion {
   name: string
-  address: number
+  exec_base: number
   size: number
-  file?: string
+  max_size: number
 }
 
-interface MapData {
-  regions: MemoryRegion[]
-  sections: SectionInfo[]
-  totalText: number
-  totalData: number
-  totalBss: number
+interface MapEntry {
+  name: string
+  category: string
+  kind: string
+  library: string
+  code: number
+  ro_data: number
+  rw_data: number
+  zi_data: number
+  rom: number
+  ram: number
+  stack?: number
 }
+
+interface MapCategory {
+  name: string
+  code: number
+  ro_data: number
+  rw_data: number
+  zi_data: number
+  rom: number
+  ram: number
+}
+
+interface MapAnalysis {
+  meta: MapMeta
+  summary: MapSummary
+  regions: MapRegion[]
+  entries: MapEntry[]
+  categories: MapCategory[]
+  top_rom: MapEntry[]
+  top_ram: MapEntry[]
+  top_stack: MapEntry[]
+}
+
+// ── 工具函数 ──────────────────────────────────
+
+function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
+  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
+}
+
+function formatBytesCompact(bytes: number): string {
+  if (bytes === 0) return '0'
+  if (bytes < 1024) return `${bytes}`
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)}K`
+  return `${(bytes / (1024 * 1024)).toFixed(1)}M`
+}
+
+const CATEGORY_COLORS: Record<string, string> = {
+  'Code': '#3b82f6',
+  'RO Data': '#06b6d4',
+  'RW Data': '#22c55e',
+  'ZI Data': '#a855f7',
+  'Stack': '#f59e0b',
+  'Heap': '#ef4444',
+}
+
+// ── 主组件 ──────────────────────────────────
 
 export default function MapAnalyzer() {
-  const [mapData, setMapData] = useState<MapData | null>(null)
+  const [analysis, setAnalysis] = useState<MapAnalysis | null>(null)
   const [fileName, setFileName] = useState('')
+  const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
-  const [sortBy, setSortBy] = useState<'size' | 'address' | 'name'>('size')
+  const [activeTab, setActiveTab] = useState<'rom' | 'ram' | 'stack' | 'all'>('rom')
   const fileInputRef = useRef<HTMLInputElement>(null)
 
+  // ECharts refs
+  const romDonutRef = useRef<HTMLDivElement>(null)
+  const ramDonutRef = useRef<HTMLDivElement>(null)
+  const categoryBarRef = useRef<HTMLDivElement>(null)
+  const top20Ref = useRef<HTMLDivElement>(null)
+
   const handleFile = useCallback(async (file: File) => {
+    setLoading(true)
     setError('')
     setFileName(file.name)
+    setAnalysis(null)
+
     try {
-      const text = await file.text()
-      const data = parseMapFile(text)
-      setMapData(data)
+      const content = await file.text()
+      const client = await api()
+      const { data } = await client.post('/api/tools/map-analyzer', {
+        filename: file.name,
+        content,
+      })
+      setAnalysis(data)
     } catch (e) {
-      setError(e instanceof Error ? e.message : '解析失败')
-      setMapData(null)
+      const msg = e instanceof Error ? e.message : String(e)
+      // 尝试提取 FastAPI 错误详情
+      const apiErr = e as { response?: { data?: { detail?: string } } }
+      setError(apiErr.response?.data?.detail || msg || '解析失败')
+    } finally {
+      setLoading(false)
     }
   }, [])
-
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault()
-    const file = e.dataTransfer.files[0]
-    if (file) void handleFile(file)
-  }, [handleFile])
 
   const handleFileInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (file) void handleFile(file)
+    e.target.value = ''
   }, [handleFile])
 
-  const sortedSections = mapData
-    ? [...mapData.sections].sort((a, b) => {
-        switch (sortBy) {
-          case 'size': return b.size - a.size
-          case 'address': return a.address - b.address
-          case 'name': return a.name.localeCompare(b.name)
-        }
-      })
-    : []
+  // ── 图表渲染 ──────────────────────────────────
+
+  // ROM 环形图
+  useEffect(() => {
+    if (!analysis || !romDonutRef.current) return
+    const chart = echarts.init(romDonutRef.current)
+    const data = [
+      { name: 'Code', value: analysis.summary.code, itemStyle: { color: CATEGORY_COLORS['Code'] } },
+      { name: 'RO Data', value: analysis.summary.ro_data, itemStyle: { color: CATEGORY_COLORS['RO Data'] } },
+      { name: 'RW Data', value: analysis.summary.rw_data, itemStyle: { color: CATEGORY_COLORS['RW Data'] } },
+    ].filter((d) => d.value > 0)
+    chart.setOption({
+      tooltip: { trigger: 'item', formatter: (p: { name: string; value: number; percent: number }) => `${p.name}<br/>${formatBytes(p.value)} (${p.percent}%)` },
+      legend: { bottom: 0, textStyle: { fontSize: 11 } },
+      series: [{
+        type: 'pie',
+        radius: ['45%', '70%'],
+        center: ['50%', '45%'],
+        avoidLabelOverlap: true,
+        label: { show: true, formatter: '{b}\n{d}%', fontSize: 10 },
+        data,
+      }],
+    })
+    return () => chart.dispose()
+  }, [analysis])
+
+  // RAM 环形图
+  useEffect(() => {
+    if (!analysis || !ramDonutRef.current) return
+    const chart = echarts.init(ramDonutRef.current)
+    const data = [
+      { name: 'RW Data', value: analysis.summary.rw_data, itemStyle: { color: CATEGORY_COLORS['RW Data'] } },
+      { name: 'ZI Data', value: analysis.summary.zi_data, itemStyle: { color: CATEGORY_COLORS['ZI Data'] } },
+    ].filter((d) => d.value > 0)
+    chart.setOption({
+      tooltip: { trigger: 'item', formatter: (p: { name: string; value: number; percent: number }) => `${p.name}<br/>${formatBytes(p.value)} (${p.percent}%)` },
+      legend: { bottom: 0, textStyle: { fontSize: 11 } },
+      series: [{
+        type: 'pie',
+        radius: ['45%', '70%'],
+        center: ['50%', '45%'],
+        avoidLabelOverlap: true,
+        label: { show: true, formatter: '{b}\n{d}%', fontSize: 10 },
+        data,
+      }],
+    })
+    return () => chart.dispose()
+  }, [analysis])
+
+  // 分类柱状图（堆叠）
+  useEffect(() => {
+    if (!analysis || !categoryBarRef.current || analysis.categories.length === 0) return
+    const chart = echarts.init(categoryBarRef.current)
+    const cats = analysis.categories.slice(0, 15)
+    chart.setOption({
+      tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
+      legend: { bottom: 0, textStyle: { fontSize: 11 } },
+      grid: { left: '3%', right: '4%', top: '3%', bottom: '15%', containLabel: true },
+      xAxis: { type: 'category', data: cats.map((c) => c.name), axisLabel: { fontSize: 10, rotate: 30 } },
+      yAxis: { type: 'value', axisLabel: { fontSize: 10, formatter: (v: number) => formatBytesCompact(v) } },
+      series: [
+        { name: 'Code', type: 'bar', stack: 'total', data: cats.map((c) => c.code), itemStyle: { color: CATEGORY_COLORS['Code'] } },
+        { name: 'RO Data', type: 'bar', stack: 'total', data: cats.map((c) => c.ro_data), itemStyle: { color: CATEGORY_COLORS['RO Data'] } },
+        { name: 'RW Data', type: 'bar', stack: 'total', data: cats.map((c) => c.rw_data), itemStyle: { color: CATEGORY_COLORS['RW Data'] } },
+        { name: 'ZI Data', type: 'bar', stack: 'total', data: cats.map((c) => c.zi_data), itemStyle: { color: CATEGORY_COLORS['ZI Data'] } },
+      ],
+    })
+    return () => chart.dispose()
+  }, [analysis])
+
+  // Top 20 柱状图
+  useEffect(() => {
+    if (!analysis || !top20Ref.current) return
+    const chart = echarts.init(top20Ref.current)
+    const top = activeTab === 'rom' ? analysis.top_rom : activeTab === 'ram' ? analysis.top_ram : analysis.top_stack
+    const data = (top || []).slice(0, 20).reverse()
+    chart.setOption({
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: { type: 'shadow' },
+        formatter: (params: Array<{ name: string; value: number }>) => {
+          const p = params[0]
+          return `${p.name}<br/>${formatBytes(p.value)}`
+        },
+      },
+      grid: { left: '3%', right: '6%', top: '3%', bottom: '3%', containLabel: true },
+      xAxis: { type: 'value', axisLabel: { fontSize: 10, formatter: (v: number) => formatBytesCompact(v) } },
+      yAxis: { type: 'category', data: data.map((d) => d.name), axisLabel: { fontSize: 9, width: 200, overflow: 'truncate' } },
+      series: [{
+        type: 'bar',
+        data: data.map((d) => (activeTab === 'rom' ? d.rom : activeTab === 'ram' ? d.ram : d.stack || 0)),
+        itemStyle: {
+          color: activeTab === 'rom' ? '#3b82f6' : activeTab === 'ram' ? '#22c55e' : '#f59e0b',
+          borderRadius: [0, 3, 3, 0],
+        },
+      }],
+    })
+    return () => chart.dispose()
+  }, [analysis, activeTab])
+
+  // ── 表格数据 ──────────────────────────────────
+
+  const tableData = (() => {
+    if (!analysis) return []
+    switch (activeTab) {
+      case 'rom': return analysis.top_rom
+      case 'ram': return analysis.top_ram
+      case 'stack': return analysis.top_stack
+      case 'all': return analysis.entries.sort((a, b) => b.rom - a.rom)
+    }
+  })()
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6 p-6">
-      {/* 标题 */}
-      <div className="flex items-center gap-3">
-        <FileBarChart className="h-6 w-6 text-blue-500" />
-        <div>
-          <h1 className="text-xl font-bold">Map Analyzer</h1>
-          <p className="text-sm text-muted-foreground">GNU ld 链接映射文件分析</p>
-        </div>
-      </div>
-
-      {/* 文件上传 */}
-      <div
-        onDrop={handleDrop}
-        onDragOver={(e) => e.preventDefault()}
-        className={cn(
-          'flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-border py-10 transition-colors',
-          'hover:border-primary/50 hover:bg-muted/20'
-        )}
-      >
+    <div className="mx-auto max-w-6xl space-y-5 p-6">
+      {/* 文件选择 */}
+      <div className="flex flex-col items-center justify-center rounded-lg border-2 border-dashed border-border py-8 transition-colors hover:border-primary/50 hover:bg-muted/20">
         <FileText className="mb-3 h-10 w-10 text-muted-foreground" />
-        <p className="text-sm text-muted-foreground">
-          拖放 .map 文件到此处，或
-        </p>
+        <p className="text-sm text-muted-foreground">点击下方按钮选择 .map 文件</p>
         <Button
           variant="outline"
           size="sm"
-          className="mt-2"
+          className="mt-3"
           onClick={() => fileInputRef.current?.click()}
+          disabled={loading}
         >
           <Upload className="mr-1.5 h-4 w-4" />
-          选择文件
+          {loading ? '解析中...' : '选择文件'}
         </Button>
         <input
           ref={fileInputRef}
@@ -114,33 +282,44 @@ export default function MapAnalyzer() {
       </div>
 
       {/* 分析结果 */}
-      {mapData && (
+      {analysis && (
         <>
-          {/* 内存区域概览 */}
-          <div className="grid grid-cols-3 gap-4">
-            <StatCard label="Flash (.text)" value={mapData.totalText} color="text-blue-500" />
-            <StatCard label="RAM (.data)" value={mapData.totalData} color="text-green-500" />
-            <StatCard label="RAM (.bss)" value={mapData.totalBss} color="text-purple-500" />
+          {/* 元信息 */}
+          <div className="flex flex-wrap gap-4 rounded-lg border border-border bg-muted/20 px-4 py-3 text-xs text-muted-foreground">
+            <span>组件: <span className="font-mono text-foreground">{analysis.meta.component || '—'}</span></span>
+            <span>工具: <span className="font-mono text-foreground">{analysis.meta.tool || '—'}</span></span>
+            <span>生成时间: <span className="font-mono text-foreground">{analysis.meta.generated_at || '—'}</span></span>
+            <span>条目数: <span className="font-mono text-foreground">{analysis.entries.length}</span></span>
+          </div>
+
+          {/* 摘要卡片 */}
+          <div className="grid grid-cols-6 gap-3">
+            <SummaryCard label="ROM Total" value={analysis.summary.total_rom} color="text-blue-500" />
+            <SummaryCard label="RAM Total" value={analysis.summary.total_ram} color="text-green-500" />
+            <SummaryCard label="Code" value={analysis.summary.code} color="text-blue-500" />
+            <SummaryCard label="RO Data" value={analysis.summary.ro_data} color="text-cyan-500" />
+            <SummaryCard label="RW Data" value={analysis.summary.rw_data} color="text-green-500" />
+            <SummaryCard label="ZI Data" value={analysis.summary.zi_data} color="text-purple-500" />
           </div>
 
           {/* 内存区域使用率 */}
-          {mapData.regions.length > 0 && (
-            <Card>
-              <CardHeader>
-                <CardTitle className="text-sm">内存区域使用率</CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                {mapData.regions.map((region) => {
-                  const pct = region.length > 0 ? (region.used / region.length) * 100 : 0
+          {analysis.regions.length > 0 && (
+            <div className="rounded-lg border border-border p-4">
+              <h3 className="mb-3 text-sm font-semibold">内存区域使用率</h3>
+              <div className="space-y-3">
+                {analysis.regions.map((region) => {
+                  const pct = region.max_size > 0 ? (region.size / region.max_size) * 100 : 0
                   return (
                     <div key={region.name}>
                       <div className="mb-1 flex items-center justify-between text-xs">
-                        <span className="font-mono font-medium">{region.name}</span>
+                        <span className="font-mono font-medium">
+                          {region.name} <span className="text-muted-foreground">@0x{region.exec_base.toString(16).toUpperCase()}</span>
+                        </span>
                         <span className="text-muted-foreground">
-                          {formatBytes(region.used)} / {formatBytes(region.length)} ({pct.toFixed(1)}%)
+                          {formatBytes(region.size)} / {formatBytes(region.max_size)} ({pct.toFixed(1)}%)
                         </span>
                       </div>
-                      <div className="h-2 overflow-hidden rounded-full bg-muted">
+                      <div className="h-2.5 overflow-hidden rounded-full bg-muted">
                         <div
                           className={cn(
                             'h-full rounded-full transition-all',
@@ -152,158 +331,114 @@ export default function MapAnalyzer() {
                     </div>
                   )
                 })}
-              </CardContent>
-            </Card>
+              </div>
+            </div>
           )}
 
-          {/* 区段明细 */}
-          <Card>
-            <CardHeader>
-              <div className="flex items-center justify-between">
-                <CardTitle className="text-sm">区段明细（{mapData.sections.length} 项）</CardTitle>
-                <div className="flex gap-1">
-                  {(['size', 'address', 'name'] as const).map((key) => (
-                    <Button
-                      key={key}
-                      variant={sortBy === key ? 'default' : 'outline'}
-                      size="sm"
-                      className="h-7 text-xs"
-                      onClick={() => setSortBy(key)}
-                    >
-                      {key === 'size' ? '按大小' : key === 'address' ? '按地址' : '按名称'}
-                    </Button>
-                  ))}
-                </div>
-              </div>
-            </CardHeader>
-            <CardContent>
-              <div className="max-h-96 overflow-y-auto">
-                <table className="w-full text-xs">
-                  <thead className="sticky top-0 bg-card">
-                    <tr className="border-b border-border text-left text-muted-foreground">
-                      <th className="py-2 pr-4 font-medium">区段</th>
-                      <th className="py-2 pr-4 font-medium">地址</th>
-                      <th className="py-2 pr-4 text-right font-medium">大小</th>
-                      <th className="py-2 font-medium">文件</th>
+          {/* 环形图 */}
+          <div className="grid grid-cols-2 gap-4">
+            <div className="rounded-lg border border-border p-4">
+              <h3 className="mb-2 text-sm font-semibold">ROM 构成</h3>
+              <div ref={romDonutRef} className="h-64 w-full" />
+            </div>
+            <div className="rounded-lg border border-border p-4">
+              <h3 className="mb-2 text-sm font-semibold">RAM 构成</h3>
+              <div ref={ramDonutRef} className="h-64 w-full" />
+            </div>
+          </div>
+
+          {/* 分类堆叠柱状图 */}
+          <div className="rounded-lg border border-border p-4">
+            <h3 className="mb-2 text-sm font-semibold">分类占用（Top 15）</h3>
+            <div ref={categoryBarRef} className="h-72 w-full" />
+          </div>
+
+          {/* Top 20 柱状图 */}
+          <div className="rounded-lg border border-border p-4">
+            <h3 className="mb-2 text-sm font-semibold">
+              Top 20 — {activeTab === 'rom' ? 'ROM' : activeTab === 'ram' ? 'RAM' : 'Stack'}
+            </h3>
+            <div ref={top20Ref} className="h-96 w-full" />
+          </div>
+
+          {/* 表格 */}
+          <div className="rounded-lg border border-border">
+            <div className="flex border-b border-border">
+              {([
+                { key: 'rom', label: 'Top ROM' },
+                { key: 'ram', label: 'Top RAM' },
+                { key: 'stack', label: 'Top Stack' },
+                { key: 'all', label: '全部条目' },
+              ] as const).map((tab) => (
+                <button
+                  key={tab.key}
+                  onClick={() => setActiveTab(tab.key)}
+                  className={cn(
+                    'px-4 py-2 text-sm font-medium transition-colors',
+                    activeTab === tab.key
+                      ? 'border-b-2 border-primary text-primary'
+                      : 'text-muted-foreground hover:text-foreground'
+                  )}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+            <div className="max-h-96 overflow-y-auto">
+              <table className="w-full text-xs">
+                <thead className="sticky top-0 bg-card">
+                  <tr className="border-b border-border text-left text-muted-foreground">
+                    <th className="py-2 pl-3 pr-2 font-medium">名称</th>
+                    <th className="py-2 px-2 font-medium">类别</th>
+                    <th className="py-2 px-2 text-right font-medium">Code</th>
+                    <th className="py-2 px-2 text-right font-medium">RO</th>
+                    <th className="py-2 px-2 text-right font-medium">RW</th>
+                    <th className="py-2 px-2 text-right font-medium">ZI</th>
+                    <th className="py-2 px-2 text-right font-medium">ROM</th>
+                    <th className="py-2 px-2 text-right font-medium">RAM</th>
+                    {activeTab === 'stack' && <th className="py-2 pr-3 text-right font-medium">Stack</th>}
+                  </tr>
+                </thead>
+                <tbody className="font-mono">
+                  {tableData.slice(0, 200).map((entry, i) => (
+                    <tr key={i} className="border-b border-border/50 hover:bg-muted/20">
+                      <td className="py-1.5 pl-3 pr-2 text-blue-500" title={entry.name}>
+                        <span className="block max-w-xs truncate">{entry.name}</span>
+                      </td>
+                      <td className="py-1.5 px-2 text-muted-foreground">{entry.category}</td>
+                      <td className="py-1.5 px-2 text-right">{entry.code > 0 ? formatBytesCompact(entry.code) : '-'}</td>
+                      <td className="py-1.5 px-2 text-right">{entry.ro_data > 0 ? formatBytesCompact(entry.ro_data) : '-'}</td>
+                      <td className="py-1.5 px-2 text-right">{entry.rw_data > 0 ? formatBytesCompact(entry.rw_data) : '-'}</td>
+                      <td className="py-1.5 px-2 text-right">{entry.zi_data > 0 ? formatBytesCompact(entry.zi_data) : '-'}</td>
+                      <td className="py-1.5 px-2 text-right text-blue-500">{entry.rom > 0 ? formatBytesCompact(entry.rom) : '-'}</td>
+                      <td className="py-1.5 px-2 text-right text-green-500">{entry.ram > 0 ? formatBytesCompact(entry.ram) : '-'}</td>
+                      {activeTab === 'stack' && (
+                        <td className="py-1.5 pr-3 text-right text-amber-500">
+                          {entry.stack ? formatBytesCompact(entry.stack) : '-'}
+                        </td>
+                      )}
                     </tr>
-                  </thead>
-                  <tbody className="font-mono">
-                    {sortedSections.slice(0, 200).map((section, i) => (
-                      <tr key={i} className="border-b border-border/50 hover:bg-muted/20">
-                        <td className="py-1.5 pr-4 text-blue-500">{section.name}</td>
-                        <td className="py-1.5 pr-4 text-muted-foreground">
-                          0x{section.address.toString(16).padStart(8, '0')}
-                        </td>
-                        <td className="py-1.5 pr-4 text-right">
-                          {section.size > 0 ? formatBytes(section.size) : '-'}
-                        </td>
-                        <td className="py-1.5 truncate text-muted-foreground" title={section.file}>
-                          {section.file || '-'}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-                {sortedSections.length > 200 && (
-                  <p className="py-2 text-center text-xs text-muted-foreground">
-                    仅显示前 200 项（共 {sortedSections.length} 项）
-                  </p>
-                )}
-              </div>
-            </CardContent>
-          </Card>
+                  ))}
+                </tbody>
+              </table>
+              {tableData.length > 200 && (
+                <p className="py-2 text-center text-xs text-muted-foreground">
+                  仅显示前 200 项（共 {tableData.length} 项）
+                </p>
+              )}
+            </div>
+          </div>
         </>
       )}
     </div>
   )
 }
 
-function StatCard({ label, value, color }: { label: string; value: number; color: string }) {
+function SummaryCard({ label, value, color }: { label: string; value: number; color: string }) {
   return (
-    <Card>
-      <CardContent className="py-4">
-        <div className="text-xs text-muted-foreground">{label}</div>
-        <div className={cn('mt-1 text-2xl font-bold font-mono', color)}>{formatBytes(value)}</div>
-      </CardContent>
-    </Card>
+    <div className="rounded-lg border border-border bg-card p-3">
+      <div className="text-xs text-muted-foreground">{label}</div>
+      <div className={cn('mt-1 text-lg font-bold font-mono', color)}>{formatBytes(value)}</div>
+    </div>
   )
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`
-  return `${(bytes / (1024 * 1024)).toFixed(2)} MB`
-}
-
-/** 解析 GNU ld .map 文件 */
-function parseMapFile(text: string): MapData {
-  const lines = text.split('\n')
-  const regions: MemoryRegion[] = []
-  const sections: SectionInfo[] = []
-  let totalText = 0
-  let totalData = 0
-  let totalBss = 0
-
-  // 解析 Memory Configuration
-  let inMemoryConfig = false
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim()
-
-    if (line.startsWith('Memory Configuration')) {
-      inMemoryConfig = true
-      continue
-    }
-    if (inMemoryConfig) {
-      if (line.startsWith('Linker script') || line === '') {
-        if (regions.length > 0) inMemoryConfig = false
-        continue
-      }
-      // 格式: Name             Origin             Length             Attributes
-      const match = line.match(/^(\S+)\s+0x([0-9a-fA-F]+)\s+0x([0-9a-fA-F]+)\s*(\S*)/)
-      if (match) {
-        regions.push({
-          name: match[1],
-          origin: parseInt(match[2], 16),
-          length: parseInt(match[3], 16),
-          used: 0,
-        })
-      }
-    }
-  }
-
-  // 解析区段和符号
-  // 匹配格式: .text 0x08000000 0x1234 file.o
-  const sectionRegex = /^(\.\S+)\s+0x([0-9a-fA-F]+)\s+(0x[0-9a-fA-F]+|\d+)\s*(.*)$/
-
-  for (const line of lines) {
-    const trimmed = line.trim()
-    const match = trimmed.match(sectionRegex)
-    if (match) {
-      const name = match[1]
-      const address = parseInt(match[2], 16)
-      const sizeStr = match[3]
-      const size = sizeStr.startsWith('0x') ? parseInt(sizeStr, 16) : parseInt(sizeStr, 10)
-      const file = match[4].trim() || undefined
-
-      sections.push({ name, address, size, file })
-
-      // 统计
-      if (name.startsWith('.text') || name.startsWith('.rodata') || name.startsWith('.init') || name.startsWith('.fini') || name.startsWith('.isr_vector') || name.startsWith('.ARM.extab') || name.startsWith('.ARM.exidx')) {
-        totalText += size
-        // 匹配到对应内存区域
-        const region = regions.find((r) => address >= r.origin && address < r.origin + r.length)
-        if (region) region.used += size
-      } else if (name.startsWith('.data') || name.startsWith('.got')) {
-        totalData += size
-        const region = regions.find((r) => address >= r.origin && address < r.origin + r.length)
-        if (region) region.used += size
-      } else if (name.startsWith('.bss') || name.startsWith('._user_heap_stack') || name.startsWith('.noinit')) {
-        totalBss += size
-        const region = regions.find((r) => address >= r.origin && address < r.origin + r.length)
-        if (region) region.used += size
-      }
-    }
-  }
-
-  return { regions, sections, totalText, totalData, totalBss }
 }
