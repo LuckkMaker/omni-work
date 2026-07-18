@@ -51,7 +51,7 @@ async def connect_probe(uid: str, req: ConnectRequest | None = None):
     return {
         "connected": True,
         "uid": uid,
-        "target": target.__dict__ if target else None,
+        "target": target.to_dict() if target else None,
     }
 
 
@@ -68,7 +68,7 @@ async def get_target(uid: str):
     target = backend.get_target_info(uid)
     if not target:
         raise HTTPException(status_code=404, detail="No target connected")
-    return target.__dict__
+    return target.to_dict()
 
 
 @router.post("/{uid}/target")
@@ -82,7 +82,7 @@ async def set_target(uid: str, req: SetTargetRequest):
     return {
         "success": True,
         "uid": uid,
-        "target": target.__dict__ if target else None,
+        "target": target.to_dict() if target else None,
     }
 
 
@@ -94,7 +94,7 @@ async def get_probe_status(uid: str):
     return {
         "uid": uid,
         "state": state.value,
-        "target": target.__dict__ if target else None,
+        "target": target.to_dict() if target else None,
     }
 
 

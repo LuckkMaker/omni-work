@@ -44,8 +44,8 @@ export default function MainLayout() {
           <DeviceSwitcher />
         </div>
 
-        {/* 导航菜单 */}
-        <nav className="shrink-0 space-y-1 p-3">
+        {/* 导航菜单（占据剩余空间，可滚动） */}
+        <nav className="flex-1 min-h-0 overflow-y-auto space-y-1 p-3">
           {navItems.map((item) => (
             <NavLink
               key={item.to}
@@ -65,8 +65,8 @@ export default function MainLayout() {
           ))}
         </nav>
 
-        {/* 全局信息面板（接口/目标/Flash） */}
-        <div className="flex-1 min-h-0 overflow-y-auto border-t border-border">
+        {/* 全局信息面板（固定在侧边栏底端） */}
+        <div className="shrink-0 max-h-[50%] overflow-y-auto border-t border-border">
           <InfoPanel />
         </div>
 

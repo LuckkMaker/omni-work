@@ -4,7 +4,7 @@
 """
 
 from abc import ABC, abstractmethod
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from typing import Optional
 
 
@@ -19,15 +19,43 @@ class ProbeInfo:
 
 
 @dataclass
+class FlashRegionInfo:
+    """Flash 区域信息（一段连续的同构 Flash）"""
+    start: int
+    length: int
+    sector_size: int
+    page_size: int
+    is_boot_memory: bool = False
+
+
+@dataclass
+class SectorInfo:
+    """单个扇区信息"""
+    index: int
+    address: int
+    size: int
+
+
+@dataclass
 class TargetInfo:
     part_number: str
     core: str
     flash_start: int
     flash_size: int
     page_size: int
-    sector_size: int
+    sector_size: int  # 第一个 Flash region 的 sector_size（兼容旧代码）
     core_id: str = ""
     endian: str = "Little"
+    # 新增：完整的 Flash 区域列表和扇区列表
+    flash_regions: list[FlashRegionInfo] = field(default_factory=list)
+    sectors: list[SectorInfo] = field(default_factory=list)
+    # 新增：RAM 信息
+    ram_start: int = 0
+    ram_size: int = 0
+
+    def to_dict(self) -> dict:
+        """递归转换为可 JSON 序列化的字典"""
+        return asdict(self)
 
 
 @dataclass

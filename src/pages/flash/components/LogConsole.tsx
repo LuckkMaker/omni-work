@@ -44,6 +44,31 @@ export function LogConsole({ height }: LogConsoleProps) {
     }
   }, [logs])
 
+  // Ctrl+A 全选日志区内所有文本
+  const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
+    if ((e.ctrlKey || e.metaKey) && e.key === 'a') {
+      e.preventDefault()
+      const el = scrollRef.current
+      if (!el) return
+      const range = document.createRange()
+      range.selectNodeContents(el)
+      const selection = window.getSelection()
+      selection?.removeAllRanges()
+      selection?.addRange(range)
+    }
+  }, [])
+
+  // Ctrl+C 复制选中文本（浏览器默认支持，但确保在无选区时复制最后一条日志）
+  const handleCopy = useCallback((e: React.ClipboardEvent) => {
+    const selection = window.getSelection()
+    if (selection && selection.toString().length > 0) return
+    e.preventDefault()
+    const lastLog = logs[logs.length - 1]
+    if (lastLog) {
+      e.clipboardData.setData('text/plain', `[${formatTime(lastLog.timestamp)}] [${levelTag[lastLog.level].trim()}] ${lastLog.message}`)
+    }
+  }, [logs])
+
   const handleSave = async () => {
     if (logs.length === 0) return
     const savePath = await window.electron?.saveFileDialog?.(`log_${new Date().toISOString().slice(0, 19).replace(/[:-]/g, '')}.log`)
@@ -104,7 +129,10 @@ export function LogConsole({ height }: LogConsoleProps) {
       <CardContent className="flex-1 overflow-hidden p-0">
         <div
           ref={scrollRef}
-          className="h-full overflow-y-auto px-3 pb-2 font-mono text-xs leading-relaxed"
+          tabIndex={0}
+          onKeyDown={handleKeyDown}
+          onCopy={handleCopy}
+          className="h-full overflow-y-auto px-3 pb-2 font-mono text-xs leading-relaxed outline-none"
         >
           {logs.length === 0 ? (
             <div className="flex h-full items-center justify-center text-muted-foreground">

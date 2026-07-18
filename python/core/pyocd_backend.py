@@ -12,7 +12,7 @@ from typing import Optional
 from dataclasses import dataclass, field
 from enum import Enum
 
-from core.interface import BackendInterface, ProbeInfo, TargetInfo, FlashResult
+from core.interface import BackendInterface, ProbeInfo, TargetInfo, FlashResult, FlashRegionInfo, SectorInfo
 from core.events import event_manager
 
 logger = logging.getLogger(__name__)
@@ -99,7 +99,7 @@ class PyOCDBackend(BackendInterface):
                 result.append({
                     **p.__dict__,
                     "state": state,
-                    "target": target.__dict__ if target else None,
+                    "target": target.to_dict() if target else None,
                 })
         return result
 
@@ -213,7 +213,7 @@ class PyOCDBackend(BackendInterface):
 
             event_manager.emit("probe.connected", {
                 "uid": probe_uid,
-                "target": target_info.__dict__ if target_info else None,
+                "target": target_info.to_dict() if target_info else None,
             })
 
             return True
@@ -269,10 +269,15 @@ class PyOCDBackend(BackendInterface):
         flash_size = 0
         page_size = 0
         sector_size = 0
+        flash_regions_info: list[FlashRegionInfo] = []
+        sectors_info: list[SectorInfo] = []
+        ram_start = 0
+        ram_size = 0
 
         try:
-            # 遍历所有 Flash 区域，汇总总容量
             from pyocd.core.memory_map import MemoryType
+
+            # Flash 区域
             flash_regions = [r for r in target.memory_map if r.type == MemoryType.FLASH]
             if flash_regions:
                 first = flash_regions[0]
@@ -280,6 +285,36 @@ class PyOCDBackend(BackendInterface):
                 page_size = getattr(first, 'page_size', 0) or 0
                 sector_size = getattr(first, 'sector_size', 0) or 2048
                 flash_size = sum(r.length for r in flash_regions)
+
+                # 构建完整的 Flash 区域列表和扇区列表
+                sector_index = 0
+                for r in flash_regions:
+                    r_sector_size = getattr(r, 'sector_size', 0) or 2048
+                    r_page_size = getattr(r, 'page_size', 0) or page_size
+                    r_is_boot = getattr(r, 'is_boot_memory', False)
+
+                    flash_regions_info.append(FlashRegionInfo(
+                        start=r.start,
+                        length=r.length,
+                        sector_size=r_sector_size,
+                        page_size=r_page_size,
+                        is_boot_memory=r_is_boot,
+                    ))
+
+                    # 该 region 内的所有扇区
+                    for offset in range(0, r.length, r_sector_size):
+                        sectors_info.append(SectorInfo(
+                            index=sector_index,
+                            address=r.start + offset,
+                            size=r_sector_size,
+                        ))
+                        sector_index += 1
+
+            # RAM 区域
+            ram_regions = [r for r in target.memory_map if r.type == MemoryType.RAM]
+            if ram_regions:
+                ram_start = ram_regions[0].start
+                ram_size = sum(r.length for r in ram_regions)
         except Exception:
             pass
 
@@ -294,33 +329,63 @@ class PyOCDBackend(BackendInterface):
         # 获取 CPU 核心信息
         core = 'Unknown'
         try:
-            # CortexM 对象存储在 target._core 内部
-            if hasattr(target, '_core') and target._core is not None:
+            # 优先使用 selected_core（pyOCD 新版 API）
+            sel_core = getattr(target, 'selected_core', None)
+            if sel_core is not None:
+                core_type = type(sel_core).__name__
+                # CortexM -> Cortex-M
+                core_map = {
+                    'CortexM': 'Cortex-M',
+                    'CortexM4': 'Cortex-M4',
+                    'CortexM7': 'Cortex-M7',
+                    'CortexM0': 'Cortex-M0',
+                    'CortexM0Plus': 'Cortex-M0+',
+                }
+                core = core_map.get(core_type, core_type)
+            elif hasattr(target, '_core') and target._core is not None:
                 core = str(target._core)
-            elif hasattr(target, 'core') and target.core:
-                core = str(target.core)
         except Exception:
             pass
 
         # 如果 core 仍是 Unknown，根据 part_number 推断
         if core == 'Unknown' and part_number != 'Unknown':
-            if 'stm32f4' in part_number.lower():
+            if 'stm32f4' in part_number.lower() or 'apm32f4' in part_number.lower():
                 core = 'Cortex-M4'
-            elif 'stm32f1' in part_number.lower():
+            elif 'stm32f1' in part_number.lower() or 'apm32f1' in part_number.lower():
                 core = 'Cortex-M3'
             elif 'stm32l4' in part_number.lower():
                 core = 'Cortex-M4'
             elif 'stm32h7' in part_number.lower():
                 core = 'Cortex-M7'
+            elif 'g32' in part_number.lower():
+                core = 'Cortex-M0+'
             else:
                 core = part_number
 
         # 读取 Core ID (DPIDR)
         core_id = ""
         try:
-            if hasattr(target, '_core') and target._core is not None:
-                dpidr = target._core.read_dpidr()
-                core_id = f"0x{dpidr:08X}"
+            # 方式1: target.dp.dpidr.idr（最直接）
+            dp = getattr(target, 'dp', None)
+            if dp is not None:
+                dpidr_obj = getattr(dp, 'dpidr', None)
+                if dpidr_obj is not None:
+                    raw_idr = getattr(dpidr_obj, 'idr', 0)
+                    if raw_idr:
+                        core_id = f"0x{raw_idr:08X}"
+            # 方式2: 通过 core -> ap -> dp -> dpidr
+            if not core_id:
+                sel_core = getattr(target, 'selected_core', None)
+                if sel_core is not None:
+                    ap = getattr(sel_core, 'ap', None)
+                    if ap is not None:
+                        dp = getattr(ap, 'dp', None)
+                        if dp is not None:
+                            dpidr_obj = getattr(dp, 'dpidr', None)
+                            if dpidr_obj is not None:
+                                raw_idr = getattr(dpidr_obj, 'idr', 0)
+                                if raw_idr:
+                                    core_id = f"0x{raw_idr:08X}"
         except Exception:
             pass
 
@@ -333,6 +398,10 @@ class PyOCDBackend(BackendInterface):
             sector_size=sector_size,
             core_id=core_id,
             endian="Little",
+            flash_regions=flash_regions_info,
+            sectors=sectors_info,
+            ram_start=ram_start,
+            ram_size=ram_size,
         )
 
     # ── 目标管理 ──────────────────────────────────────────────
@@ -389,7 +458,7 @@ class PyOCDBackend(BackendInterface):
             event_manager.log("info", f"Target set to {part_number}")
             event_manager.emit("probe.connected", {
                 "uid": probe_uid,
-                "target": session_info.target_info.__dict__ if session_info.target_info else None,
+                "target": session_info.target_info.to_dict() if session_info.target_info else None,
             })
             return True
         except Exception as e:

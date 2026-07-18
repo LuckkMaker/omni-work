@@ -17,6 +17,22 @@ export interface ProbeWithState extends ProbeInfo {
   target: TargetInfo | null
 }
 
+/** Flash 区域信息（一段连续的同构 Flash） */
+export interface FlashRegionInfo {
+  start: number
+  length: number
+  sector_size: number
+  page_size: number
+  is_boot_memory: boolean
+}
+
+/** 单个扇区信息 */
+export interface SectorInfo {
+  index: number
+  address: number
+  size: number
+}
+
 /** 目标芯片信息（运行时从 pyOCD session 获取） */
 export interface TargetInfo {
   part_number: string
@@ -27,6 +43,14 @@ export interface TargetInfo {
   sector_size: number
   core_id: string
   endian: string
+  /** 完整的 Flash 区域列表 */
+  flash_regions: FlashRegionInfo[]
+  /** 所有扇区的扁平列表 */
+  sectors: SectorInfo[]
+  /** RAM 起始地址 */
+  ram_start: number
+  /** RAM 大小（字节） */
+  ram_size: number
 }
 
 /** 设备目录信息（来自 device_info.json，静态元数据） */
@@ -44,6 +68,17 @@ export interface DeviceInfo {
   flash_base_address: string
   /** RAM 基地址（十六进制字符串） */
   ram_base_address: string
+  /** Flash 区域布局（静态定义，连接前可用） */
+  flash_regions?: DeviceFlashRegion[]
+}
+
+/** device_info.json 中的 Flash 区域（所有数值字段均为十六进制字符串） */
+export interface DeviceFlashRegion {
+  start: string
+  length: string
+  sector_size: string
+  page_size: string
+  is_boot_memory: boolean
 }
 
 /** Flash 操作结果 */
