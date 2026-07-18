@@ -198,7 +198,8 @@ export function Terminal({ uid, connected, commands, apiRef }: TerminalProps) {
       historyIndex.current = -1
 
       if (!cmd.trim()) {
-        term.write(PROMPT)
+        // 空命令：清除当前行再写 prompt，避免 pyocd> pyocd> 重复叠加
+        term.write('\r\x1b[2K' + PROMPT)
         return
       }
 
