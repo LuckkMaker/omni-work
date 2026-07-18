@@ -70,6 +70,118 @@ class CommanderBackend:
         logger.info(f"Commander context created for probe {uid[:16]}")
         return ctx, output_buf, lock
 
+    def _execute_script(self, uid: str, script_path: str) -> dict:
+        """导入并执行 Python 脚本
+
+        用 exec() 在 pyOCD session 的 Python 命名空间中执行脚本，
+        支持多行语句（for/if/def/赋值等），弥补 $ 前缀仅支持 eval() 的限制。
+
+        脚本中可访问的变量：
+            - session: 当前 pyOCD Session
+            - target: Target 对象
+            - board: Board 对象
+            - probe: DebugProbe 对象
+            - elf: ELF 文件对象（已加载时）
+            - map: 内存映射
+            - dp: DebugPort 对象
+            - print(): 输出到终端
+
+        Args:
+            uid: 探针唯一 ID
+            script_path: .py 脚本文件路径
+
+        Returns:
+            {success, output, error, command}
+        """
+        command = f"run {script_path}"
+
+        if not script_path:
+            return {
+                "success": False,
+                "output": "",
+                "error": "Usage: run <script.py>\nRun a Python script with access to target/session/board/probe objects.",
+                "command": command,
+            }
+
+        # 读取脚本文件
+        import os
+        script_path = os.path.expanduser(script_path)
+        if not os.path.isabs(script_path):
+            # 相对路径基于用户主目录
+            script_path = os.path.join(os.path.expanduser('~'), script_path)
+
+        if not os.path.isfile(script_path):
+            return {
+                "success": False,
+                "output": "",
+                "error": f"File not found: {script_path}",
+                "command": command,
+            }
+
+        try:
+            with open(script_path, 'r', encoding='utf-8') as f:
+                script_source = f.read()
+        except Exception as e:
+            return {
+                "success": False,
+                "output": "",
+                "error": f"Failed to read script: {e}",
+                "command": command,
+            }
+
+        # 获取命令执行上下文
+        result = self._get_or_create_context(uid)
+        if result is None:
+            return {
+                "success": False,
+                "output": "",
+                "error": "Probe not connected",
+                "command": command,
+            }
+
+        ctx, buf, lock = result
+
+        with lock:
+            buf.seek(0)
+            buf.truncate(0)
+
+            try:
+                # 构建 Python 命名空间（复用 pyOCD 的 _python_namespace）
+                if not ctx._python_namespace:
+                    ctx._build_python_namespace()
+
+                ns = ctx._python_namespace
+
+                # 编译并执行脚本
+                script_code = compile(script_source, script_path, 'exec')
+
+                # 重定向 print() 输出到终端
+                session = ctx.session
+                if session:
+                    with session.user_script_print_proxy.push_target(ctx.write):
+                        exec(script_code, ns)
+                else:
+                    exec(script_code, ns)
+
+                output = buf.getvalue()
+                return {
+                    "success": True,
+                    "output": output,
+                    "error": None,
+                    "command": command,
+                }
+            except Exception as e:
+                output = buf.getvalue()
+                import traceback
+                tb = traceback.format_exc()
+                logger.warning(f"Script execution failed: {e}\n{tb}")
+                return {
+                    "success": False,
+                    "output": output,
+                    "error": f"{e}\n{tb}",
+                    "command": command,
+                }
+
     def _cleanup_context(self, uid: str):
         """清理探针的命令上下文"""
         self._contexts.pop(uid, None)
@@ -87,6 +199,11 @@ class CommanderBackend:
         command = command.strip()
         if not command:
             return {"success": False, "output": "", "error": "Empty command", "command": command}
+
+        # 拦截 'run <filepath>' 命令：导入并执行 Python 脚本
+        # pyOCD 的 $ 前缀仅支持 eval()（单行表达式），run 命令用 exec() 支持多行脚本
+        if command.startswith('run ') or command == 'run':
+            return self._execute_script(uid, command[4:].strip() if len(command) > 4 else '')
 
         result = self._get_or_create_context(uid)
         if result is None:
@@ -183,6 +300,63 @@ class CommanderBackend:
             })
 
         # 按 category 再按 name 排序
+        commands.sort(key=lambda c: (c['category'], c['name']))
+
+        # 添加自定义扩展命令（非 pyOCD 内置）
+        commands.append({
+            "name": "$",
+            "aliases": [],
+            "category": "scripts",
+            "usage": "<python_expr>",
+            "help": "Evaluate a Python expression (eval). Access target, session, board, probe, elf, map objects.",
+            "extra_help": (
+                "Evaluate a Python expression using eval(). Only single expressions are supported.\n"
+                "For multi-line scripts, use 'run <script.py>' instead.\n\n"
+                "Examples:\n"
+                "  $ target.read32(0x20000000)\n"
+                "  $ hex(target.regs['r0'])\n"
+                "  $ [r.name for r in target.cores]\n"
+            ),
+        })
+        commands.append({
+            "name": "!",
+            "aliases": [],
+            "category": "scripts",
+            "usage": "<shell_command>",
+            "help": "Execute a system shell command and display output.",
+            "extra_help": (
+                "Run a shell command using subprocess (shell=True).\n\n"
+                "Examples:\n"
+                "  ! dir\n"
+                "  ! ls -la\n"
+                "  ! echo hello\n"
+            ),
+        })
+        commands.append({
+            "name": "run",
+            "aliases": [],
+            "category": "scripts",
+            "usage": "<script.py>",
+            "help": "Run a Python script with exec(), supports multi-line statements (for/if/def). Access target, session, board, probe, elf, map objects.",
+            "extra_help": (
+                "Execute a Python script file using exec() in the pyOCD session namespace.\n"
+                "Unlike $ (eval, single expression only), 'run' supports full Python syntax:\n"
+                "  for/if/while/try/def/class, assignments, imports, etc.\n\n"
+                "Available objects in script:\n"
+                "  target   - Target object (read/write memory, regs, breakpoints)\n"
+                "  session  - Session object\n"
+                "  board    - Board object\n"
+                "  probe    - DebugProbe object\n"
+                "  elf      - ELF file (if loaded)\n"
+                "  map      - Memory map\n"
+                "  print()  - Output to terminal\n\n"
+                "Example script:\n"
+                "  for addr in range(0x20000000, 0x20000020, 4):\n"
+                "      print(f'0x{addr:08X}: 0x{target.read32(addr):08X}')\n"
+            ),
+        })
+
+        # 重新排序
         commands.sort(key=lambda c: (c['category'], c['name']))
         return commands
 

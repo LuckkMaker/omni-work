@@ -407,10 +407,55 @@ export function Terminal({ uid, connected, commands, apiRef }: TerminalProps) {
     termRef.current = term
     fitRef.current = fit
 
+    // ── 复制粘贴支持 ──────────────────────────
+    // Ctrl+Shift+C: 复制选中文本; Ctrl+Shift+V: 粘贴
+    term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+      if (event.ctrlKey && event.shiftKey && event.code === 'KeyC') {
+        const selection = term.getSelection()
+        if (selection) {
+          navigator.clipboard.writeText(selection).catch(() => {})
+          event.preventDefault()
+          return false
+        }
+      }
+      if (event.ctrlKey && event.shiftKey && event.code === 'KeyV') {
+        navigator.clipboard.readText().then((text) => {
+          if (text) {
+            term.paste(text)
+          }
+        }).catch(() => {})
+        event.preventDefault()
+        return false
+      }
+      return true
+    })
+
+    // 右键：有选中则复制，无选中则粘贴
+    containerRef.current.addEventListener('contextmenu', (e: MouseEvent) => {
+      e.preventDefault()
+      const selection = term.getSelection()
+      if (selection) {
+        navigator.clipboard.writeText(selection).catch(() => {})
+        term.clearSelection()
+      } else {
+        navigator.clipboard.readText().then((text) => {
+          if (text) {
+            term.paste(text)
+          }
+        }).catch(() => {})
+      }
+    })
+
     // 欢迎信息
     term.write(`${COLOR.bold}${COLOR.cyan}DAPLink Work Commander${COLOR.reset}\r\n`)
     term.write(
       `${COLOR.dim}Type 'help' for commands, Tab to complete, Ctrl+R to search history${COLOR.reset}\r\n`
+    )
+    term.write(
+      `${COLOR.dim}Copy: Ctrl+Shift+C or right-click | Paste: Ctrl+Shift+V or right-click${COLOR.reset}\r\n`
+    )
+    term.write(
+      `${COLOR.dim}Python expr: $ target.read32(0x20000000) | Shell: ! dir | Run script: run script.py${COLOR.reset}\r\n`
     )
     term.write(PROMPT)
 
