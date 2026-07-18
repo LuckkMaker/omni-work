@@ -389,6 +389,20 @@ class PyOCDBackend(BackendInterface):
         except Exception:
             pass
 
+        # 读取 Device ID 和 Revision ID（DBGMCU_IDCODE 寄存器）
+        # 地址 0xE0042000：bits[31:16]=Revision ID, bits[11:0]=Device ID
+        device_id = ""
+        revision_id = ""
+        try:
+            idcode = target.read32(0xE0042000)
+            dev_id = idcode & 0xFFF  # 低 12 位
+            rev_id = (idcode >> 16) & 0xFFFF  # 高 16 位
+            device_id = f"0x{dev_id:03X}"
+            revision_id = f"0x{rev_id:04X}"
+            logger.info(f"DBGMCU_IDCODE @ 0xE0042000 = 0x{idcode:08X}, Device ID={device_id}, Revision ID={revision_id}")
+        except Exception as e:
+            logger.warning(f"Failed to read DBGMCU_IDCODE at 0xE0042000: {e}")
+
         return TargetInfo(
             part_number=part_number,
             core=core,
@@ -397,6 +411,8 @@ class PyOCDBackend(BackendInterface):
             page_size=page_size,
             sector_size=sector_size,
             core_id=core_id,
+            device_id=device_id,
+            revision_id=revision_id,
             endian="Little",
             flash_regions=flash_regions_info,
             sectors=sectors_info,
@@ -597,13 +613,36 @@ class PyOCDBackend(BackendInterface):
         verify: bool = True,
         reset: bool = True,
         base_address: int | None = None,
+        data: str = "",
     ) -> FlashResult:
-        """烧录固件"""
+        """烧录固件
+
+        Args:
+            file_path: 固件文件路径（与 data 二选一）
+            data: base64 编码的固件数据（与 file_path 二选一）
+            verify: 烧录后是否校验
+            reset: 烧录后是否复位
+            base_address: BIN 文件的烧录基地址
+        """
         session = self._get_session(probe_uid)
         if not session:
             return FlashResult(success=False, error="Not connected")
 
-        if not os.path.exists(file_path):
+        # 如果提供了 base64 数据，写入临时文件
+        temp_path = None
+        if data:
+            import base64 as b64mod
+            import tempfile
+            try:
+                raw = b64mod.b64decode(data)
+                # 创建临时 .bin 文件
+                fd, temp_path = tempfile.mkstemp(suffix='.bin', prefix='flash_data_')
+                with os.fdopen(fd, 'wb') as f:
+                    f.write(raw)
+                file_path = temp_path
+            except Exception as e:
+                return FlashResult(success=False, error=f"Failed to decode data: {e}")
+        elif not file_path or not os.path.exists(file_path):
             return FlashResult(success=False, error=f"File not found: {file_path}")
 
         start_time = time.time()
@@ -691,28 +730,54 @@ class PyOCDBackend(BackendInterface):
                 error=str(e),
                 duration_ms=int((time.time() - start_time) * 1000),
             )
+        finally:
+            # 清理临时文件
+            if temp_path and os.path.exists(temp_path):
+                try:
+                    os.unlink(temp_path)
+                except Exception:
+                    pass
 
-    def verify(self, probe_uid: str, file_path: str) -> FlashResult:
-        """校验 Flash 内容：读取 Flash 并与文件数据逐字节对比"""
+    def verify(self, probe_uid: str, file_path: str, data: str = "", base_address: int | None = None) -> FlashResult:
+        """校验 Flash 内容：读取 Flash 并与文件/数据逐字节对比
+
+        Args:
+            file_path: 固件文件路径（与 data 二选一）
+            data: base64 编码的固件数据（与 file_path 二选一）
+            base_address: 数据的基地址（使用 data 时必须提供）
+        """
         session = self._get_session(probe_uid)
         if not session:
             return FlashResult(success=False, error="Not connected")
 
-        if not os.path.exists(file_path):
+        # 如果提供了 base64 数据，构造数据段
+        temp_path = None
+        segments = []
+        if data:
+            import base64 as b64mod
+            try:
+                raw = b64mod.b64decode(data)
+                addr = base_address if base_address is not None else (session.target.memory_map.get_boot_memory().start if session.target.memory_map.get_boot_memory() else 0)
+                segments = [(addr, raw)]
+                event_manager.log("info", f"Verifying {len(raw)} bytes from memory data at 0x{addr:08X}...")
+            except Exception as e:
+                return FlashResult(success=False, error=f"Failed to decode data: {e}")
+        elif not file_path or not os.path.exists(file_path):
             return FlashResult(success=False, error=f"File not found: {file_path}")
 
         start_time = time.time()
         try:
-            ext = os.path.splitext(file_path)[1].lower()
-            event_manager.log("info", f"Verifying {ext} file...")
-
             # 停止目标，确保 Flash 读取稳定
             session.target.halt()
 
-            # 提取文件中的数据段 [(address, data_bytes), ...]
-            segments = self._extract_file_data(session, file_path, ext)
             if not segments:
-                return FlashResult(success=False, error="No data segments found in file")
+                ext = os.path.splitext(file_path)[1].lower()
+                event_manager.log("info", f"Verifying {ext} file...")
+
+                # 提取文件中的数据段 [(address, data_bytes), ...]
+                segments = self._extract_file_data(session, file_path, ext)
+                if not segments:
+                    return FlashResult(success=False, error="No data segments found in file")
 
             total_bytes = sum(len(d) for _, d in segments)
             verified_bytes = 0
@@ -1020,7 +1085,6 @@ class PyOCDBackend(BackendInterface):
             chunk_words = 8192  # 8192 words = 32KB per chunk
             total_read = 0
             all_data = bytearray()
-            progress_interval = 0  # 每 4 个 chunk 报告一次进度，减少 WS 开销
 
             def read_block32(addr: int, byte_len: int) -> bytes:
                 """用 block32 读取，返回 bytes。byte_len 自动向下对齐到 4 字节。"""
@@ -1058,14 +1122,12 @@ class PyOCDBackend(BackendInterface):
                         all_data.extend(data)
                         total_read += len(data)
                         offset += read_bytes
-                        progress_interval += 1
-                        if progress_interval % 4 == 0 or offset >= region.length:
-                            event_manager.emit("flash.progress", {
-                                "phase": "read",
-                                "current": total_read,
-                                "total": total_size,
-                                "percent": round(total_read / total_size * 100, 2),
-                            })
+                        event_manager.emit("flash.progress", {
+                            "phase": "read",
+                            "current": total_read,
+                            "total": total_size,
+                            "percent": round(total_read / total_size * 100, 2),
+                        })
             else:
                 # range / sectors 模式：从 address 读取 size 字节
                 base_addr = address
@@ -1090,14 +1152,12 @@ class PyOCDBackend(BackendInterface):
                     all_data.extend(data)
                     total_read += len(data)
                     offset += read_bytes
-                    progress_interval += 1
-                    if progress_interval % 4 == 0 or offset >= size:
-                        event_manager.emit("flash.progress", {
-                            "phase": "read",
-                            "current": total_read,
-                            "total": total_size,
-                            "percent": round(total_read / total_size * 100, 2),
-                        })
+                    event_manager.emit("flash.progress", {
+                        "phase": "read",
+                        "current": total_read,
+                        "total": total_size,
+                        "percent": round(total_read / total_size * 100, 2),
+                    })
 
             event_manager.emit("flash.progress", {
                 "phase": "read", "current": total_read, "total": total_read, "percent": 100,

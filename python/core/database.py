@@ -55,6 +55,7 @@ def _init_schema(conn: sqlite3.Connection) -> None:
             ram_size         INTEGER NOT NULL,  -- KB
             flash_base_address TEXT NOT NULL,   -- 十六进制字符串
             ram_base_address   TEXT NOT NULL,   -- 十六进制字符串
+            device_id_address   TEXT NOT NULL DEFAULT '0xE0042000',  -- DBGMCU_IDCODE 寄存器地址
             created_at       TEXT DEFAULT (datetime('now', 'localtime')),
             updated_at       TEXT DEFAULT (datetime('now', 'localtime'))
         );
@@ -75,6 +76,20 @@ def _init_schema(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_flash_regions_part ON flash_regions(part_number);
     """)
     conn.commit()
+
+    # Schema 增量迁移：为旧数据库添加新列
+    _migrate_add_column(conn, "devices", "device_id_address", "TEXT NOT NULL DEFAULT '0xE0042000'")
+
+
+def _migrate_add_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    """安全地为表添加列（如果列不存在）"""
+    try:
+        cols = [row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
+        if column not in cols:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+            conn.commit()
+    except Exception:
+        pass
 
 
 def _migrate_from_json(conn: sqlite3.Connection) -> None:
@@ -135,8 +150,8 @@ def upsert_device(conn: sqlite3.Connection, device: dict) -> None:
     conn.execute(
         """
         INSERT INTO devices (part_number, vendor, display_name, core, num_cores,
-                             flash_size, ram_size, flash_base_address, ram_base_address)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                             flash_size, ram_size, flash_base_address, ram_base_address, device_id_address)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(part_number) DO UPDATE SET
             vendor = excluded.vendor,
             display_name = excluded.display_name,
@@ -146,6 +161,7 @@ def upsert_device(conn: sqlite3.Connection, device: dict) -> None:
             ram_size = excluded.ram_size,
             flash_base_address = excluded.flash_base_address,
             ram_base_address = excluded.ram_base_address,
+            device_id_address = excluded.device_id_address,
             updated_at = datetime('now', 'localtime')
         """,
         (
@@ -158,6 +174,7 @@ def upsert_device(conn: sqlite3.Connection, device: dict) -> None:
             device["ram_size"],
             device["flash_base_address"],
             device["ram_base_address"],
+            device.get("device_id_address", "0xE0042000"),
         ),
     )
 

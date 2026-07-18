@@ -16,14 +16,17 @@ class EraseRequest(BaseModel):
 
 
 class ProgramRequest(BaseModel):
-    file_path: str
+    file_path: str = ""
+    data: str = ""  # base64 编码的数据（与 file_path 二选一）
     verify: bool = True
     reset: bool = True
     base_address: int | None = None
 
 
 class VerifyRequest(BaseModel):
-    file_path: str
+    file_path: str = ""
+    data: str = ""  # base64 编码的数据（与 file_path 二选一）
+    base_address: int | None = None
 
 
 class ResetRequest(BaseModel):
@@ -52,9 +55,9 @@ async def erase_flash(uid: str, req: EraseRequest):
 
 @router.post("/probes/{uid}/flash/program")
 async def program_flash(uid: str, req: ProgramRequest):
-    """烧录固件"""
+    """烧录固件（支持文件路径或 base64 数据）"""
     result = await asyncio.to_thread(
-        backend.program, uid, req.file_path, req.verify, req.reset, req.base_address
+        backend.program, uid, req.file_path, req.verify, req.reset, req.base_address, req.data
     )
     event_manager.emit("flash.complete", result.__dict__)
     return result.__dict__
@@ -62,8 +65,8 @@ async def program_flash(uid: str, req: ProgramRequest):
 
 @router.post("/probes/{uid}/flash/verify")
 async def verify_flash(uid: str, req: VerifyRequest):
-    """校验 Flash 内容"""
-    result = await asyncio.to_thread(backend.verify, uid, req.file_path)
+    """校验 Flash 内容（支持文件路径或 base64 数据）"""
+    result = await asyncio.to_thread(backend.verify, uid, req.file_path, req.data, req.base_address)
     return result.__dict__
 
 

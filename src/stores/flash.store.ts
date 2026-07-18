@@ -4,6 +4,7 @@ import * as flashService from '@/services/flash.service'
 import { parseFile, readFile } from '@/services/file.service'
 import { useProbeStore } from './probe.store'
 import { useNotificationStore } from './notification.store'
+import { selectedSectorsToRanges } from '@/pages/flash/utils/sectors'
 
 // ── Tab 数据模型 ──────────────────────────
 export interface FlashTab {
@@ -98,9 +99,7 @@ interface FlashStore {
   // ── 弹窗 ──────────────────────────────
   showBinAddrDialog: boolean
   pendingBinPath: string | null
-  showEraseSectorsDialog: boolean
   showReadBackRangeDialog: boolean
-  showReadBackSectorsDialog: boolean
   showCompareDialog: boolean
 
   // ── 烧录状态 ──────────────────────────
@@ -133,18 +132,20 @@ interface FlashStore {
   setShowBinAddrDialog: (show: boolean) => void
   setPendingBinPath: (path: string | null) => void
   confirmBinAddress: (address: number) => Promise<void>
-  setShowEraseSectorsDialog: (show: boolean) => void
   setShowReadBackRangeDialog: (show: boolean) => void
-  setShowReadBackSectorsDialog: (show: boolean) => void
   setShowCompareDialog: (show: boolean) => void
 
   // ── Flash 操作 ────────────────────────
   doCheckBlank: () => Promise<void>
   doEraseChip: () => Promise<void>
   doEraseSectors: (address: number, size: number) => Promise<void>
+  /** 擦除全局配置中选中的扇区（支持多个不连续范围） */
+  doEraseSelectedSectors: () => Promise<void>
   doProgram: (verify?: boolean) => Promise<void>
   doVerify: () => Promise<void>
   doReadBack: (mode: 'chip' | 'range', address?: number, size?: number) => Promise<void>
+  /** 读回全局配置中选中的扇区（支持多个不连续范围，合并为一个连续缓冲） */
+  doReadBackSelectedSectors: () => Promise<void>
   doStartApp: () => Promise<void>
   doReset: () => Promise<void>
   cancelOperation: () => Promise<void>
@@ -169,9 +170,7 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
 
   showBinAddrDialog: false,
   pendingBinPath: null,
-  showEraseSectorsDialog: false,
   showReadBackRangeDialog: false,
-  showReadBackSectorsDialog: false,
   showCompareDialog: false,
 
   phase: 'idle',
@@ -309,9 +308,7 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
     }
   },
 
-  setShowEraseSectorsDialog: (show) => set({ showEraseSectorsDialog: show }),
   setShowReadBackRangeDialog: (show) => set({ showReadBackRangeDialog: show }),
-  setShowReadBackSectorsDialog: (show) => set({ showReadBackSectorsDialog: show }),
   setShowCompareDialog: (show) => set({ showCompareDialog: show }),
 
   // ── Flash 操作 ────────────────────────
@@ -342,21 +339,49 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
   doEraseSectors: async (address, size) => {
     const uid = useProbeStore.getState().selectedUid
     if (!uid) return
-    set({ showEraseSectorsDialog: false })
     await wrapOperation(set, get, '扇区擦除', `擦除 ${formatHex(address)} ~ ${formatHex(address + size)}...`, async () => {
       return await flashService.eraseFlash(uid, 'sector_range', address, size)
     }, () => '扇区擦除完成')
   },
 
+  doEraseSelectedSectors: async () => {
+    const uid = useProbeStore.getState().selectedUid
+    if (!uid) return
+    const probeStore = useProbeStore.getState()
+    const target = probeStore.getSelectedTarget()
+    const deviceInfo = target ? probeStore.getDeviceInfo(target.part_number) : undefined
+    const ranges = selectedSectorsToRanges(probeStore.selectedSectorIndices, target, deviceInfo)
+    if (ranges.length === 0) {
+      useNotificationStore.getState().push({ type: 'warning', title: '扇区擦除', message: '未选中任何扇区，请在 Flash 配置中选择', autoClose: true })
+      return
+    }
+    const rangeDesc = ranges.map((r) => `${formatHex(r.start)}~${formatHex(r.end)}`).join(', ')
+    await wrapOperation(set, get, '扇区擦除', `擦除 ${rangeDesc}...`, async () => {
+      // 逐个范围擦除
+      for (const r of ranges) {
+        await flashService.eraseFlash(uid, 'sector_range', r.start, r.end - r.start + 1)
+      }
+      return { success: true, duration_ms: 0 } as FlashResult
+    }, () => `已擦除 ${ranges.length} 个范围`)
+  },
+
   doProgram: async (verify) => {
     const uid = useProbeStore.getState().selectedUid
     const tab = get().getActiveTab()
-    if (!uid || !tab || tab.type !== 'file' || !tab.filePath) return
+    if (!uid || !tab) return
+    // 支持两种 tab 类型：file（文件路径）和 device（内存数据）
+    if (tab.type === 'file' && !tab.filePath) return
+    if (tab.type === 'device' && !tab.data) return
     const shouldVerify = verify ?? get().verifyAfter
     const { eraseBefore, resetAfter } = get()
     const title = shouldVerify ? '编程并校验' : '编程'
     await wrapOperation(set, get, title, eraseBefore ? '擦除中...' : '编程中...', async () => {
-      return await flashService.programFlash(uid, tab.filePath, shouldVerify, resetAfter, tab.baseAddress)
+      if (tab.type === 'device' && tab.data) {
+        // Device Memory tab：使用 base64 数据编程
+        return await flashService.programFlash(uid, '', shouldVerify, resetAfter, tab.baseAddress, tab.data)
+      }
+      // File tab：使用文件路径
+      return await flashService.programFlash(uid, tab.filePath!, shouldVerify, resetAfter, tab.baseAddress)
     }, (r) => {
       const speed = r.bytes_written > 0 && r.duration_ms > 0 ? ` · ${(r.bytes_written / 1024 / (r.duration_ms / 1000)).toFixed(1)} KB/s` : ''
       return `写入 ${formatSize(r.bytes_written)} · 耗时 ${(r.duration_ms / 1000).toFixed(2)}s${speed}`
@@ -366,17 +391,22 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
   doVerify: async () => {
     const uid = useProbeStore.getState().selectedUid
     const tab = get().getActiveTab()
-    if (!uid || !tab || tab.type !== 'file' || !tab.filePath) return
+    if (!uid || !tab) return
+    if (tab.type === 'file' && !tab.filePath) return
+    if (tab.type === 'device' && !tab.data) return
     await wrapOperation(set, get, '校验', '正在校验...', async () => {
-      return await flashService.verifyFlash(uid, tab.filePath)
-    }, () => 'Flash 内容与文件一致')
+      if (tab.type === 'device' && tab.data) {
+        return await flashService.verifyFlash(uid, '', tab.data, tab.baseAddress)
+      }
+      return await flashService.verifyFlash(uid, tab.filePath!)
+    }, () => 'Flash 内容与数据一致')
   },
 
   doReadBack: async (mode, address, size) => {
     const uid = useProbeStore.getState().selectedUid
     const tab = get().getActiveTab()
     if (!uid || !tab) return
-    set({ showReadBackRangeDialog: false, showReadBackSectorsDialog: false })
+    set({ showReadBackRangeDialog: false })
     get().updateTab(tab.id, { loading: true })
     await wrapOperation(set, get, '读回', '正在读取 Flash...', async () => {
       try {
@@ -394,6 +424,64 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
         }
         get().updateTab(tab.id, { loading: false })
         return { success: false, error: result.error ?? '读回失败' }
+      } catch (err) {
+        get().updateTab(tab.id, { loading: false })
+        throw err
+      }
+    }, (r) => `读取 ${formatSize(r.bytes_written)} 到 ${tab.title}`)
+  },
+
+  doReadBackSelectedSectors: async () => {
+    const uid = useProbeStore.getState().selectedUid
+    const tab = get().getActiveTab()
+    if (!uid || !tab) return
+    const probeStore = useProbeStore.getState()
+    const target = probeStore.getSelectedTarget()
+    const deviceInfo = target ? probeStore.getDeviceInfo(target.part_number) : undefined
+    const ranges = selectedSectorsToRanges(probeStore.selectedSectorIndices, target, deviceInfo)
+    if (ranges.length === 0) {
+      useNotificationStore.getState().push({ type: 'warning', title: '读回', message: '未选中任何扇区，请在 Flash 配置中选择', autoClose: true })
+      return
+    }
+    // 逐个 range 读取，间隙用 0xFF 填充（模拟擦除后的 Flash 状态）
+    const startAddr = ranges[0].start
+    const endAddr = ranges[ranges.length - 1].end
+    const totalSize = endAddr - startAddr + 1
+    // 预分配整个缓冲区，填充 0xFF
+    const buffer = new Uint8Array(totalSize).fill(0xff)
+    get().updateTab(tab.id, { loading: true })
+    await wrapOperation(set, get, '读回', `正在读取 ${ranges.length} 个范围 (${formatHex(startAddr)} ~ ${formatHex(endAddr)})...`, async () => {
+      try {
+        // 逐个 range 读取并填入缓冲区对应位置
+        for (const r of ranges) {
+          const rangeSize = r.end - r.start + 1
+          const result = await flashService.readBack(uid, 'range', r.start, rangeSize)
+          if (!result.success || !result.base64_data) {
+            get().updateTab(tab.id, { loading: false })
+            return { success: false, error: result.error ?? `读回失败 (${formatHex(r.start)})` }
+          }
+          // base64 解码后填入缓冲区
+          const bytes = atob(result.base64_data)
+          const offset = r.start - startAddr
+          for (let i = 0; i < bytes.length; i++) {
+            buffer[offset + i] = bytes.charCodeAt(i)
+          }
+        }
+        // 整个缓冲区转 base64 存入 tab
+        let binary = ''
+        const chunkSize = 0x8000
+        for (let i = 0; i < buffer.length; i += chunkSize) {
+          binary += String.fromCharCode.apply(null, Array.from(buffer.subarray(i, i + chunkSize)) as unknown as number[])
+        }
+        const base64 = btoa(binary)
+        get().updateTab(tab.id, {
+          data: base64,
+          baseAddress: startAddr,
+          size: totalSize,
+          loading: false,
+          format: 'bin',
+        })
+        return { success: true, duration_ms: 0, bytes_written: totalSize }
       } catch (err) {
         get().updateTab(tab.id, { loading: false })
         throw err

@@ -28,6 +28,10 @@ export function DeviceConfigDialog({ open, onOpenChange, target, deviceInfo }: D
   // Core ID（仅连接后可用，从 DPIDR 读取）
   const coreId = target?.core_id ?? ''
 
+  // Device ID 和 Revision ID（仅连接后可用，从 DBGMCU_IDCODE 读取）
+  const deviceId = target?.device_id ?? ''
+  const revisionId = target?.revision_id ?? ''
+
   // RAM 信息：基地址优先从 device_info.json 获取
   const ramBaseAddress = deviceInfo?.ram_base_address ?? (target?.ram_start ? `0x${target.ram_start.toString(16).toUpperCase().padStart(8, '0')}` : '-')
   const ramSizeBytes = target?.ram_size ?? (deviceInfo ? deviceInfo.ram_size * 1024 : 0)
@@ -50,6 +54,8 @@ export function DeviceConfigDialog({ open, onOpenChange, target, deviceInfo }: D
             <Row label="内核" value={core} />
             <Row label="大小端" value={endian === 'Little' ? 'Little Endian' : 'Big Endian'} />
             <Row label="Core ID" value={coreId || '-'} mono />
+            <Row label="Device ID" value={deviceId || '-'} mono />
+            <Row label="Revision ID" value={revisionId || '-'} mono />
           </Section>
 
           {/* 目标 RAM */}
@@ -60,7 +66,7 @@ export function DeviceConfigDialog({ open, onOpenChange, target, deviceInfo }: D
 
           {!target && !deviceInfo && (
             <div className="text-center text-sm text-muted-foreground py-8">
-              暂无设备信息，连接探针后可加载实时数据
+              暂无设备信息，连接仿真器后可加载实时数据
             </div>
           )}
         </div>

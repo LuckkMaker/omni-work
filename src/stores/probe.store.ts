@@ -185,6 +185,10 @@ export const useProbeStore = create<ProbeStore>((set, get) => ({
         ),
         connecting: false,
       }))
+      // 连接成功后，自动选中所有扇区（作为默认 Flash 配置）
+      if (result.target?.sectors?.length) {
+        set({ selectedSectorIndices: new Set(result.target.sectors.map((s) => s.index)) })
+      }
       // 连接成功后，如果列表为空则重新加载
       if (get().targetList.length === 0) {
         get().fetchTargets()

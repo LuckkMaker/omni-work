@@ -102,3 +102,47 @@ export function formatSize(bytes: number): string {
 export function formatHex(addr: number, pad = 8): string {
   return `0x${addr.toString(16).toUpperCase().padStart(pad, '0')}`
 }
+
+/**
+ * 根据选中的扇区索引集合，计算合并后的连续地址范围列表。
+ * 不连续的扇区会产生多个 range。
+ *
+ * @returns [{ start, end }, ...]（end 为最后字节地址）
+ */
+export function selectedSectorsToRanges(
+  selectedIndices: Set<number>,
+  target: TargetInfo | null,
+  deviceInfo: DeviceInfo | undefined
+): { start: number; end: number }[] {
+  const allSectors = getSectors(target, deviceInfo)
+  // 筛选并按地址排序
+  const selected = allSectors
+    .filter((s) => selectedIndices.has(s.index))
+    .sort((a, b) => a.address - b.address)
+  if (selected.length === 0) return []
+
+  const ranges: { start: number; end: number }[] = []
+  let current: { start: number; end: number } | null = null
+  for (const s of selected) {
+    const sectorEnd = s.address + s.size - 1
+    if (current && s.address === current.end + 1) {
+      current.end = sectorEnd
+    } else {
+      if (current) ranges.push(current)
+      current = { start: s.address, end: sectorEnd }
+    }
+  }
+  if (current) ranges.push(current)
+  return ranges
+}
+
+/**
+ * 解析十六进制地址字符串（支持 "0x08000000" 或 "08000000" 格式）
+ * @returns 数字或 null（无效时）
+ */
+export function parseHex(s: string): number | null {
+  const t = s.trim().toLowerCase()
+  if (!t) return null
+  const v = t.startsWith('0x') ? parseInt(t, 16) : parseInt(t, 16)
+  return isNaN(v) ? null : v
+}

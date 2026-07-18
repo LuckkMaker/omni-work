@@ -23,25 +23,34 @@ export async function programFlash(
   filePath: string,
   verify = true,
   reset = true,
-  baseAddress?: number
+  baseAddress?: number,
+  data?: string
 ): Promise<FlashResult> {
   const client = await api()
-  const { data } = await client.post(`/api/probes/${uid}/flash/program`, {
+  const { data: result } = await client.post(`/api/probes/${uid}/flash/program`, {
     file_path: filePath,
+    data: data ?? '',
     verify,
     reset,
     base_address: baseAddress,
   })
-  return data as FlashResult
+  return result as FlashResult
 }
 
 /** 校验 Flash 内容 */
-export async function verifyFlash(uid: string, filePath: string): Promise<FlashResult> {
+export async function verifyFlash(
+  uid: string,
+  filePath: string,
+  data?: string,
+  baseAddress?: number
+): Promise<FlashResult> {
   const client = await api()
-  const { data } = await client.post(`/api/probes/${uid}/flash/verify`, {
+  const { data: result } = await client.post(`/api/probes/${uid}/flash/verify`, {
     file_path: filePath,
+    data: data ?? '',
+    base_address: baseAddress,
   })
-  return data as FlashResult
+  return result as FlashResult
 }
 
 /** 检查 Flash 是否为空白 */

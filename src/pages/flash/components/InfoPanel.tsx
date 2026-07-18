@@ -1,10 +1,10 @@
 import { useState } from 'react'
-import { Usb, Cpu, MemoryStick, ChevronRight, Settings } from 'lucide-react'
-import { useProbeStore, SPEED_OPTIONS } from '@/stores/probe.store'
+import { Cpu, MemoryStick, ChevronRight, Settings } from 'lucide-react'
+import { useProbeStore } from '@/stores/probe.store'
+import { useNotificationStore } from '@/stores/notification.store'
 import { cn } from '@/lib/utils'
 import { FlashConfigDialog } from './FlashConfigDialog'
 import { DeviceConfigDialog } from './DeviceConfigDialog'
-import { InterfaceConfigDialog } from './InterfaceConfigDialog'
 
 function formatHex(addr: number): string {
   return `0x${addr.toString(16).toUpperCase().padStart(8, '0')}`
@@ -80,8 +80,6 @@ export function InfoPanel() {
     getSelectedProbe,
     getSelectedTarget,
     getDeviceInfo,
-    pendingInterface,
-    pendingSpeed,
     selectedSectorIndices,
     setSelectedSectorIndices,
   } = useProbeStore()
@@ -90,36 +88,34 @@ export function InfoPanel() {
   const target = getSelectedTarget()
   const isConnected = probe?.state === 'connected'
   const deviceInfo = target ? getDeviceInfo(target.part_number) : undefined
-  const speedLabel = SPEED_OPTIONS.find((s) => s.value === pendingSpeed)?.label ?? `${pendingSpeed} Hz`
 
-  const [interfaceConfigOpen, setInterfaceConfigOpen] = useState(false)
   const [flashConfigOpen, setFlashConfigOpen] = useState(false)
   const [deviceConfigOpen, setDeviceConfigOpen] = useState(false)
 
+  /** 打开设备配置：未连接时提示，不弹窗 */
+  const handleDeviceConfig = () => {
+    if (!isConnected) {
+      useNotificationStore.getState().push({
+        type: 'info',
+        title: '设备配置',
+        message: '请先连接芯片后再查看设备配置',
+        autoClose: true,
+        autoCloseDelay: 3000,
+      })
+      return
+    }
+    setDeviceConfigOpen(true)
+  }
+
   return (
     <div className="overflow-y-auto">
-      <CollapsibleSection
-        icon={<Usb className="size-3" />}
-        title="接口信息"
-        action={
-          <GearButton
-            onClick={() => setInterfaceConfigOpen(true)}
-            title="接口配置"
-          />
-        }
-      >
-        <Row label="接口" value={pendingInterface.toUpperCase()} />
-        <Row label="速度" value={speedLabel} />
-        <Row label="状态" value={isConnected ? '已连接' : '未连接'} />
-      </CollapsibleSection>
-
       <CollapsibleSection
         icon={<Cpu className="size-3" />}
         title="设备信息"
         defaultOpen
         action={
           <GearButton
-            onClick={() => setDeviceConfigOpen(true)}
+            onClick={handleDeviceConfig}
             title="设备配置"
           />
         }
@@ -129,6 +125,8 @@ export function InfoPanel() {
         <Row label="内核" value={deviceInfo?.core ?? target?.core} />
         <Row label="大小端" value={target?.endian ?? 'Little'} />
         <Row label="Core ID" value={target?.core_id} />
+        <Row label="Device ID" value={target?.device_id} />
+        <Row label="Revision ID" value={target?.revision_id} />
         <Row label="RAM" value={deviceInfo ? `${formatKb(deviceInfo.ram_size)} (${deviceInfo.ram_base_address})` : null} />
       </CollapsibleSection>
 
@@ -146,11 +144,6 @@ export function InfoPanel() {
         <Row label="基地址" value={target ? formatHex(target.flash_start) : (deviceInfo?.flash_base_address ?? null)} />
         <Row label="大小" value={target ? formatSize(target.flash_size) : (deviceInfo ? formatKb(deviceInfo.flash_size) : null)} />
       </CollapsibleSection>
-
-      <InterfaceConfigDialog
-        open={interfaceConfigOpen}
-        onOpenChange={setInterfaceConfigOpen}
-      />
 
       <FlashConfigDialog
         open={flashConfigOpen}

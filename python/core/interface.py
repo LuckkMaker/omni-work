@@ -45,6 +45,8 @@ class TargetInfo:
     page_size: int
     sector_size: int  # 第一个 Flash region 的 sector_size（兼容旧代码）
     core_id: str = ""
+    device_id: str = ""
+    revision_id: str = ""
     endian: str = "Little"
     # 新增：完整的 Flash 区域列表和扇区列表
     flash_regions: list[FlashRegionInfo] = field(default_factory=list)

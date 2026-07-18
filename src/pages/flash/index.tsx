@@ -20,9 +20,7 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { FilePanel } from './components/FilePanel'
 import { BinAddressDialog } from './components/BinAddressDialog'
-import { EraseSectorsDialog } from './components/EraseSectorsDialog'
 import { ReadBackRangeDialog } from './components/ReadBackRangeDialog'
-import { ReadBackSectorsDialog } from './components/ReadBackSectorsDialog'
 import { CompareDialog } from './components/CompareDialog'
 import { LogConsole, ResizeHandle } from './components/LogConsole'
 import { useFlashStore } from '@/stores/flash.store'
@@ -35,14 +33,14 @@ export default function FlashPage() {
     busy,
     doCheckBlank,
     doEraseChip,
+    doEraseSelectedSectors,
     doProgram,
     doVerify,
     doReadBack,
+    doReadBackSelectedSectors,
     doStartApp,
     doReset,
-    setShowEraseSectorsDialog,
     setShowReadBackRangeDialog,
-    setShowReadBackSectorsDialog,
   } = useFlashStore()
 
   const selectedProbe = useProbeStore((s) => {
@@ -52,7 +50,9 @@ export default function FlashPage() {
   const isConnected = selectedProbe?.state === 'connected'
 
   const activeTab = useFlashStore((s) => s.tabs.find((t) => t.id === s.activeTabId) ?? null)
+  // 可编程条件：file tab 有文件路径，或 device tab 有数据
   const canProgram = activeTab?.type === 'file' && !!activeTab.filePath
+    || activeTab?.type === 'device' && !!activeTab.data
   const canReadBack = !!activeTab
 
   const handleResize = (delta: number) => {
@@ -80,7 +80,7 @@ export default function FlashPage() {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
             <DropdownMenuItem onClick={doEraseChip}>Erase Chip</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setShowEraseSectorsDialog(true)}>Erase Sectors...</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => doEraseSelectedSectors()}>Erase Sectors...</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
 
@@ -122,7 +122,7 @@ export default function FlashPage() {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="start">
             <DropdownMenuItem onClick={() => doReadBack('chip')}>Entire Chip</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => setShowReadBackSectorsDialog(true)}>Sectors...</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => doReadBackSelectedSectors()}>Sectors...</DropdownMenuItem>
             <DropdownMenuItem onClick={() => setShowReadBackRangeDialog(true)}>Range...</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
@@ -150,14 +150,12 @@ export default function FlashPage() {
 
       {/* 底部：日志（全宽） */}
       <div className="shrink-0 border-t border-border" style={{ height: bottomHeight }}>
-        <LogConsole height={bottomHeight} />
+        <LogConsole />
       </div>
 
       {/* 弹窗 */}
       <BinAddressDialog />
-      <EraseSectorsDialog />
       <ReadBackRangeDialog />
-      <ReadBackSectorsDialog />
       <CompareDialog />
     </div>
   )

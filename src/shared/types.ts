@@ -42,6 +42,8 @@ export interface TargetInfo {
   page_size: number
   sector_size: number
   core_id: string
+  device_id: string
+  revision_id: string
   endian: string
   /** 完整的 Flash 区域列表 */
   flash_regions: FlashRegionInfo[]

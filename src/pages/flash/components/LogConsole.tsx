@@ -1,6 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react'
 import { Terminal, Trash2, Download } from 'lucide-react'
-import { Card, CardContent, CardHeader } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { useFlashStore } from '@/stores/flash.store'
 import { useNotificationStore } from '@/stores/notification.store'
@@ -28,12 +27,7 @@ function formatTime(ts: string): string {
   }
 }
 
-interface LogConsoleProps {
-  /** 日志区高度 (px) */
-  height: number
-}
-
-export function LogConsole({ height }: LogConsoleProps) {
+export function LogConsole() {
   const { logs, clearLogs } = useFlashStore()
   const scrollRef = useRef<HTMLDivElement>(null)
 
@@ -94,39 +88,37 @@ export function LogConsole({ height }: LogConsoleProps) {
   }
 
   return (
-    <Card className="flex flex-col" style={{ height }}>
-      <CardHeader className="shrink-0 py-1.5 px-3">
-        <div className="flex items-center gap-1.5">
-          <Terminal className="size-3.5 text-muted-foreground" />
-          <span className="text-xs font-medium">日志</span>
-          {logs.length > 0 && (
-            <span className="text-[10px] text-muted-foreground">({logs.length})</span>
-          )}
-          <div className="ml-auto flex items-center gap-0.5">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={handleSave}
-              disabled={logs.length === 0}
-              className="h-6 w-6 p-0"
-              title="保存日志"
-            >
-              <Download className="size-3" />
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={clearLogs}
-              disabled={logs.length === 0}
-              className="h-6 w-6 p-0"
-              title="清除日志"
-            >
-              <Trash2 className="size-3" />
-            </Button>
-          </div>
+    <div className="flex flex-col h-full">
+      <div className="shrink-0 flex items-center gap-1.5 px-3 py-1.5 border-b border-border">
+        <Terminal className="size-3.5 text-muted-foreground" />
+        <span className="text-xs font-medium">日志</span>
+        {logs.length > 0 && (
+          <span className="text-[10px] text-muted-foreground">({logs.length})</span>
+        )}
+        <div className="ml-auto flex items-center gap-0.5">
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleSave}
+            disabled={logs.length === 0}
+            className="h-6 w-6 p-0"
+            title="保存日志"
+          >
+            <Download className="size-3" />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={clearLogs}
+            disabled={logs.length === 0}
+            className="h-6 w-6 p-0"
+            title="清除日志"
+          >
+            <Trash2 className="size-3" />
+          </Button>
         </div>
-      </CardHeader>
-      <CardContent className="flex-1 overflow-hidden p-0">
+      </div>
+      <div className="flex-1 overflow-hidden">
         <div
           ref={scrollRef}
           tabIndex={0}
@@ -150,8 +142,8 @@ export function LogConsole({ height }: LogConsoleProps) {
             ))
           )}
         </div>
-      </CardContent>
-    </Card>
+      </div>
+    </div>
   )
 }
 
