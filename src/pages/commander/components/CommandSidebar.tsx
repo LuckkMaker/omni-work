@@ -70,92 +70,68 @@ const REF_DEFAULT_HEIGHT = 500
 const REF_MIN_HEIGHT = 120
 const REF_MAX_HEIGHT = 600
 
-/** 从 extra_help 中提取示例（以 "Examples:" 或 "Example" 开头的行） */
-function extractExamples(extraHelp: string): string[] {
+/** 示例分组（标题 + 代码行） */
+interface ExampleGroup {
+  title: string  // 分组标题，如 "Examples"、"Example script.py content"
+  lines: string[]  // 代码行
+}
+
+/** 从 extra_help 中提取示例分组
+ * 识别 "Examples:" 和 "Example ... content:" 等段落标题
+ */
+function extractExampleGroups(extraHelp: string): ExampleGroup[] {
   if (!extraHelp) return []
   const lines = extraHelp.split('\n')
-  const examples: string[] = []
-  let inExamples = false
+  const groups: ExampleGroup[] = []
+  let currentGroup: ExampleGroup | null = null
+
   for (const line of lines) {
-    if (/^examples?:/i.test(line.trim())) {
-      inExamples = true
+    const trimmed = line.trim()
+
+    // 检测分组标题：Examples: 或 Example ... content:
+    if (/^examples?:$/i.test(trimmed) || /^example\s+.*content\s*:$/i.test(trimmed)) {
+      if (currentGroup && currentGroup.lines.length > 0) {
+        groups.push(currentGroup)
+      }
+      // 提取标题文本（去掉末尾冒号）
+      const title = trimmed.replace(/:$/, '')
+      currentGroup = { title, lines: [] }
       continue
     }
-    if (inExamples) {
-      const trimmed = line.trim()
+
+    if (currentGroup) {
+      // 空行表示当前分组可能结束
       if (trimmed === '') {
-        if (examples.length > 0) break
+        if (currentGroup.lines.length > 0) {
+          groups.push(currentGroup)
+          currentGroup = null
+        }
         continue
       }
-      if (/^[A-Z]/.test(trimmed) && !trimmed.startsWith('$') && !trimmed.startsWith('!') && !trimmed.startsWith('>')) {
-        break
+      // 遇到非代码行（全大写字母开头的描述文本）则结束当前分组
+      if (/^[A-Z][a-z]/.test(trimmed) && !trimmed.startsWith('$') && !trimmed.startsWith('!') && !trimmed.startsWith('>') && !trimmed.startsWith('#') && !trimmed.startsWith('  ')) {
+        if (currentGroup.lines.length > 0) {
+          groups.push(currentGroup)
+          currentGroup = null
+        }
+        continue
       }
-      examples.push(trimmed)
-    }
-  }
-  return examples
-}
-
-/** 基于 usage 字段自动生成示例 */
-function generateExamplesFromUsage(cmd: CommandInfo): string[] {
-  const examples: string[] = []
-  if (!cmd.usage) return examples
-
-  // 解析 usage 中的参数占位符
-  const parts = cmd.usage.split(/\s+/)
-  const required: string[] = []
-  const optional: string[] = []
-  let inOptional = false
-
-  for (const part of parts) {
-    if (part.startsWith('[')) {
-      inOptional = true
-      optional.push(part)
-    } else if (inOptional) {
-      optional.push(part)
-    } else {
-      required.push(part)
+      currentGroup.lines.push(trimmed)
     }
   }
 
-  // 生成基础示例（只有必需参数）
-  const reqParams = required.map((p) => {
-    const clean = p.replace(/[<>]/g, '')
-    // 根据参数名生成合理的示例值
-    if (/addr/i.test(clean)) return '0x20000000'
-    if (/data/i.test(clean)) return '0xDEADBEEF'
-    if (/val|value/i.test(clean)) return '0x12345678'
-    if (/len|length|count/i.test(clean)) return '16'
-    if (/file|filename/i.test(clean)) return 'firmware.hex'
-    if (/reg/i.test(clean)) return 'r0'
-    if (/core/i.test(clean)) return '0'
-    return clean
-  })
-  examples.push(`${cmd.name} ${reqParams.join(' ')}`.trim())
-
-  // 生成带可选参数的示例
-  if (optional.length > 0) {
-    const optParams = optional.map((p) => {
-      const clean = p.replace(/[[\]<>]/g, '')
-      if (/addr/i.test(clean)) return '0x20000000'
-      if (/data/i.test(clean)) return '0xDEADBEEF'
-      if (/val|value/i.test(clean)) return '0x12345678'
-      if (/len|length|count/i.test(clean)) return '16'
-      if (/file|filename/i.test(clean)) return 'firmware.hex'
-      if (/reg/i.test(clean)) return 'r0'
-      return clean
-    })
-    examples.push(`${cmd.name} ${[...reqParams, ...optParams].join(' ')}`)
+  // 收集最后一个分组
+  if (currentGroup && currentGroup.lines.length > 0) {
+    groups.push(currentGroup)
   }
 
-  return examples
+  return groups
 }
 
-/** 获取命令的所有示例（从 extra_help 提取 + 基于 usage 生成） */
+/** 从 extra_help 中提取所有示例代码行（扁平化，用于判断是否显示示例按钮） */
 function getCommandExamples(cmd: CommandInfo): string[] {
-  const fromExtraHelp = extractExamples(cmd.extra_help)
-  if (fromExtraHelp.length > 0) return fromExtraHelp
-  return generateExamplesFromUsage(cmd)
+  const groups = extractExampleGroups(cmd.extra_help)
+  return groups.flatMap((g) => g.lines)
 }
 
 export function CommandSidebar({
@@ -234,7 +210,7 @@ export function CommandSidebar({
     navigator.clipboard.writeText(text).catch(() => {})
   }, [])
 
-  /** 处理命令点击：可用则插入，不可用则全局通知 */
+  /** 处理命令点击：可用则插入（不执行），不可用则全局通知 */
   const handleCommandClick = useCallback(
     (cmd: CommandInfo) => {
       const canRun = connected || !cmd.requires_connection
@@ -248,16 +224,21 @@ export function CommandSidebar({
         })
         return
       }
-      onRunCommand(cmd.name + (cmd.usage ? ' ' : ''))
+      // 始终追加空格，确保走 insertText 只插入不执行
+      onRunCommand(cmd.name + ' ')
     },
     [connected, onRunCommand]
   )
 
-  /** 处理示例点击：可用则插入，不可用则全局通知 */
+  /** 处理示例点击：可用则插入（不执行），不可用则全局通知 */
   const handleExampleClick = useCallback(
     (example: string) => {
-      const cmdText = example.replace(/^[>$!]\s*/, '')
-      const cmdName = cmdText.split(/\s/)[0]
+      // 提取命令名用于检查是否需要连接（保留 ! 和 $ 前缀）
+      const cmdText = example.trim()
+      // 对于 ! 和 $ 前缀命令，命令名就是前缀符号
+      const cmdName = cmdText.startsWith('!') ? '!' :
+                      cmdText.startsWith('$') ? '$' :
+                      cmdText.split(/\s/)[0]
       const cmdInfo = commands.find((c) => c.name === cmdName)
       const requiresConn = cmdInfo?.requires_connection ?? true
       if (requiresConn && !connected) {
@@ -270,10 +251,13 @@ export function CommandSidebar({
         })
         return
       }
-      onRunCommand(cmdText)
+      // 只插入不执行（末尾加空格方便编辑参数）
+      onRunCommand(cmdText + ' ')
     },
     [connected, commands, onRunCommand]
   )
+  // 保留 handleExampleClick 供未来扩展使用（命令行直接插入示例）
+  void handleExampleClick
 
   return (
     <div className="flex h-full w-full flex-col bg-muted/30">
@@ -443,32 +427,48 @@ export function CommandSidebar({
 
       {/* 示例弹窗 */}
       <Dialog open={!!exampleCmd} onOpenChange={(open) => !open && setExampleCmd(null)}>
-        <DialogContent className="max-w-lg">
+        <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="flex items-center gap-2">
-              <code className="font-mono text-primary text-base">
-                {exampleCmd?.name}
-              </code>
-              {exampleCmd?.usage && (
-                <span className="font-mono text-sm text-muted-foreground">
-                  {exampleCmd.usage}
-                </span>
+            <DialogTitle className="flex flex-col gap-1">
+              <div className="flex items-center gap-2">
+                <code className="font-mono text-primary text-base break-all">
+                  {exampleCmd?.name}
+                </code>
+                {exampleCmd?.usage && (
+                  <span className="font-mono text-sm text-muted-foreground break-all">
+                    {exampleCmd.usage}
+                  </span>
+                )}
+              </div>
+              {/* 副标题：命令功能简述 */}
+              {exampleCmd?.help && (
+                <p className="text-xs font-normal text-muted-foreground">
+                  {exampleCmd.help}
+                </p>
               )}
             </DialogTitle>
           </DialogHeader>
           {exampleCmd && (
             <div className="space-y-3">
-              {/* 完整说明 */}
-              <div>
-                <p className="text-sm leading-relaxed text-foreground/90">
-                  {exampleCmd.help}
-                </p>
-                {exampleCmd.extra_help && (
-                  <p className="mt-1 text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap">
-                    {exampleCmd.extra_help}
-                  </p>
-                )}
-              </div>
+              {/* 详细说明（extra_help 非示例部分） */}
+              {exampleCmd.extra_help && (
+                <div className="space-y-2">
+                  {/* 渲染非示例的描述文本 */}
+                  {exampleCmd.extra_help
+                    .split(/\n\n+/)
+                    .filter((para) => {
+                      const t = para.trim()
+                      // 跳过示例段落（由代码块单独渲染）
+                      return !/^examples?:/i.test(t) &&
+                             !/^example\s+.*content\s*:/i.test(t)
+                    })
+                    .map((para, idx) => (
+                      <p key={idx} className="text-xs leading-relaxed text-muted-foreground whitespace-pre-wrap">
+                        {para.trim()}
+                      </p>
+                    ))}
+                </div>
+              )}
               {/* 别名 */}
               {exampleCmd.aliases.length > 0 && (
                 <div className="flex items-center gap-2 text-xs">
@@ -482,67 +482,43 @@ export function CommandSidebar({
                   </div>
                 </div>
               )}
-              {/* 示例列表 */}
-              {getCommandExamples(exampleCmd).length > 0 && (
+              {/* 示例分组（用代码块渲染，便于复制） */}
+              {extractExampleGroups(exampleCmd.extra_help).map((group, gIdx) => {
+                const codeText = group.lines.join('\n')
+                return (
+                  <div key={gIdx}>
+                    <div className="mb-1 flex items-center justify-between">
+                      <span className="text-xs font-medium text-muted-foreground">
+                        {group.title}:
+                      </span>
+                      <button
+                        onClick={() => copyToClipboard(codeText)}
+                        className="flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-primary transition-colors"
+                        title="复制全部"
+                      >
+                        <Copy className="size-2.5" />
+                        <span>复制全部</span>
+                      </button>
+                    </div>
+                    <pre className="group/code relative rounded bg-muted/60 p-2 overflow-x-auto">
+                      <code className="font-mono text-xs text-foreground/90 whitespace-pre">
+                        {codeText}
+                      </code>
+                    </pre>
+                  </div>
+                )
+              })}
+              {/* 基于 usage 自动生成的示例（当 extra_help 无示例时） */}
+              {extractExampleGroups(exampleCmd.extra_help).length === 0 && exampleCmd.usage && (
                 <div>
-                  <div className="text-xs font-medium text-muted-foreground mb-1.5">
-                    Examples:
+                  <div className="mb-1 text-xs font-medium text-muted-foreground">
+                    Example:
                   </div>
-                  <div className="space-y-1">
-                    {getCommandExamples(exampleCmd).map((ex, idx) => {
-                      const cmdName = ex.replace(/^[>$!]\s*/, '').split(/\s/)[0]
-                      const cmdInfo = commands.find((c) => c.name === cmdName)
-                      const canRunEx = connected || !(cmdInfo?.requires_connection ?? true)
-                      return (
-                        <div
-                          key={idx}
-                          className="group/ex flex items-center gap-2 rounded bg-muted/60 px-2 py-1"
-                        >
-                          <code className={cn(
-                            'flex-1 font-mono text-xs break-all',
-                            !canRunEx && 'opacity-40'
-                          )}>
-                            {ex}
-                          </code>
-                          <div className="flex shrink-0 gap-1">
-                            <button
-                              onClick={() => copyToClipboard(ex.replace(/^[>$!]\s*/, ''))}
-                              className="opacity-0 transition-opacity group-hover/ex:opacity-100"
-                              title="复制"
-                            >
-                              <Copy className="size-3 text-muted-foreground hover:text-primary" />
-                            </button>
-                            <button
-                              onClick={() => {
-                                if (canRunEx) {
-                                  handleExampleClick(ex)
-                                  setExampleCmd(null)
-                                } else {
-                                  useNotificationStore.getState().push({
-                                    type: 'warning',
-                                    title: '命令不可用',
-                                    message: '该命令需要连接目标设备',
-                                    autoClose: true,
-                                    autoCloseDelay: 3000,
-                                  })
-                                }
-                              }}
-                              className={cn(
-                                'opacity-0 transition-opacity group-hover/ex:opacity-100',
-                                !canRunEx && 'cursor-not-allowed'
-                              )}
-                              title={canRunEx ? '插入命令' : '需要连接目标设备'}
-                            >
-                              <Play className={cn(
-                                'size-3',
-                                canRunEx ? 'text-primary' : 'text-muted-foreground/50'
-                              )} />
-                            </button>
-                          </div>
-                        </div>
-                      )
-                    })}
-                  </div>
+                  <pre className="rounded bg-muted/60 p-2 overflow-x-auto">
+                    <code className="font-mono text-xs text-foreground/90 whitespace-pre">
+                      {exampleCmd.name} {exampleCmd.usage.replace(/[<>\[\]]/g, '')}
+                    </code>
+                  </pre>
                 </div>
               )}
             </div>

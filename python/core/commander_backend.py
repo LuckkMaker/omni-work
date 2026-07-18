@@ -469,10 +469,19 @@ class CommanderBackend:
             "extra_help": (
                 "Evaluate a Python expression using eval(). Only single expressions are supported.\n"
                 "For multi-line scripts, use 'run <script.py>' instead.\n\n"
+                "Available objects:\n"
+                "  target   - Target object (read/write memory, regs, breakpoints)\n"
+                "  session  - Session object\n"
+                "  board    - Board object\n"
+                "  probe    - DebugProbe object\n"
+                "  elf      - ELF file (if loaded)\n"
+                "  map      - Memory map\n\n"
                 "Examples:\n"
                 "  $ target.read32(0x20000000)\n"
                 "  $ hex(target.regs['r0'])\n"
                 "  $ [r.name for r in target.cores]\n"
+                "  $ target.write32(0x20000000, 0x12345678)\n"
+                "  $ target.elf.filename\n"
             ),
             "requires_connection": True,
         })
@@ -483,11 +492,14 @@ class CommanderBackend:
             "usage": "<shell_command>",
             "help": "Execute a system shell command and display output.",
             "extra_help": (
-                "Run a shell command using subprocess (shell=True).\n\n"
+                "Run a shell command using subprocess (shell=True).\n"
+                "The command output is captured and displayed in the terminal.\n\n"
                 "Examples:\n"
                 "  ! dir\n"
                 "  ! ls -la\n"
                 "  ! echo hello\n"
+                "  ! type firmware.hex\n"
+                "  ! python --version\n"
             ),
             "requires_connection": False,
         })
@@ -511,7 +523,18 @@ class CommanderBackend:
                 "  print()  - Output to terminal\n\n"
                 "Examples:\n"
                 "  run my_script.py\n"
-                "  run ~/debug_script.py\n"
+                "  run ~/debug_script.py\n\n"
+                "Example script.py content:\n"
+                "  # Read memory block and format output\n"
+                "  base = 0x20000000\n"
+                "  for offset in range(0, 0x20, 4):\n"
+                "      addr = base + offset\n"
+                "      val = target.read32(addr)\n"
+                "      print(f'0x{addr:08X}: 0x{val:08X}')\n"
+                "  # Write memory\n"
+                "  target.write32(0x20000000, 0xDEADBEEF)\n"
+                "  # Read register\n"
+                "  print(f'R0 = 0x{target.regs[\"r0\"]:08X}')\n"
             ),
             "requires_connection": True,
         })
@@ -528,12 +551,18 @@ class CommanderBackend:
                 "Examples:\n"
                 "  run_batch commands.txt\n"
                 "  run_batch ~/debug_sequence.txt\n\n"
-                "Example commands.txt:\n"
-                "  # Halt and read registers\n"
+                "Example commands.txt content:\n"
+                "  # Halt target and read registers\n"
                 "  halt\n"
                 "  reg\n"
+                "  # Read memory block\n"
                 "  read32 0x20000000 16\n"
+                "  # Set breakpoint and run\n"
+                "  break 0x08000100\n"
                 "  continue\n"
+                "  # Check status\n"
+                "  status\n"
+                "  where\n"
             ),
             "requires_connection": True,
         })
