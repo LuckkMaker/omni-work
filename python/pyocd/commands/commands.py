@@ -616,6 +616,9 @@ class SavememCommand(CommandBase):
             'nargs': 3,
             'usage': "ADDR LEN FILENAME",
             'help': "Save a range of memory to a binary file.",
+            'extra_help': "Saves raw binary data (not hex format). Use a .bin extension for the filename. "
+                    "The file will contain the exact bytes read from memory. "
+                    "To view as hex dump, use: $ ' '.join(f'{b:02X}' for b in target.read_memory_block8(0x20000000, 16))",
             }
 
     def parse(self, args):
@@ -673,6 +676,10 @@ class LoadCommand(CommandBase):
             'nargs': [1, 2],
             'usage': "FILENAME [ADDR]",
             'help': "Load a binary, hex, or elf file with optional base address.",
+            'extra_help': "Supports .bin, .hex, and .elf files. On Windows, use forward slashes (/) in paths "
+                    "or use the path converter tool. "
+                    "If you get 'flash program page failure', the flash may be protected. "
+                    "Try: 1) 'unlock' to remove flash protection, 2) 'erase' to clear flash, 3) 'load' to program.",
             }
 
     def parse(self, args):
@@ -922,6 +929,7 @@ class EraseCommand(CommandBase):
         if self.erase_chip:
             eraser = FlashEraser(self.context.session, FlashEraser.Mode.CHIP)
             eraser.erase()
+            self.context.writei("Erased chip (%d bytes)", 0)
         else:
             eraser = FlashEraser(self.context.session, FlashEraser.Mode.SECTOR)
             while self.count:
@@ -940,6 +948,7 @@ class EraseCommand(CommandBase):
                 # Next page.
                 self.count -= 1
                 self.addr += region.blocksize
+            self.context.writei("Erased sectors")
 
 class UnlockCommand(CommandBase):
     INFO = {

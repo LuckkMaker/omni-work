@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Usb, ChevronsUpDown, RefreshCw, Cpu, Plug, Unlink } from 'lucide-react'
+import { Usb, ChevronsUpDown, RefreshCw, Cpu, PlugZap, Unplug } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -164,9 +164,9 @@ export function DeviceSwitcher() {
             {connecting || selectedProbe.state === 'connecting' ? (
               <RefreshCw className="size-4 animate-spin" />
             ) : isConnected ? (
-              <Unlink className="size-4" />
+              <Unplug className="size-4" />
             ) : (
-              <Plug className="size-4" />
+              <PlugZap className="size-4" />
             )}
           </button>
         )}

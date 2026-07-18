@@ -7,4 +7,5 @@ for offset in range(0, 0x20, 4):
 # Write memory
 target.write32(0x20000000, 0xDEADBEEF)
 # Read register
-print(f'R0 = 0x{target.regs["r0"]:08X}')
+r0 = target.read_core_register('r0')
+print(f'R0 = 0x{r0:08X}')

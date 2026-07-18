@@ -18,6 +18,8 @@ import {
   GripHorizontal,
   Copy,
   Lightbulb,
+  FolderSearch,
+  Check,
 } from 'lucide-react'
 import { useNotificationStore } from '@/stores/notification.store'
 import { cn } from '@/lib/utils'
@@ -148,8 +150,16 @@ function extractExampleGroups(extraHelp: string): ExampleGroup[] {
   return groups
 }
 
-/** 从 extra_help 中提取所有示例代码行（扁平化，用于判断是否显示示例按钮） */
+/** 获取命令的所有示例
+ * 优先使用后端返回的 examples 字段（准确的数据库示例）
+ * 如果没有，再从 extra_help 中提取
+ */
 function getCommandExamples(cmd: CommandInfo): string[] {
+  // 优先使用后端数据库中的示例
+  if (cmd.examples && cmd.examples.length > 0) {
+    return cmd.examples
+  }
+  // 回退：从 extra_help 提取
   const groups = extractExampleGroups(cmd.extra_help)
   return groups.flatMap((g) => g.lines)
 }
@@ -164,6 +174,10 @@ export function CommandSidebar({
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null)
   const [showReference, setShowReference] = useState(false)
   const [exampleCmd, setExampleCmd] = useState<CommandInfo | null>(null)
+
+  // 路径转换工具
+  const [pathInput, setPathInput] = useState('')
+  const [pathCopied, setPathCopied] = useState(false)
 
   // 命令参考区高度（可拖拽拉伸）
   const [refHeight, setRefHeight] = useState(REF_DEFAULT_HEIGHT)
@@ -229,6 +243,24 @@ export function CommandSidebar({
   const copyToClipboard = useCallback((text: string) => {
     navigator.clipboard.writeText(text).catch(() => {})
   }, [])
+
+  /** 转换路径：Windows 反斜杠转正斜杠 */
+  const convertedPath = pathInput.trim().replace(/\\/g, '/')
+
+  /** 复制转换后的路径并插入到终端 */
+  const handleCopyPath = useCallback(() => {
+    if (!convertedPath) return
+    navigator.clipboard.writeText(convertedPath).then(() => {
+      setPathCopied(true)
+      setTimeout(() => setPathCopied(false), 2000)
+    }).catch(() => {})
+  }, [convertedPath])
+
+  /** 插入转换后的路径到终端（带 load 前缀） */
+  const handleInsertPath = useCallback(() => {
+    if (!convertedPath) return
+    onRunCommand(`load ${convertedPath} `)
+  }, [convertedPath, onRunCommand])
 
   /** 处理命令点击：可用则插入（不执行），不可用则全局通知 */
   const handleCommandClick = useCallback(
@@ -306,11 +338,62 @@ export function CommandSidebar({
         </Button>
       </div>
 
+      {/* 路径转换工具 */}
+      <div className="shrink-0 border-b border-border p-2">
+        <div className="mb-1 flex items-center gap-1 px-1 text-xs font-medium text-muted-foreground">
+          <FolderSearch className="size-3" />
+          路径转换
+        </div>
+        <input
+          type="text"
+          value={pathInput}
+          onChange={(e) => setPathInput(e.target.value)}
+          placeholder="粘贴 Windows 路径..."
+          className="h-7 w-full rounded border border-border bg-background px-2 text-xs font-mono focus:outline-none focus:ring-1 focus:ring-primary"
+        />
+        {convertedPath && (
+          <div className="mt-1 space-y-1">
+            <div className="rounded bg-muted/60 px-2 py-1">
+              <code className="text-[10px] font-mono text-foreground/90 break-all">
+                {convertedPath}
+              </code>
+            </div>
+            <div className="flex gap-1">
+              <button
+                onClick={handleCopyPath}
+                className="flex flex-1 items-center justify-center gap-1 rounded bg-primary/10 px-2 py-1 text-[10px] font-medium text-primary hover:bg-primary/20 transition-colors"
+              >
+                {pathCopied ? (
+                  <>
+                    <Check className="size-2.5" />
+                    已复制
+                  </>
+                ) : (
+                  <>
+                    <Copy className="size-2.5" />
+                    复制
+                  </>
+                )}
+              </button>
+              <button
+                onClick={handleInsertPath}
+                disabled={!connected}
+                className="flex flex-1 items-center justify-center gap-1 rounded bg-primary/10 px-2 py-1 text-[10px] font-medium text-primary hover:bg-primary/20 transition-colors disabled:opacity-40"
+                title={connected ? '插入 load 命令' : '需要连接设备'}
+              >
+                <Download className="size-2.5" />
+                插入 load
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Quick Commands 区 */}
       <div className="flex min-h-0 flex-1 flex-col">
         <div className="shrink-0 border-b border-border px-2 py-1.5">
           <span className="px-1 text-xs font-medium text-muted-foreground">
-            Quick Commands
+            快捷命令
           </span>
         </div>
         <div className="flex-1 overflow-y-auto p-2">
@@ -364,7 +447,7 @@ export function CommandSidebar({
             className={cn('size-3 transition-transform', showReference && 'rotate-90')}
           />
           <BookOpen className="size-3.5 text-muted-foreground" />
-          Command Reference
+          命令参考
           <span className="ml-auto text-[10px] text-muted-foreground">{commands.length}</span>
         </button>
 
@@ -528,15 +611,25 @@ export function CommandSidebar({
                   </div>
                 )
               })}
-              {/* 基于 usage 自动生成的示例（当 extra_help 无示例时） */}
-              {extractExampleGroups(exampleCmd.extra_help).length === 0 && exampleCmd.usage && (
+              {/* 后端数据库示例（当 extra_help 无示例分组时，使用 cmd.examples） */}
+              {extractExampleGroups(exampleCmd.extra_help).length === 0 && getCommandExamples(exampleCmd).length > 0 && (
                 <div>
-                  <div className="mb-1 text-xs font-medium text-muted-foreground">
-                    Example:
+                  <div className="mb-1 flex items-center justify-between">
+                    <span className="text-xs font-medium text-muted-foreground">
+                      Examples:
+                    </span>
+                    <button
+                      onClick={() => copyToClipboard(getCommandExamples(exampleCmd).join('\n'))}
+                      className="flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-primary transition-colors"
+                      title="复制全部"
+                    >
+                      <Copy className="size-2.5" />
+                      <span>复制全部</span>
+                    </button>
                   </div>
                   <pre className="rounded bg-muted/60 p-2 overflow-x-auto">
                     <code className="font-mono text-xs text-foreground/90 whitespace-pre">
-                      {exampleCmd.name} {exampleCmd.usage.replace(/[<>\[\]]/g, '')}
+                      {getCommandExamples(exampleCmd).join('\n')}
                     </code>
                   </pre>
                 </div>

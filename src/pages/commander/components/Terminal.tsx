@@ -785,10 +785,17 @@ export function Terminal({ uid, connected, commands, apiRef }: TerminalProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // 连接状态变化时显示提示
+  // 连接状态变化时显示提示（跳过首次挂载）
+  const isFirstMount = useRef(true)
   useEffect(() => {
     const term = termRef.current
     if (!term) return
+
+    // 首次挂载时跳过，不显示 "[Probe disconnected]"
+    if (isFirstMount.current) {
+      isFirstMount.current = false
+      return
+    }
 
     if (!connected) {
       term.write(`\r\n${COLOR.yellow}[Probe disconnected]${COLOR.reset}\r\n`)

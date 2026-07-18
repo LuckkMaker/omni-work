@@ -16,6 +16,7 @@ from typing import Optional
 
 from core.pyocd_backend import backend
 from core.events import event_manager
+from core.command_examples import COMMAND_EXAMPLES
 
 logger = logging.getLogger(__name__)
 
@@ -454,6 +455,7 @@ class CommanderBackend:
                 "help": info.get('help', ''),
                 "extra_help": info.get('extra_help', ''),
                 "requires_connection": primary_name not in OFFLINE_COMMANDS,
+                "examples": COMMAND_EXAMPLES.get(primary_name, []),
             })
 
         # 按 category 再按 name 排序
@@ -478,12 +480,18 @@ class CommanderBackend:
                 "  map      - Memory map\n\n"
                 "Examples:\n"
                 "  $ target.read32(0x20000000)\n"
-                "  $ hex(target.regs['r0'])\n"
-                "  $ [r.name for r in target.cores]\n"
+                "  $ target.read_core_register('r0')\n"
+                "  $ hex(target.read_core_register('pc'))\n"
                 "  $ target.write32(0x20000000, 0x12345678)\n"
                 "  $ target.elf.filename\n"
             ),
             "requires_connection": True,
+            "examples": COMMAND_EXAMPLES.get('$', [
+                '$ target.read32(0x20000000)',
+                '$ target.read_core_register("r0")',
+                '$ hex(target.read_core_register("pc"))',
+                '$ target.write32(0x20000000, 0x12345678)',
+            ]),
         })
         commands.append({
             "name": "!",
@@ -502,6 +510,13 @@ class CommanderBackend:
                 "  ! python --version\n"
             ),
             "requires_connection": False,
+            "examples": COMMAND_EXAMPLES.get('!', [
+                '! dir',
+                '! ls -la',
+                '! echo hello',
+                '! type firmware.hex',
+                '! python --version',
+            ]),
         })
         commands.append({
             "name": "run",
@@ -534,9 +549,14 @@ class CommanderBackend:
                 "  # Write memory\n"
                 "  target.write32(0x20000000, 0xDEADBEEF)\n"
                 "  # Read register\n"
-                "  print(f'R0 = 0x{target.regs[\"r0\"]:08X}')\n"
+                "  r0 = target.read_core_register('r0')\n"
+                "  print(f'R0 = 0x{r0:08X}')\n"
             ),
             "requires_connection": True,
+            "examples": COMMAND_EXAMPLES.get('run', [
+                'run my_script.py',
+                'run ~/debug_script.py',
+            ]),
         })
         commands.append({
             "name": "run_batch",
@@ -565,6 +585,10 @@ class CommanderBackend:
                 "  where\n"
             ),
             "requires_connection": True,
+            "examples": COMMAND_EXAMPLES.get('run_batch', [
+                'run_batch commands.txt',
+                'run_batch ~/debug_sequence.txt',
+            ]),
         })
 
         # 重新排序

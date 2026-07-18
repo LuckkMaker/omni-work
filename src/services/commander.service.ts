@@ -17,6 +17,7 @@ export interface CommandInfo {
   help: string
   extra_help: string
   requires_connection: boolean
+  examples: string[]
 }
 
 /** 执行一条 Commander 命令 */
