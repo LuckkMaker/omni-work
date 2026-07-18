@@ -49,6 +49,8 @@ export default function CommanderPage() {
     } else {
       terminalApiRef.current.runCommand(cmd)
     }
+    // 焦点回到终端，方便用户按回车或继续输入
+    terminalApiRef.current.focus()
   }, [])
 
   /** 清屏 */

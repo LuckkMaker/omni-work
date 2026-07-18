@@ -78,6 +78,7 @@ interface ExampleGroup {
 
 /** 从 extra_help 中提取示例分组
  * 识别 "Examples:" 和 "Example ... content:" 等段落标题
+ * 保留原始缩进（对 Python 脚本至关重要）
  */
 function extractExampleGroups(extraHelp: string): ExampleGroup[] {
   if (!extraHelp) return []
@@ -93,7 +94,6 @@ function extractExampleGroups(extraHelp: string): ExampleGroup[] {
       if (currentGroup && currentGroup.lines.length > 0) {
         groups.push(currentGroup)
       }
-      // 提取标题文本（去掉末尾冒号）
       const title = trimmed.replace(/:$/, '')
       currentGroup = { title, lines: [] }
       continue
@@ -108,21 +108,41 @@ function extractExampleGroups(extraHelp: string): ExampleGroup[] {
         }
         continue
       }
-      // 遇到非代码行（全大写字母开头的描述文本）则结束当前分组
-      if (/^[A-Z][a-z]/.test(trimmed) && !trimmed.startsWith('$') && !trimmed.startsWith('!') && !trimmed.startsWith('>') && !trimmed.startsWith('#') && !trimmed.startsWith('  ')) {
+      // 遇到非代码行（大写字母开头的描述文本）则结束当前分组
+      if (/^[A-Z][a-z]/.test(trimmed) && !trimmed.startsWith('$') && !trimmed.startsWith('!') && !trimmed.startsWith('>') && !trimmed.startsWith('#')) {
         if (currentGroup.lines.length > 0) {
           groups.push(currentGroup)
           currentGroup = null
         }
         continue
       }
-      currentGroup.lines.push(trimmed)
+      // 保留原始缩进（replaceEnd only，不去掉行首空格）
+      currentGroup.lines.push(line.replace(/\s+$/, ''))
     }
   }
 
-  // 收集最后一个分组
   if (currentGroup && currentGroup.lines.length > 0) {
     groups.push(currentGroup)
+  }
+
+  // 去除每个分组开头和结尾的空行，并计算公共缩进进行统一去除
+  for (const g of groups) {
+    // 去除开头空行
+    while (g.lines.length > 0 && g.lines[0].trim() === '') {
+      g.lines.shift()
+    }
+    // 去除结尾空行
+    while (g.lines.length > 0 && g.lines[g.lines.length - 1].trim() === '') {
+      g.lines.pop()
+    }
+    // 计算最小公共缩进（用于去掉 extra_help 中统一的前缀空格）
+    const nonEmpty = g.lines.filter((l) => l.trim() !== '')
+    if (nonEmpty.length > 0) {
+      const minIndent = Math.min(...nonEmpty.map((l) => l.match(/^ */)![0].length))
+      if (minIndent > 0) {
+        g.lines = g.lines.map((l) => l.slice(minIndent))
+      }
+    }
   }
 
   return groups
@@ -429,7 +449,7 @@ export function CommandSidebar({
       <Dialog open={!!exampleCmd} onOpenChange={(open) => !open && setExampleCmd(null)}>
         <DialogContent className="max-w-lg max-h-[80vh] overflow-y-auto">
           <DialogHeader>
-            <DialogTitle className="flex flex-col gap-1">
+            <DialogTitle className="flex flex-col gap-1 leading-normal">
               <div className="flex items-center gap-2">
                 <code className="font-mono text-primary text-base break-all">
                   {exampleCmd?.name}

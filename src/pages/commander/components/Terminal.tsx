@@ -16,6 +16,8 @@ export interface TerminalApi {
   clear: () => void
   /** 清空命令历史 */
   clearHistory: () => void
+  /** 聚焦终端（接收键盘输入） */
+  focus: () => void
 }
 
 interface TerminalProps {
@@ -358,6 +360,7 @@ export function Terminal({ uid, connected, commands, apiRef }: TerminalProps) {
         saveHistory([])
         useCommanderStore.setState({ history: [] })
       },
+      focus: () => termRef.current?.focus(),
     }
     return () => {
       apiRef.current = null
