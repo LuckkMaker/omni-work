@@ -49,9 +49,20 @@ COMMAND_EXAMPLES = {
     ],
     'fill': [
         'fill 0x20000000 0x100 0x00',
+        'fill 32 0x20000000 0x100 0xDEADBEEF',
     ],
-    'wmem': [
-        'wmem 0x20000000 0x12345678 0xDEADBEEF',
+    'disasm': [
+        'disasm 0x08000000 32',
+        'disasm -c 16 0x08000000',
+    ],
+
+    # ── Flash 命令 ──────────────────────────
+    'erase': [
+        'erase',
+        'erase 0x08000000 4',
+    ],
+    'unlock': [
+        'unlock',
     ],
 
     # ── Register 命令 ──────────────────────────
@@ -59,7 +70,7 @@ COMMAND_EXAMPLES = {
         'reg',
         'reg r0',
         'reg r0 r1 r2',
-        'reg -f',
+        'reg -f r0',
     ],
     'wreg': [
         'wreg r0 0x20000000',
@@ -80,8 +91,7 @@ COMMAND_EXAMPLES = {
     ],
     'reset': [
         'reset',
-        'reset -halt',
-        'reset -run',
+        'reset -h',
     ],
     'status': [
         'status',
@@ -94,41 +104,15 @@ COMMAND_EXAMPLES = {
     'break': [
         'break 0x08000100',
         'break main',
-        'break -h 0x08000100',
-    ],
-    'rbreak': [
-        'rbreak main',
-    ],
-    'tbreak': [
-        'tbreak 0x08000100',
     ],
     'watch': [
-        'watch read 0x20000000',
-        'watch write 0x20000000',
-        'watch read 0x20000000 4',
-    ],
-    'rwp': [
-        'rwp 0',
-        'rwp all',
-    ],
-
-    # ── Flash 命令 ──────────────────────────
-    'erase': [
-        'erase',
-        'erase 0x08000000 0x08004000',
-        'erase sector 0 3',
-    ],
-    'unlock': [
-        'unlock',
+        'watch 0x20000000',
+        'watch 0x20000000 rw',
+        'watch 0x20000000 w 4',
     ],
 
     # ── Disassembly / Symbol 命令 ──────────────────────────
-    'disasm': [
-        'disasm 0x08000000 32',
-        'disasm -c 16 0x08000000',
-    ],
     'symbol': [
-        'symbol',
         'symbol main',
     ],
 
@@ -160,12 +144,6 @@ COMMAND_EXAMPLES = {
     'help': [
         'help',
         'help read32',
-    ],
-
-    # ── Monitor 命令 ──────────────────────────
-    'monitor': [
-        'monitor reset',
-        'monitor halt',
     ],
 
     # ── Exit ──────────────────────────

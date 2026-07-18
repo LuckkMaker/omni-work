@@ -35,6 +35,7 @@ from ..probe.tcp_probe_server import DebugProbeServer
 from ..core.target import Target
 from ..flash.loader import FlashLoader
 from ..flash.eraser import FlashEraser
+from ..core.memory_map import MemoryType
 from ..flash.file_programmer import FileProgrammer
 from ..gdbserver.gdbserver import GDBServer
 from ..utility import conversion
@@ -929,10 +930,20 @@ class EraseCommand(CommandBase):
         if self.erase_chip:
             eraser = FlashEraser(self.context.session, FlashEraser.Mode.CHIP)
             eraser.erase()
-            self.context.writei("Erased chip (%d bytes)", 0)
+            # 统计所有 flash 区域总大小
+            pname = self.context.session.target.selected_core.node_name
+            total_bytes = sum(
+                r.length
+                for r in self.context.session.target.memory_map.iter_matching_regions(
+                    type=MemoryType.FLASH, pname=pname
+                )
+            )
+            self.context.writei("Erased chip (%d bytes)", total_bytes)
         else:
             eraser = FlashEraser(self.context.session, FlashEraser.Mode.SECTOR)
-            while self.count:
+            total_erased = 0
+            remaining = self.count
+            while remaining:
                 # Look up the flash region so we can get the page size.
                 region = self.context.session.target.memory_map.get_region_for_address(self.addr)
                 if not region:
@@ -944,11 +955,12 @@ class EraseCommand(CommandBase):
 
                 # Erase this page.
                 eraser.erase([self.addr])
+                total_erased += region.blocksize
 
                 # Next page.
-                self.count -= 1
+                remaining -= 1
                 self.addr += region.blocksize
-            self.context.writei("Erased sectors")
+            self.context.writei("Erased %d sector(s) (%d bytes)", self.count - remaining, total_erased)
 
 class UnlockCommand(CommandBase):
     INFO = {
