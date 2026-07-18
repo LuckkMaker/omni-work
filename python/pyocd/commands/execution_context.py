@@ -266,8 +266,7 @@ class CommandExecutionContext:
 
     @property
     def session(self) -> Session:
-        assert self._session
-        return self._session
+        return self._session  # type: ignore[return-value]
 
     @property
     def board(self) -> Board:

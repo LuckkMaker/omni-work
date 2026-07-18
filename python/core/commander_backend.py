@@ -8,6 +8,8 @@
 """
 
 import io
+import sys
+import contextlib
 import threading
 import logging
 from typing import Optional
@@ -16,6 +18,10 @@ from core.pyocd_backend import backend
 from core.events import event_manager
 
 logger = logging.getLogger(__name__)
+
+# 不需要连接探针即可执行的命令
+# list: 列出已连接探针; help: 显示帮助; exit/quit: 退出; !: shell 命令
+OFFLINE_COMMANDS = {'list', 'help', 'exit', 'quit', '!'}
 
 
 class CommanderBackend:
@@ -186,6 +192,21 @@ class CommanderBackend:
         """清理探针的命令上下文"""
         self._contexts.pop(uid, None)
 
+    def _get_or_create_offline_context(self):
+        """创建无 session 的临时上下文（用于 list/help/! 等离线命令）
+
+        Returns:
+            (context, output_buf, lock) 或 None
+        """
+        from pyocd.commands.execution_context import CommandExecutionContext
+
+        output_buf = io.StringIO()
+        ctx = CommandExecutionContext(output_stream=output_buf)
+        ctx.command_set.add_command_group('commander')
+
+        lock = threading.Lock()
+        return ctx, output_buf, lock
+
     def execute(self, uid: str, command: str) -> dict:
         """执行一条 Commander 命令
 
@@ -201,18 +222,32 @@ class CommanderBackend:
             return {"success": False, "output": "", "error": "Empty command", "command": command}
 
         # 拦截 'run <filepath>' 命令：导入并执行 Python 脚本
-        # pyOCD 的 $ 前缀仅支持 eval()（单行表达式），run 命令用 exec() 支持多行脚本
         if command.startswith('run ') or command == 'run':
             return self._execute_script(uid, command[4:].strip() if len(command) > 4 else '')
 
+        # 判断命令是否需要连接探针
+        # ! 和 $ 前缀命令：! 是 shell 命令（离线可用），$ 是 Python 表达式（需要连接）
+        # list/help/exit/quit 是离线命令
+        is_offline_cmd = (
+            command.startswith('!')
+            or command.split()[0].lower() in OFFLINE_COMMANDS if command.split() else False
+        )
+
+        # 尝试获取已连接的上下文
         result = self._get_or_create_context(uid)
-        if result is None:
+
+        # 探针未连接且命令需要连接
+        if result is None and not is_offline_cmd:
             return {
                 "success": False,
                 "output": "",
-                "error": "Probe not connected",
+                "error": "Probe not connected. Use 'list' to see available probes, or connect a probe first.",
                 "command": command,
             }
+
+        # 探针未连接但命令可离线执行
+        if result is None:
+            result = self._get_or_create_offline_context()
 
         ctx, buf, lock = result
 
@@ -222,7 +257,10 @@ class CommanderBackend:
             buf.truncate(0)
 
             try:
-                ctx.process_command_line(command)
+                # 重定向 stdout 到 StringIO，捕获 print() 输出
+                # （list 等命令用 print() 而非 ctx.write）
+                with contextlib.redirect_stdout(buf):
+                    ctx.process_command_line(command)
                 output = buf.getvalue()
                 return {
                     "success": True,
@@ -234,9 +272,11 @@ class CommanderBackend:
                 # 捕获输出（命令可能已部分输出后报错）
                 output = buf.getvalue()
                 error_msg = str(e)
+                exc_type = type(e).__name__
 
                 # exit/quit 命令会抛 ToolExitException，转为友好提示
-                if 'ToolExit' in type(e).__name__ or 'exit' in error_msg.lower():
+                # 只匹配异常类型名，避免误匹配 error_msg 中包含 "exit" 的普通错误
+                if 'ToolExit' in exc_type:
                     return {
                         "success": True,
                         "output": output + "Use close button to exit Commander.\n",
@@ -244,7 +284,11 @@ class CommanderBackend:
                         "command": command,
                     }
 
-                logger.warning(f"Command '{command}' failed: {e}")
+                # 如果错误消息为空，用异常类型名替代
+                if not error_msg:
+                    error_msg = f"{exc_type}"
+
+                logger.warning(f"Command '{command}' failed: {exc_type}: {error_msg}")
                 return {
                     "success": False,
                     "output": output,
@@ -297,6 +341,7 @@ class CommanderBackend:
                 "usage": info.get('usage', ''),
                 "help": info.get('help', ''),
                 "extra_help": info.get('extra_help', ''),
+                "requires_connection": primary_name not in OFFLINE_COMMANDS,
             })
 
         # 按 category 再按 name 排序
@@ -317,6 +362,7 @@ class CommanderBackend:
                 "  $ hex(target.regs['r0'])\n"
                 "  $ [r.name for r in target.cores]\n"
             ),
+            "requires_connection": True,
         })
         commands.append({
             "name": "!",
@@ -331,6 +377,7 @@ class CommanderBackend:
                 "  ! ls -la\n"
                 "  ! echo hello\n"
             ),
+            "requires_connection": False,
         })
         commands.append({
             "name": "run",
@@ -354,6 +401,7 @@ class CommanderBackend:
                 "  for addr in range(0x20000000, 0x20000020, 4):\n"
                 "      print(f'0x{addr:08X}: 0x{target.read32(addr):08X}')\n"
             ),
+            "requires_connection": True,
         })
 
         # 重新排序

@@ -573,10 +573,26 @@ export function Terminal({ uid, connected, commands, apiRef }: TerminalProps) {
             break
           }
           case '\x1b[A': {
-            // Arrow Up：历史上一条
-            // 注意：转义序列是多字符，这里 data[i] 只取了第一个字符
-            // 需要检查后续字符
-            if (data.slice(i, i + 3) === '\x1b[A') {
+            // Arrow Up：历史上一条（不会匹配，ch 是单字符 \x1b，在 case '\x1b' 中处理）
+            break
+          }
+          case '\x1b[B': {
+            // Arrow Down（不会匹配，在 case '\x1b' 中处理）
+            break
+          }
+          case '\x1b[C': {
+            // Arrow Right（不会匹配，在 case '\x1b' 中处理）
+            break
+          }
+          case '\x1b[D': {
+            // Arrow Left（不会匹配，在 case '\x1b' 中处理）
+            break
+          }
+          case '\x1b': {
+            // 转义序列处理（Arrow Up/Down/Left/Right/Home/End/Delete/PageUp/PageDown）
+            const seq = data.slice(i)
+            if (seq.startsWith('\x1b[A')) {
+              // Arrow Up：历史上一条
               i += 2
               const cmd = getHistory(historyIndex.current + 1)
               if (cmd !== undefined) {
@@ -588,12 +604,8 @@ export function Terminal({ uid, connected, commands, apiRef }: TerminalProps) {
                 cursorPos.current = cmd.length
                 redrawInputLine()
               }
-            }
-            break
-          }
-          case '\x1b[B': {
-            // Arrow Down
-            if (data.slice(i, i + 3) === '\x1b[B') {
+            } else if (seq.startsWith('\x1b[B')) {
+              // Arrow Down：历史下一条
               i += 2
               if (historyIndex.current > 0) {
                 historyIndex.current--
@@ -608,35 +620,21 @@ export function Terminal({ uid, connected, commands, apiRef }: TerminalProps) {
                 cursorPos.current = savedInput.current.length
               }
               redrawInputLine()
-            }
-            break
-          }
-          case '\x1b[C': {
-            // Arrow Right
-            if (data.slice(i, i + 3) === '\x1b[C') {
+            } else if (seq.startsWith('\x1b[C')) {
+              // Arrow Right
               i += 2
               if (cursorPos.current < inputBuf.current.length) {
                 cursorPos.current++
                 t.write('\x1b[C')
               }
-            }
-            break
-          }
-          case '\x1b[D': {
-            // Arrow Left
-            if (data.slice(i, i + 3) === '\x1b[D') {
+            } else if (seq.startsWith('\x1b[D')) {
+              // Arrow Left
               i += 2
               if (cursorPos.current > 0) {
                 cursorPos.current--
                 t.write('\x1b[D')
               }
-            }
-            break
-          }
-          case '\x1b': {
-            // 可能是 Home/End/Delete/PageUp/PageDown
-            const seq = data.slice(i)
-            if (seq.startsWith('\x1b[H') || seq.startsWith('\x1b[1~')) {
+            } else if (seq.startsWith('\x1b[H') || seq.startsWith('\x1b[1~')) {
               // Home
               i += seq.startsWith('\x1b[H') ? 2 : 3
               cursorPos.current = 0
