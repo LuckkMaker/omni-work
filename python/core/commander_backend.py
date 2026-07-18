@@ -365,6 +365,14 @@ class CommanderBackend:
 
         ctx, buf, lock = result
 
+        # erase 命令直接复用 pyocd erase --chip 的 CLI 实现路径
+        # （FlashEraser + 完整前置步骤），不走 REPL EraseCommand。
+        # 原因：REPL EraseCommand 缺少 reset_and_halt + 次级核处理，
+        # 若目标正在运行用户代码会导致 flash algorithm HardFault (IPSR=3)。
+        cmd_first_word = command.split()[0].lower() if command.split() else ''
+        if cmd_first_word == 'erase':
+            return self._handle_erase_command(ctx, buf, lock, command)
+
         with lock:
             # 清空输出缓冲
             buf.seek(0)
@@ -409,6 +417,109 @@ class CommanderBackend:
                     "error": error_msg,
                     "command": command,
                 }
+
+    def _handle_erase_command(self, ctx, buf, lock, command: str) -> dict:
+        """完全复用 pyocd erase CLI 的实现路径处理 erase 命令。
+
+        对应 pyocd subcommands/erase_cmd.py 中的 invoke() 流程：
+        1. 次级核 set_reset_catch
+        2. 主核 reset_and_halt
+        3. 次级核 clear_reset_catch
+        4. FlashEraser 执行擦除
+
+        不走 REPL 的 EraseCommand（缺少 reset_and_halt 前置步骤）。
+        """
+        from pyocd.flash.eraser import FlashEraser
+        from pyocd.core.memory_map import MemoryType
+
+        parts = command.split()
+        # 解析参数：erase [ADDR] [COUNT]
+        if len(parts) == 1:
+            # erase → chip erase
+            erase_mode = FlashEraser.Mode.CHIP
+        elif len(parts) >= 2:
+            erase_mode = FlashEraser.Mode.SECTOR
+            try:
+                addr = int(parts[1], 0)
+            except ValueError:
+                return {
+                    "success": False, "output": "",
+                    "error": f"Invalid address: {parts[1]}",
+                    "command": command,
+                }
+            if len(parts) >= 3:
+                try:
+                    count = int(parts[2], 0)
+                except ValueError:
+                    return {
+                        "success": False, "output": "",
+                        "error": f"Invalid count: {parts[2]}",
+                        "command": command,
+                    }
+            else:
+                count = 1
+
+        with lock:
+            session = ctx.session
+            if session is None:
+                return {
+                    "success": False, "output": "",
+                    "error": "Probe not connected",
+                    "command": command,
+                }
+
+            # ── 与 pyocd erase CLI 完全一致的擦除前置流程 ──
+            secondary_cores = [
+                c for c in session.target.cores.values()
+                if c != session.target.primary_core
+            ]
+            try:
+                for core in secondary_cores:
+                    core.set_reset_catch()
+                session.target.reset_and_halt()
+            finally:
+                for core in secondary_cores:
+                    core.clear_reset_catch()
+
+            # ── FlashEraser 执行擦除（与 CLI 模式一致） ──
+            eraser = FlashEraser(session, erase_mode)
+
+            if erase_mode == FlashEraser.Mode.CHIP:
+                eraser.erase()
+                # 统计所有 flash 区域总大小（复用 REPL EraseCommand 的输出格式）
+                pname = session.target.selected_core.node_name
+                total_bytes = sum(
+                    r.length
+                    for r in session.target.memory_map.iter_matching_regions(
+                        type=MemoryType.FLASH, pname=pname
+                    )
+                )
+                output = f"Erased chip ({total_bytes} bytes)\n"
+            else:
+                # 扇区擦除：逐扇区处理
+                remaining = count
+                total_erased = 0
+                cur_addr = addr
+                while remaining:
+                    region = session.target.memory_map.get_region_for_address(cur_addr)
+                    if not region:
+                        output = f"address 0x{cur_addr:08x} is not within a memory region\n"
+                        break
+                    if not region.is_flash:
+                        output = f"address 0x{cur_addr:08x} is not in flash\n"
+                        break
+                    eraser.erase([cur_addr])
+                    total_erased += region.blocksize
+                    remaining -= 1
+                    cur_addr += region.blocksize
+                output = f"Erased {count - remaining} sector(s) ({total_erased} bytes)\n"
+
+            return {
+                "success": True,
+                "output": output,
+                "error": None,
+                "command": command,
+            }
 
     def get_commands(self, uid: Optional[str] = None) -> list[dict]:
         """获取所有可用命令及帮助信息

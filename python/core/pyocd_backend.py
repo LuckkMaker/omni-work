@@ -232,14 +232,26 @@ class PyOCDBackend(BackendInterface):
             session_info = self._sessions.pop(probe_uid, None)
 
         if session_info and session_info.session:
-            try:
-                session_info.session.close()
-                event_manager.log("info", f"Disconnected from {probe_uid[:16]}")
-            except Exception as e:
-                event_manager.log("warning", f"Disconnect error: {e}")
+            # 先通知前端探针已断开，UI 立即更新
+            event_manager.emit("probe.disconnected", {"uid": probe_uid, "reason": "user"})
 
-        event_manager.emit("probe.disconnected", {"uid": probe_uid, "reason": "user"})
+            # session.close() 耗时取决于底层 USB 通信，可能数秒。
+            # 放入后台线程执行以避免阻塞前端。
+            import threading
+            session = session_info.session
+            t = threading.Thread(target=self._close_session, args=(session,), daemon=True)
+            t.start()
+
         return True
+
+    def _close_session(self, session):
+        """后台关闭 pyOCD session，避免 blocking 前端"""
+        try:
+            # 设置 resume_on_disconnect=False 避免 target.resume() 耗时操作
+            session.options.set('resume_on_disconnect', False)
+            session.close()
+        except Exception:
+            pass  # 后台清理，忽略超时等异常
 
     def get_state(self, probe_uid: str) -> ProbeState:
         """获取探针连接状态"""
@@ -506,6 +518,13 @@ class PyOCDBackend(BackendInterface):
         try:
             from pyocd.flash.flash import Flash
 
+            # 擦除前复位并暂停目标，确保目标处于已知状态。
+            # 目标可能正在运行用户代码，Flash 控制器状态未知，直接擦除
+            # 会导致 flash algorithm 在目标上 HardFault（IPSR=3）。
+            # 这与 pyocd erase CLI (subcommands/erase_cmd.py) 和
+            # program() 方法的 pre_reset 行为一致。
+            session.target.reset_and_halt()
+
             region = session.target.memory_map.get_boot_memory()
             if not region:
                 return FlashResult(success=False, error="No flash memory found")
@@ -546,10 +565,11 @@ class PyOCDBackend(BackendInterface):
                 end_addr = address + size
                 event_manager.log("info", f"Erasing sectors 0x{address:08X}~0x{end_addr:08X}...")
 
+                # 按 region 分组擦除，避免每扇区 init/uninit
+                # 先找出需要擦除的地址范围，按 region 分组
+                region_sectors: dict[int, list[int]] = {}
                 cur = address
-                erased = 0
                 while cur < end_addr:
-                    # 找到 cur 所在的 flash region
                     region = None
                     for r in flash_regions:
                         if r.start <= cur < r.start + r.length:
@@ -561,23 +581,44 @@ class PyOCDBackend(BackendInterface):
                         continue
 
                     sector_size = region.sector_size
-                    # 对齐到 sector 边界
                     sector_aligned = region.start + ((cur - region.start) // sector_size) * sector_size
+                    # 只擦除范围内的扇区（sector_aligned 可能越界）
+                    if sector_aligned >= end_addr:
+                        break
+                    region_key = id(region)
+                    if region_key not in region_sectors:
+                        region_sectors[region_key] = []
+                    region_sectors[region_key].append(sector_aligned)
+                    cur = sector_aligned + sector_size
+
+                total_sectors = sum(len(v) for v in region_sectors.values())
+                erased = 0
+
+                for region_key, sector_addrs in region_sectors.items():
+                    # 找到对应的 region 对象
+                    region = None
+                    for r in flash_regions:
+                        if id(r) == region_key:
+                            region = r
+                            break
+                    if not region:
+                        continue
 
                     flash = region.flash
                     flash.init(Flash.Operation.ERASE)
                     try:
-                        flash.erase_sector(sector_aligned)
-                        erased += 1
-                        event_manager.emit("flash.progress", {
-                            "phase": "erase", "current": erased, "total": 0,
-                            "percent": round((sector_aligned + sector_size - address) / size * 100, 2) if size > 0 else 100,
-                        })
+                        for addr in sector_addrs:
+                            flash.erase_sector(addr)
+                            erased += 1
+                            event_manager.emit("flash.progress", {
+                                "phase": "erase", "current": erased, "total": total_sectors,
+                                "percent": round(erased / total_sectors * 100, 2) if total_sectors > 0 else 100,
+                            })
                     finally:
                         flash.uninit()
-                    cur = sector_aligned + sector_size
+
                 event_manager.emit("flash.progress", {
-                    "phase": "erase", "current": 1, "total": 1, "percent": 100,
+                    "phase": "erase", "current": total_sectors, "total": total_sectors, "percent": 100,
                 })
             else:
                 event_manager.log("info", f"Erasing sector at 0x{address:08X}...")
@@ -689,9 +730,10 @@ class PyOCDBackend(BackendInterface):
                     "percent": progress_pct,
                 })
 
-            # 使用 chip_erase="chip" 强制全片擦除
+            # 使用 chip_erase="sector" 仅擦除需要编程的扇区
             # 原因：chip_erase="auto" 在已擦除的 Flash 上会跳过擦除，导致编程静默失败
-            programmer = FileProgrammer(session, progress=progress_callback, chip_erase="chip")
+            # chip_erase="chip" 全片擦除太慢（1MB Flash 约 10-15s），改为按需擦除
+            programmer = FileProgrammer(session, progress=progress_callback, chip_erase="sector")
 
             # 注意：FileProgrammer.program() 不支持 verify 参数（pyOCD 0.44 的 FlashLoader.commit 中 verify 为 TODO）
             # 烧录后如需校验，调用独立的 verify() 方法

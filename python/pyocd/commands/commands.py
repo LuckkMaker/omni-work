@@ -1085,8 +1085,9 @@ class StepCommand(CommandBase):
                             pass
                         src_tag = f"  {fname}:{line_info.line}  {code}" if code else f"  {fname}:{line_info.line}"
                 # 同行输出：反汇编 + 源码
+                # args 固定宽度使源码注释始终对齐
                 self.context.writef(
-                    "{addr:#010x}:* {bytes:<10}{mnemonic:<8}{args}{src}",
+                    "{addr:#010x}:* {bytes:<10}{mnemonic:<8}{args:<22}{src}",
                     addr=addr, bytes=hex_bytes, mnemonic=mnemonic,
                     args=op_str, src=src_tag)
             else:
