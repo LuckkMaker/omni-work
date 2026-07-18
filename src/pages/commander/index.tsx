@@ -1,7 +1,5 @@
-import { useEffect, useRef, useCallback } from 'react'
-import { Eraser, Loader2, Circle, Power } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Separator } from '@/components/ui/separator'
+import { useEffect, useRef, useCallback, useState } from 'react'
+import { Loader2 } from 'lucide-react'
 import { Terminal, type TerminalApi } from './components/Terminal'
 import { CommandSidebar } from './components/CommandSidebar'
 import { useProbeStore } from '@/stores/probe.store'
@@ -12,20 +10,22 @@ import { cn } from '@/lib/utils'
 export default function CommanderPage() {
   const terminalApiRef = useRef<TerminalApi | null>(null)
 
+  // 侧边栏折叠状态
+  const [collapsed, setCollapsed] = useState(false)
+
   const selectedProbe = useProbeStore((s) => {
     const uid = s.selectedUid
     return uid ? s.probes.find((p) => p.uid === uid) ?? null : null
   })
   const isConnected = selectedProbe?.state === 'connected'
   const uid = selectedProbe?.uid ?? null
-  const targetName = selectedProbe?.target?.part_number
 
   const commands = useCommanderStore((s) => s.commands)
   const commandsLoaded = useCommanderStore((s) => s.commandsLoaded)
   const fetchCommands = useCommanderStore((s) => s.fetchCommands)
   const runningCommand = useCommanderStore((s) => s.runningCommand)
 
-  // 挂载时拉取全量命令列表（不依赖探针连接），连接后再拉取含 target 专属命令的完整列表
+  // 挂载时拉取全量命令列表
   useEffect(() => {
     if (isConnected && uid) {
       void fetchCommands(uid)
@@ -34,21 +34,19 @@ export default function CommanderPage() {
     }
   }, [isConnected, uid, commandsLoaded, fetchCommands])
 
-  // 断开时重置 commandsLoaded，以便重连后重新拉取
+  // 断开时重置 commandsLoaded
   useEffect(() => {
     if (!isConnected) {
       useCommanderStore.setState({ commandsLoaded: false })
     }
   }, [isConnected])
 
-  /** 侧边栏命令点击处理：有尾随空格 = 需要参数 → 插入；否则立即执行 */
+  /** 侧边栏命令点击处理 */
   const handleSidebarCommand = useCallback((cmd: string) => {
     if (!terminalApiRef.current) return
     if (cmd.endsWith(' ')) {
-      // 需要参数，插入到输入行等用户补全
       terminalApiRef.current.insertText(cmd)
     } else {
-      // 无参数命令，立即执行
       terminalApiRef.current.runCommand(cmd)
     }
   }, [])
@@ -58,7 +56,7 @@ export default function CommanderPage() {
     terminalApiRef.current?.clear()
   }, [])
 
-  /** 重置命令上下文（目标切换后） */
+  /** 重置命令上下文 */
   const handleResetContext = useCallback(async () => {
     if (!uid) return
     try {
@@ -70,73 +68,68 @@ export default function CommanderPage() {
     }
   }, [uid, fetchCommands])
 
+  /** 折叠/展开时触发 resize，让 xterm.js FitAddon 重新计算尺寸 */
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      window.dispatchEvent(new Event('resize'))
+    }, 50)
+    return () => clearTimeout(timer)
+  }, [collapsed])
+
   return (
-    <div className="flex h-full flex-col">
-      {/* 顶部工具栏 */}
-      <div className="flex items-center gap-2 border-b border-border px-3 py-1.5 shrink-0">
-        {/* 连接状态指示 */}
-        <div className="flex items-center gap-1.5">
-          <Circle
-            className={cn(
-              'size-2.5 fill-current',
-              isConnected ? 'text-green-500' : 'text-muted-foreground/40'
-            )}
-          />
-          <span className="text-xs font-medium">
-            {isConnected ? (targetName ?? 'Connected') : 'Not connected'}
-          </span>
-        </div>
+    <div className="flex h-full min-h-0">
+      {/* 终端区 */}
+      <div className="relative min-w-0 flex-1 bg-[#0f172a]">
+        <Terminal
+          uid={uid}
+          connected={isConnected}
+          commands={commands}
+          apiRef={terminalApiRef}
+        />
 
-        <Separator orientation="vertical" className="mx-1 h-5" />
-
-        {/* 执行状态 */}
+        {/* 执行状态指示（终端右上角浮层） */}
         {runningCommand && (
-          <div className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <div className="pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-1.5 rounded-md bg-slate-800/80 px-2 py-1 text-xs text-slate-300 backdrop-blur">
             <Loader2 className="size-3 animate-spin" />
-            <span className="font-mono">{runningCommand}</span>
+            <span className="max-w-[200px] truncate font-mono">{runningCommand}</span>
           </div>
         )}
-
-        <div className="ml-auto flex items-center gap-1">
-          <Button
-            variant="ghost"
-            size="sm"
-            disabled={!isConnected}
-            onClick={handleResetContext}
-            className="h-7 gap-1.5 text-xs"
-            title="重置命令上下文（目标切换后使用）"
-          >
-            <Power className="size-3.5" />
-            重置上下文
-          </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={handleClear}
-            className="h-7 gap-1.5 text-xs"
-          >
-            <Eraser className="size-3.5" />
-            清屏
-          </Button>
-        </div>
       </div>
 
-      {/* 主体：终端 + 侧边命令面板 */}
-      <div className="flex flex-1 min-h-0">
-        {/* 终端区 */}
-        <div className="flex-1 min-w-0 bg-[#0f172a]">
-          <Terminal uid={uid} connected={isConnected} apiRef={terminalApiRef} />
-        </div>
+      {/* 折叠/展开竖条按钮（只做折叠/展开，无拖拽调整宽度） */}
+      <button
+        onClick={() => setCollapsed((v) => !v)}
+        title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        className={cn(
+          'group flex w-3 shrink-0 cursor-pointer items-center justify-center transition-colors',
+          collapsed
+            ? 'bg-primary/40 hover:bg-primary/60'
+            : 'bg-border hover:bg-primary/30'
+        )}
+      >
+        {/* 中间装饰性竖条指示器（纯视觉，提示可点击） */}
+        <div
+          className={cn(
+            'h-8 w-0.5 rounded-full transition-colors',
+            collapsed
+              ? 'bg-primary-foreground/60'
+              : 'bg-muted-foreground/30 group-hover:bg-primary'
+          )}
+        />
+      </button>
 
-        {/* 侧边命令面板 */}
-        <div className="w-60 shrink-0">
+      {/* 侧边命令面板（固定宽度 w-72，折叠时隐藏） */}
+      {!collapsed && (
+        <div className="w-72 shrink-0">
           <CommandSidebar
             onRunCommand={handleSidebarCommand}
             commands={commands}
             connected={isConnected}
+            onClear={handleClear}
+            onResetContext={handleResetContext}
           />
         </div>
-      </div>
+      )}
     </div>
   )
 }

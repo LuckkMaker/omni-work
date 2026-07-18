@@ -37,3 +37,37 @@
     -webkit-font-smoothing: antialiased;
   }
 }
+
+/* ── xterm.js 终端样式修正 ────────────── */
+/* 确保终端容器完全填充父级，消除底部间隙 */
+.xterm {
+  height: 100%;
+  padding: 0;
+}
+
+/* 终端 viewport 填满容器，消除底部滚动条缺口，滚动条贴右边框 */
+.xterm .xterm-viewport {
+  height: 100% !important;
+  padding: 0;
+}
+
+/* 终端屏幕区域确保完整渲染，文字四周留间距但不影响滚动条贴边 */
+.xterm .xterm-screen {
+  height: 100%;
+}
+
+/* 文字行四周留间距（滚动条仍贴边框） */
+.xterm .xterm-rows {
+  padding: 4px 8px;
+}
+
+/* 终端辅助文本框定位 */
+.xterm .xterm-helper-textarea {
+  position: absolute;
+  opacity: 0;
+}
+
+/* react-resizable-panels: 折叠时隐藏面板溢出内容 */
+[data-panel] {
+  overflow: hidden;
+}

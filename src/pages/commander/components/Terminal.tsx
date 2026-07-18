@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
 import { useCommanderStore } from '@/stores/commander.store'
+import type { CommandInfo } from '@/services/commander.service'
 
 /** 终端对外暴露的命令 API（供父组件通过 ref 调用） */
 export interface TerminalApi {
@@ -13,16 +14,20 @@ export interface TerminalApi {
   insertText: (text: string) => void
   /** 清屏 */
   clear: () => void
+  /** 清空命令历史 */
+  clearHistory: () => void
 }
 
 interface TerminalProps {
   uid: string | null
   connected: boolean
+  /** 可用命令列表（用于 Tab 补全） */
+  commands: CommandInfo[]
   /** 父组件创建的 ref，Terminal 会将 API 写入此 ref */
   apiRef: React.MutableRefObject<TerminalApi | null>
 }
 
-// ANSI 颜色码
+// ── ANSI 颜色码 ──────────────────────────
 const COLOR = {
   green: '\x1b[32m',
   cyan: '\x1b[36m',
@@ -31,14 +36,40 @@ const COLOR = {
   dim: '\x1b[2m',
   reset: '\x1b[0m',
   bold: '\x1b[1m',
+  reverse: '\x1b[7m',
 }
 
 const PROMPT = `${COLOR.green}pyocd${COLOR.reset}> `
 const PROMPT_VISIBLE_LEN = 7 // "pyocd> " 可见长度
 
-export function Terminal({ uid, connected, apiRef }: TerminalProps) {
+// localStorage key
+const HISTORY_KEY = 'commander:history'
+
+/** 加载持久化的命令历史 */
+function loadHistory(): string[] {
+  try {
+    const raw = localStorage.getItem(HISTORY_KEY)
+    if (!raw) return []
+    const arr = JSON.parse(raw)
+    return Array.isArray(arr) ? arr.slice(0, 200) : []
+  } catch {
+    return []
+  }
+}
+
+/** 保存命令历史到 localStorage */
+function saveHistory(history: string[]) {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(0, 200)))
+  } catch {
+    // 忽略写入失败
+  }
+}
+
+export function Terminal({ uid, connected, commands, apiRef }: TerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const termRef = useRef<XTerm | null>(null)
+  const fitRef = useRef<FitAddon | null>(null)
 
   // 输入缓冲与历史导航状态（用 ref 避免 re-render）
   const inputBuf = useRef('')
@@ -46,16 +77,58 @@ export function Terminal({ uid, connected, apiRef }: TerminalProps) {
   const historyIndex = useRef(-1) // -1 = 当前输入，0+ = 历史浏览
   const savedInput = useRef('') // 浏览历史时保存的当前输入
 
-  // uid/running 同步到 ref（供 onData 闭包访问最新值）
+  // 命令历史（本地持久化，与 store 同步）
+  const historyRef = useRef<string[]>(loadHistory())
+
+  // Ctrl+R 搜索状态
+  const searchMode = useRef(false)
+  const searchQuery = useRef('')
+  const searchResultIndex = useRef(-1) // 当前匹配的历史索引
+
+  // 字体大小
+  const fontSize = useRef(13)
+
+  // uid/running/commands 同步到 ref（供 onData 闭包访问最新值）
   const uidRef = useRef<string | null>(uid)
   uidRef.current = uid
+  const commandsRef = useRef<CommandInfo[]>(commands)
+  commandsRef.current = commands
 
   const execute = useCommanderStore((s) => s.execute)
-  const getHistory = useCommanderStore((s) => s.getHistory)
   const runningCommand = useCommanderStore((s) => s.runningCommand)
   const runningRef = useRef(runningCommand)
   runningRef.current = runningCommand
 
+  // ── 历史管理 ──────────────────────────
+  /** 添加命令到历史并持久化 */
+  const addToHistory = useCallback((cmd: string) => {
+    const trimmed = cmd.trim()
+    if (!trimmed) return
+    // 去重连续相同命令
+    if (historyRef.current[0] === trimmed) return
+    historyRef.current = [trimmed, ...historyRef.current].slice(0, 200)
+    saveHistory(historyRef.current)
+    // 同步到 store（供其他组件查询）
+    useCommanderStore.setState({ history: historyRef.current })
+  }, [])
+
+  /** 获取历史命令，index 0 = 最近一条 */
+  const getHistory = useCallback((index: number): string | undefined => {
+    if (index < 0 || index >= historyRef.current.length) return undefined
+    return historyRef.current[index]
+  }, [])
+
+  /** 在历史中反向搜索包含 query 的命令 */
+  const searchHistory = useCallback((query: string, fromIndex: number): string | undefined => {
+    for (let i = fromIndex; i < historyRef.current.length; i++) {
+      if (historyRef.current[i].toLowerCase().includes(query.toLowerCase())) {
+        return historyRef.current[i]
+      }
+    }
+    return undefined
+  }, [])
+
+  // ── 终端输出辅助 ──────────────────────
   /** 重绘当前输入行（清除当前行并重写，光标回到正确位置） */
   const redrawInputLine = useCallback(() => {
     const term = termRef.current
@@ -69,14 +142,47 @@ export function Terminal({ uid, connected, apiRef }: TerminalProps) {
     }
   }, [])
 
-  /** 执行命令并显示结果
-   * @param cmd 命令字符串
-   * @param echo 是否显示命令回显（侧边栏点击时为 true，Enter 键为 false）
-   */
+  // ── Ctrl+R 搜索渲染 ──────────────────
+  /** 重绘搜索模式行 */
+  const redrawSearchLine = useCallback(() => {
+    const term = termRef.current
+    if (!term) return
+    term.write('\r\x1b[2K')
+    const matched = searchResultIndex.current >= 0 ? historyRef.current[searchResultIndex.current] : ''
+    term.write(
+      `${COLOR.reverse}(reverse-i-search)\`${searchQuery.current}'${COLOR.reset}: ${matched}`
+    )
+  }, [])
+
+  /** 退出搜索模式，将匹配结果填入输入缓冲 */
+  const exitSearch = useCallback(
+    (useResult: boolean) => {
+      const term = termRef.current
+      if (!term) return
+      if (useResult && searchResultIndex.current >= 0) {
+        inputBuf.current = historyRef.current[searchResultIndex.current] ?? ''
+      }
+      cursorPos.current = inputBuf.current.length
+      historyIndex.current = -1
+      searchMode.current = false
+      searchQuery.current = ''
+      searchResultIndex.current = -1
+      redrawInputLine()
+    },
+    [redrawInputLine]
+  )
+
+  // ── 命令执行 ──────────────────────────
+  /** 执行命令并显示结果 */
   const runCommand = useCallback(
     async (cmd: string, echo: boolean) => {
       const term = termRef.current
       if (!term) return
+
+      // 退出搜索模式（如果有）
+      if (searchMode.current) {
+        exitSearch(true)
+      }
 
       // 清除当前输入行，换行
       if (inputBuf.current || echo) {
@@ -93,6 +199,9 @@ export function Terminal({ uid, connected, apiRef }: TerminalProps) {
         term.write(PROMPT)
         return
       }
+
+      // 记录到历史
+      addToHistory(cmd)
 
       if (!uidRef.current) {
         term.write(`${COLOR.red}Error: No probe selected${COLOR.reset}\r\n`)
@@ -115,10 +224,54 @@ export function Terminal({ uid, connected, apiRef }: TerminalProps) {
 
       term.write(PROMPT)
     },
-    [execute]
+    [execute, addToHistory, exitSearch]
   )
 
-  /** 在当前光标位置插入文本（不执行） */
+  // ── Tab 补全 ──────────────────────────
+  /** Tab 补全：补全命令名或从历史补全 */
+  const tabComplete = useCallback(() => {
+    const input = inputBuf.current
+    const parts = input.split(/\s+/)
+
+    // 如果只有一个词，补全命令名
+    if (parts.length === 1 && parts[0]) {
+      const prefix = parts[0].toLowerCase()
+      const matches = commandsRef.current
+        .filter((c) => c.name.toLowerCase().startsWith(prefix))
+        .map((c) => c.name)
+
+      if (matches.length === 1) {
+        // 唯一匹配，直接补全
+        inputBuf.current = matches[0] + ' '
+        cursorPos.current = inputBuf.current.length
+        redrawInputLine()
+      } else if (matches.length > 1) {
+        // 多个匹配，显示候选
+        const term = termRef.current
+        if (!term) return
+        term.write('\r\n')
+        term.write(matches.join('  ') + '\r\n')
+        term.write(PROMPT + inputBuf.current)
+      }
+    } else {
+      // 多词输入：从历史中找匹配当前行的命令
+      const matches = historyRef.current.filter((h) => h.startsWith(input))
+      if (matches.length === 1) {
+        inputBuf.current = matches[0]
+        cursorPos.current = inputBuf.current.length
+        redrawInputLine()
+      } else if (matches.length > 1) {
+        const term = termRef.current
+        if (!term) return
+        term.write('\r\n')
+        term.write(matches.join('  ') + '\r\n')
+        term.write(PROMPT + inputBuf.current)
+      }
+    }
+  }, [redrawInputLine])
+
+  // ── 文本操作 ──────────────────────────
+  /** 在当前光标位置插入文本 */
   const insertText = useCallback(
     (text: string) => {
       if (runningRef.current) return
@@ -132,12 +285,66 @@ export function Terminal({ uid, connected, apiRef }: TerminalProps) {
     [redrawInputLine]
   )
 
-  /** 清屏 */
+  /** 删除光标前一个单词 */
+  const deleteWordBackward = useCallback(() => {
+    if (cursorPos.current <= 0) return
+    let pos = cursorPos.current
+    // 跳过尾部空格
+    while (pos > 0 && inputBuf.current[pos - 1] === ' ') pos--
+    // 删除单词字符
+    while (pos > 0 && inputBuf.current[pos - 1] !== ' ') pos--
+    inputBuf.current = inputBuf.current.slice(0, pos) + inputBuf.current.slice(cursorPos.current)
+    cursorPos.current = pos
+    redrawInputLine()
+  }, [redrawInputLine])
+
+  /** 删除光标到行尾 */
+  const killToEnd = useCallback(() => {
+    inputBuf.current = inputBuf.current.slice(0, cursorPos.current)
+    redrawInputLine()
+  }, [redrawInputLine])
+
+  /** 删除光标到行首 */
+  const killToStart = useCallback(() => {
+    inputBuf.current = inputBuf.current.slice(cursorPos.current)
+    cursorPos.current = 0
+    redrawInputLine()
+  }, [redrawInputLine])
+
+  /** 删除光标后一个字符（Delete 键） */
+  const deleteCharForward = useCallback(() => {
+    if (cursorPos.current < inputBuf.current.length) {
+      inputBuf.current =
+        inputBuf.current.slice(0, cursorPos.current) +
+        inputBuf.current.slice(cursorPos.current + 1)
+      redrawInputLine()
+    }
+  }, [redrawInputLine])
+
+  // ── 清屏（修复 pyocd> pyocd> bug）─────
   const clearScreen = useCallback(() => {
     const term = termRef.current
     if (!term) return
+    // clear() 保留当前光标行，所以先清除当前行再写 prompt
     term.clear()
-    term.write(PROMPT + inputBuf.current)
+    term.write('\r\x1b[2K' + PROMPT + inputBuf.current)
+  }, [])
+
+  // ── 字体缩放 ──────────────────────────
+  const zoomFont = useCallback((delta: number) => {
+    const term = termRef.current
+    const fit = fitRef.current
+    if (!term || !fit) return
+    fontSize.current = Math.max(8, Math.min(24, fontSize.current + delta))
+    term.options.fontSize = fontSize.current
+    // 字体变化后重新计算尺寸
+    requestAnimationFrame(() => {
+      try {
+        fit.fit()
+      } catch {
+        // 忽略
+      }
+    })
   }, [])
 
   // 暴露 API 给父组件
@@ -146,6 +353,11 @@ export function Terminal({ uid, connected, apiRef }: TerminalProps) {
       runCommand: (cmd: string) => void runCommand(cmd, true),
       insertText,
       clear: clearScreen,
+      clearHistory: () => {
+        historyRef.current = []
+        saveHistory([])
+        useCommanderStore.setState({ history: [] })
+      },
     }
     return () => {
       apiRef.current = null
@@ -158,10 +370,11 @@ export function Terminal({ uid, connected, apiRef }: TerminalProps) {
 
     const term = new XTerm({
       cursorBlink: true,
-      fontSize: 13,
+      fontSize: fontSize.current,
       fontFamily: '"Cascadia Code", "Fira Code", "Consolas", monospace',
       convertEol: true,
       scrollback: 10000,
+      allowProposedApi: true,
       theme: {
         background: '#0f172a',
         foreground: '#e2e8f0',
@@ -192,13 +405,16 @@ export function Terminal({ uid, connected, apiRef }: TerminalProps) {
     term.open(containerRef.current)
 
     termRef.current = term
+    fitRef.current = fit
 
     // 欢迎信息
     term.write(`${COLOR.bold}${COLOR.cyan}DAPLink Work Commander${COLOR.reset}\r\n`)
-    term.write(`${COLOR.dim}Type 'help' for command list, Ctrl+L to clear${COLOR.reset}\r\n`)
+    term.write(
+      `${COLOR.dim}Type 'help' for commands, Tab to complete, Ctrl+R to search history${COLOR.reset}\r\n`
+    )
     term.write(PROMPT)
 
-    // 延迟 fit：等待 flex 布局计算完成，避免列数过少导致换行
+    // 延迟 fit：等待 flex 布局计算完成
     const fitNow = () => {
       try {
         fit.fit()
@@ -208,20 +424,80 @@ export function Terminal({ uid, connected, apiRef }: TerminalProps) {
     }
     requestAnimationFrame(() => {
       fitNow()
-      // 二次 fit：某些场景下首帧后容器才获得最终尺寸
       setTimeout(fitNow, 100)
     })
 
-    // 输入处理
+    // ── 输入处理 ──────────────────────────
     term.onData((data) => {
       if (runningRef.current) return
       const t = termRef.current
       if (!t) return
 
-      for (const ch of data) {
+      // 处理多字符转义序列和单字符
+      for (let i = 0; i < data.length; i++) {
+        const ch = data[i]
+
+        // ── Ctrl+R 搜索模式 ──
+        if (searchMode.current) {
+          if (ch === '\r') {
+            // Enter：使用匹配结果
+            exitSearch(true)
+            // 执行命令
+            void runCommand(inputBuf.current, false)
+            continue
+          }
+          if (ch === '\x1b' || ch === '\x03') {
+            // Esc / Ctrl+C：退出搜索，不使用结果
+            exitSearch(false)
+            if (ch === '\x03') {
+              t.write('^C\r\n')
+              inputBuf.current = ''
+              cursorPos.current = 0
+              t.write(PROMPT)
+            }
+            continue
+          }
+          if (ch === '\x08' || ch === '\x7f') {
+            // Backspace：删除搜索字符
+            if (searchQuery.current.length > 0) {
+              searchQuery.current = searchQuery.current.slice(0, -1)
+              searchResultIndex.current = searchQuery.current
+                ? historyRef.current.findIndex((h) =>
+                    h.toLowerCase().includes(searchQuery.current.toLowerCase())
+                  )
+                : -1
+              redrawSearchLine()
+            }
+            continue
+          }
+          if (ch === '\x12') {
+            // Ctrl+R again：继续搜索下一个匹配
+            if (searchResultIndex.current >= 0) {
+              const next = searchHistory(searchQuery.current, searchResultIndex.current + 1)
+              if (next !== undefined) {
+                searchResultIndex.current = historyRef.current.indexOf(next)
+                redrawSearchLine()
+              }
+            }
+            continue
+          }
+          // 可打印字符加入搜索
+          if (ch >= ' ' || ch === '\t') {
+            searchQuery.current += ch
+            const idx = historyRef.current.findIndex((h) =>
+              h.toLowerCase().includes(searchQuery.current.toLowerCase())
+            )
+            searchResultIndex.current = idx
+            redrawSearchLine()
+            continue
+          }
+          continue
+        }
+
+        // ── 正常模式 ──
         switch (ch) {
           case '\r': {
-            // Enter：执行命令（echo=false，用户已自行输入）
+            // Enter：执行命令
             const cmd = inputBuf.current
             void runCommand(cmd, false)
             break
@@ -237,50 +513,106 @@ export function Terminal({ uid, connected, apiRef }: TerminalProps) {
             }
             break
           }
+          case '\t': {
+            // Tab：补全
+            tabComplete()
+            break
+          }
+          case '\x12': {
+            // Ctrl+R：进入反向搜索
+            searchMode.current = true
+            searchQuery.current = ''
+            searchResultIndex.current = -1
+            t.write('\r\n')
+            redrawSearchLine()
+            break
+          }
           case '\x1b[A': {
             // Arrow Up：历史上一条
-            const cmd = getHistory(historyIndex.current + 1)
-            if (cmd !== undefined) {
-              if (historyIndex.current === -1) {
-                savedInput.current = inputBuf.current
+            // 注意：转义序列是多字符，这里 data[i] 只取了第一个字符
+            // 需要检查后续字符
+            if (data.slice(i, i + 3) === '\x1b[A') {
+              i += 2
+              const cmd = getHistory(historyIndex.current + 1)
+              if (cmd !== undefined) {
+                if (historyIndex.current === -1) {
+                  savedInput.current = inputBuf.current
+                }
+                historyIndex.current++
+                inputBuf.current = cmd
+                cursorPos.current = cmd.length
+                redrawInputLine()
               }
-              historyIndex.current++
-              inputBuf.current = cmd
-              cursorPos.current = cmd.length
-              redrawInputLine()
             }
             break
           }
           case '\x1b[B': {
-            // Arrow Down：历史下一条
-            if (historyIndex.current > 0) {
-              historyIndex.current--
-              const cmd = getHistory(historyIndex.current)
-              if (cmd !== undefined) {
-                inputBuf.current = cmd
-                cursorPos.current = cmd.length
+            // Arrow Down
+            if (data.slice(i, i + 3) === '\x1b[B') {
+              i += 2
+              if (historyIndex.current > 0) {
+                historyIndex.current--
+                const cmd = getHistory(historyIndex.current)
+                if (cmd !== undefined) {
+                  inputBuf.current = cmd
+                  cursorPos.current = cmd.length
+                }
+              } else if (historyIndex.current === 0) {
+                historyIndex.current = -1
+                inputBuf.current = savedInput.current
+                cursorPos.current = savedInput.current.length
               }
-            } else if (historyIndex.current === 0) {
-              historyIndex.current = -1
-              inputBuf.current = savedInput.current
-              cursorPos.current = savedInput.current.length
+              redrawInputLine()
             }
-            redrawInputLine()
             break
           }
           case '\x1b[C': {
             // Arrow Right
-            if (cursorPos.current < inputBuf.current.length) {
-              cursorPos.current++
-              t.write('\x1b[C')
+            if (data.slice(i, i + 3) === '\x1b[C') {
+              i += 2
+              if (cursorPos.current < inputBuf.current.length) {
+                cursorPos.current++
+                t.write('\x1b[C')
+              }
             }
             break
           }
           case '\x1b[D': {
             // Arrow Left
-            if (cursorPos.current > 0) {
-              cursorPos.current--
-              t.write('\x1b[D')
+            if (data.slice(i, i + 3) === '\x1b[D') {
+              i += 2
+              if (cursorPos.current > 0) {
+                cursorPos.current--
+                t.write('\x1b[D')
+              }
+            }
+            break
+          }
+          case '\x1b': {
+            // 可能是 Home/End/Delete/PageUp/PageDown
+            const seq = data.slice(i)
+            if (seq.startsWith('\x1b[H') || seq.startsWith('\x1b[1~')) {
+              // Home
+              i += seq.startsWith('\x1b[H') ? 2 : 3
+              cursorPos.current = 0
+              redrawInputLine()
+            } else if (seq.startsWith('\x1b[F') || seq.startsWith('\x1b[4~')) {
+              // End
+              i += seq.startsWith('\x1b[F') ? 2 : 3
+              cursorPos.current = inputBuf.current.length
+              redrawInputLine()
+            } else if (seq.startsWith('\x1b[3~')) {
+              // Delete
+              i += 3
+              deleteCharForward()
+            } else if (seq.startsWith('\x1b[5~')) {
+              // PageUp：滚动终端
+              i += 3
+              t.scrollLines(-Math.floor(t.rows / 2))
+            } else if (seq.startsWith('\x1b[6~')) {
+              // PageDown：滚动终端
+              i += 3
+              t.scrollLines(Math.floor(t.rows / 2))
             }
             break
           }
@@ -294,16 +626,35 @@ export function Terminal({ uid, connected, apiRef }: TerminalProps) {
             break
           }
           case '\x0c': {
-            // Ctrl+L：清屏
+            // Ctrl+L：清屏（修复：清除当前行再写 prompt）
             t.clear()
-            t.write(PROMPT + inputBuf.current)
+            t.write('\r\x1b[2K' + PROMPT + inputBuf.current)
             break
           }
           case '\x15': {
-            // Ctrl+U：删除整行
-            inputBuf.current = ''
-            cursorPos.current = 0
-            redrawInputLine()
+            // Ctrl+U：删除整行（到行首）
+            killToStart()
+            break
+          }
+          case '\x17': {
+            // Ctrl+W：删除前一个单词
+            deleteWordBackward()
+            break
+          }
+          case '\x0b': {
+            // Ctrl+K：删除到行尾
+            killToEnd()
+            break
+          }
+          case '\x04': {
+            // Ctrl+D：删除光标后字符，空行时无操作（不退出）
+            if (inputBuf.current.length === 0) {
+              // 空行，显示提示
+              t.write('\r\n')
+              t.write(PROMPT)
+            } else {
+              deleteCharForward()
+            }
             break
           }
           case '\x01': {
@@ -316,6 +667,31 @@ export function Terminal({ uid, connected, apiRef }: TerminalProps) {
             // Ctrl+E：行尾
             cursorPos.current = inputBuf.current.length
             redrawInputLine()
+            break
+          }
+          case '\x1d': {
+            // Ctrl+]：字体放大
+            zoomFont(1)
+            break
+          }
+          case '\x1f': {
+            // Ctrl+_：字体缩小
+            zoomFont(-1)
+            break
+          }
+          case '\x18': {
+            // Ctrl+X：重置字体大小
+            fontSize.current = 13
+            if (termRef.current) {
+              termRef.current.options.fontSize = 13
+              requestAnimationFrame(() => {
+                try {
+                  fitRef.current?.fit()
+                } catch {
+                  // 忽略
+                }
+              })
+            }
             break
           }
           default: {
@@ -343,10 +719,22 @@ export function Terminal({ uid, connected, apiRef }: TerminalProps) {
     })
     ro.observe(containerRef.current)
 
+    // 同时监听 window resize（侧边栏折叠等触发）
+    const onWindowResize = () => {
+      try {
+        fit.fit()
+      } catch {
+        // 忽略
+      }
+    }
+    window.addEventListener('resize', onWindowResize)
+
     return () => {
       ro.disconnect()
+      window.removeEventListener('resize', onWindowResize)
       term.dispose()
       termRef.current = null
+      fitRef.current = null
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
@@ -364,5 +752,5 @@ export function Terminal({ uid, connected, apiRef }: TerminalProps) {
     }
   }, [connected])
 
-  return <div ref={containerRef} className="h-full w-full" />
+  return <div ref={containerRef} className="h-full w-full overflow-hidden" />
 }
