@@ -50,3 +50,9 @@ export async function resetContext(uid: string): Promise<void> {
   const client = await api()
   await client.post(`/api/probes/${uid}/commander/reset`)
 }
+
+/** 取消探针上正在执行的命令（Ctrl+C 中断） */
+export async function cancelCommand(uid: string): Promise<void> {
+  const client = await api()
+  await client.post(`/api/probes/${uid}/commander/cancel`)
+}

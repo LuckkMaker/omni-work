@@ -1,5 +1,4 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
-import { Loader2 } from 'lucide-react'
 import { Terminal, type TerminalApi } from './components/Terminal'
 import { CommandSidebar } from './components/CommandSidebar'
 import { useProbeStore } from '@/stores/probe.store'
@@ -23,7 +22,6 @@ export default function CommanderPage() {
   const commands = useCommanderStore((s) => s.commands)
   const commandsLoaded = useCommanderStore((s) => s.commandsLoaded)
   const fetchCommands = useCommanderStore((s) => s.fetchCommands)
-  const runningCommand = useCommanderStore((s) => s.runningCommand)
 
   // 挂载时拉取全量命令列表
   useEffect(() => {
@@ -88,14 +86,6 @@ export default function CommanderPage() {
           commands={commands}
           apiRef={terminalApiRef}
         />
-
-        {/* 执行状态指示（终端右上角浮层） */}
-        {runningCommand && (
-          <div className="pointer-events-none absolute right-3 top-3 z-10 flex items-center gap-1.5 rounded-md bg-slate-800/80 px-2 py-1 text-xs text-slate-300 backdrop-blur">
-            <Loader2 className="size-3 animate-spin" />
-            <span className="max-w-[200px] truncate font-mono">{runningCommand}</span>
-          </div>
-        )}
       </div>
 
       {/* 折叠/展开竖条按钮（只做折叠/展开，无拖拽调整宽度） */}

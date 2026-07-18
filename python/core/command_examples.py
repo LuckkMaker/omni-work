@@ -112,6 +112,11 @@ COMMAND_EXAMPLES = {
     ],
 
     # ── Disassembly / Symbol 命令 ──────────────────────────
+    'elf': [
+        'elf firmware.axf',
+        'elf build/debug/firmware.elf',
+        '# 用法: halt → erase → load firmware.axf → reset -h → elf firmware.axf',
+    ],
     'symbol': [
         'symbol main',
     ],

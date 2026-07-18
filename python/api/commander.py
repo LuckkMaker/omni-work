@@ -44,3 +44,10 @@ async def reset_context(uid: str):
     """重置探针的命令上下文（目标切换/重连后调用）"""
     commander_backend.reset_context(uid)
     return {"success": True}
+
+
+@router.post("/probes/{uid}/commander/cancel")
+async def cancel_command(uid: str):
+    """取消该探针上正在执行的命令（Ctrl+C 中断）"""
+    result = await asyncio.to_thread(commander_backend.cancel_command, uid)
+    return {"success": result}

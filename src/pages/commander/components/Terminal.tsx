@@ -211,7 +211,13 @@ export function Terminal({ uid, connected, commands, apiRef }: TerminalProps) {
         return
       }
 
+      // 显示运行指示（在命令行内新行）
+      term.write(`${COLOR.yellow}\u23F3 ${cmd}${COLOR.reset}\r\n`)
+
       const result = await execute(uidRef.current, cmd)
+
+      // 清除运行指示行（回到上一行行首并清除）
+      term.write('\x1b[A\r\x1b[2K')
 
       if (result.output) {
         term.write(result.output)
@@ -477,6 +483,20 @@ export function Terminal({ uid, connected, commands, apiRef }: TerminalProps) {
 
     // ── 输入处理 ──────────────────────────
     term.onData((data) => {
+      // Ctrl+C 中断正在运行的命令
+      if (data === '\x03' && runningRef.current) {
+        const t = termRef.current
+        if (!t) return
+        const uid = uidRef.current
+        if (!uid) return
+        t.write(`${COLOR.yellow}^C${COLOR.reset}\r\n`)
+        // 异步发送取消请求（不阻塞 onData）
+        import('@/services/commander.service').then((s) =>
+          s.cancelCommand(uid).catch(() => {})
+        )
+        return
+      }
+
       if (runningRef.current) return
       const t = termRef.current
       if (!t) return

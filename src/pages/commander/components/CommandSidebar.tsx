@@ -17,9 +17,12 @@ import {
   Trash2,
   GripHorizontal,
   Copy,
-  Lightbulb,
+  Workflow,
   FolderSearch,
   Check,
+  Pause,
+  Zap,
+  FileSpreadsheet,
 } from 'lucide-react'
 import { useNotificationStore } from '@/stores/notification.store'
 import { cn } from '@/lib/utils'
@@ -54,6 +57,7 @@ const QUICK_COMMANDS: QuickCommand[] = [
   { label: 'continue', cmd: 'continue', icon: Play, group: 'Run Control' },
   { label: 'step', cmd: 'step', icon: SkipForward, group: 'Run Control' },
   { label: 'reset', cmd: 'reset', icon: RotateCcw, group: 'Run Control' },
+  { label: 'reset -h', cmd: 'reset -h', icon: Pause, group: 'Run Control' },
   { label: 'status', cmd: 'status', icon: Search, group: 'Run Control' },
   // Registers
   { label: 'reg', cmd: 'reg', icon: Cpu, group: 'Registers' },
@@ -65,6 +69,7 @@ const QUICK_COMMANDS: QuickCommand[] = [
   { label: 'erase', cmd: 'erase', icon: Trash2, group: 'Memory' },
   { label: 'load', cmd: 'load ', icon: Download, group: 'Memory' },
   { label: 'savemem', cmd: 'savemem ', icon: Upload, group: 'Memory' },
+  { label: 'elf', cmd: 'elf ', icon: BookOpen, group: 'Memory' },
 ]
 
 // 命令参考区的默认/最小/最大高度（px）
@@ -164,6 +169,34 @@ function getCommandExamples(cmd: CommandInfo): string[] {
   return groups.flatMap((g) => g.lines)
 }
 
+/** 流程步骤（单个命令） */
+function WorkflowStep({
+  cmd,
+  connected,
+  onRun,
+}: {
+  cmd: string
+  connected: boolean
+  onRun: (cmd: string) => void
+}) {
+  return (
+    <span
+      className={cn(
+        'cursor-pointer hover:underline',
+        connected ? 'text-primary' : 'text-muted-foreground/40'
+      )}
+      onClick={() => connected && onRun(cmd)}
+    >
+      {cmd}
+    </span>
+  )
+}
+
+/** 流程箭头分隔符 */
+function WorkflowArrow() {
+  return <span className="text-muted-foreground/40">→</span>
+}
+
 export function CommandSidebar({
   onRunCommand,
   commands,
@@ -173,6 +206,7 @@ export function CommandSidebar({
 }: CommandSidebarProps) {
   const [expandedCategory, setExpandedCategory] = useState<string | null>(null)
   const [showReference, setShowReference] = useState(false)
+  const [showWorkflows, setShowWorkflows] = useState(false)
   const [exampleCmd, setExampleCmd] = useState<CommandInfo | null>(null)
 
   // 路径转换工具
@@ -191,7 +225,7 @@ export function CommandSidebar({
     return acc
   }, {})
 
-  // 按分类组织命令参考，分类名按字母排序
+  // 按分类组织命令参考，自定义命令放在最后
   const refGroups = commands.reduce<Record<string, CommandInfo[]>>((acc, cmd) => {
     const cat = cmd.category || 'other'
     ;(acc[cat] ??= []).push(cmd)
@@ -422,6 +456,60 @@ export function CommandSidebar({
         </div>
       </div>
 
+      {/* 常用流程 区 */}
+      <div className="shrink-0 border-t border-border">
+        <button
+          onClick={() => setShowWorkflows((v) => !v)}
+          className="flex w-full items-center gap-1.5 border-b border-border px-3 py-2 text-xs font-medium hover:bg-muted/40 transition-colors"
+        >
+          <ChevronRight
+            className={cn('size-3 transition-transform', showWorkflows && 'rotate-90')}
+          />
+          <Workflow className="size-3.5 text-muted-foreground" />
+          常用流程
+        </button>
+        {showWorkflows && (
+          <div className="p-2 space-y-2">
+            {/* 调试含符号信息 */}
+            <div className="rounded-md border border-border/50 bg-muted/30 p-2">
+              <div className="mb-1 flex items-center gap-1 text-[11px] font-medium text-muted-foreground/70">
+                <Zap className="size-3 text-muted-foreground" />
+                调试（含符号信息）
+              </div>
+              <div className="flex flex-wrap items-center gap-0.5 text-[11px] font-mono">
+                <WorkflowStep cmd="halt" connected={connected} onRun={onRunCommand} />
+                <WorkflowArrow />
+                <WorkflowStep cmd="erase" connected={connected} onRun={onRunCommand} />
+                <WorkflowArrow />
+                <WorkflowStep cmd="load " connected={connected} onRun={onRunCommand} />
+                <WorkflowArrow />
+                <WorkflowStep cmd="reset -h" connected={connected} onRun={onRunCommand} />
+                <WorkflowArrow />
+                <WorkflowStep cmd="elf " connected={connected} onRun={onRunCommand} />
+                <WorkflowArrow />
+                <WorkflowStep cmd="step" connected={connected} onRun={onRunCommand} />
+              </div>
+            </div>
+            {/* 解锁并烧录 */}
+            <div className="rounded-md border border-border/50 bg-muted/30 p-2">
+              <div className="mb-1 flex items-center gap-1 text-[11px] font-medium text-muted-foreground/70">
+                <Zap className="size-3 text-muted-foreground" />
+                解锁并烧录
+              </div>
+              <div className="flex flex-wrap items-center gap-0.5 text-[11px] font-mono">
+                <WorkflowStep cmd="halt" connected={connected} onRun={onRunCommand} />
+                <WorkflowArrow />
+                <WorkflowStep cmd="unlock" connected={connected} onRun={onRunCommand} />
+                <WorkflowArrow />
+                <WorkflowStep cmd="erase" connected={connected} onRun={onRunCommand} />
+                <WorkflowArrow />
+                <WorkflowStep cmd="load " connected={connected} onRun={onRunCommand} />
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
       {/* Command Reference 区 */}
       <div
         className="shrink-0 border-t border-border bg-muted/50"
@@ -512,7 +600,7 @@ export function CommandSidebar({
                                 className="flex shrink-0 items-center gap-0.5 rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-medium text-amber-600 hover:bg-amber-500/20 transition-colors"
                                 title="查看示例"
                               >
-                                <Lightbulb className="size-2.5" />
+                                <FileSpreadsheet className="size-2.5" />
                                 <span>示例</span>
                               </button>
                             )}

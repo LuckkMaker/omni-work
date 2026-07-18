@@ -975,6 +975,33 @@ class UnlockCommand(CommandBase):
     def execute(self):
         self.context.target.mass_erase()
 
+class ElfCommand(CommandBase):
+    INFO = {
+            'names': ['elf'],
+            'group': 'standard',
+            'category': 'symbols',
+            'nargs': 1,
+            'usage': "FILENAME",
+            'help': "Load an ELF file for source-level debugging and symbol lookup.",
+            'extra_help': "Sets the target's ELF file, enabling source-level info in 'step', "
+                    "'where', 'symbol', and 'break' commands. After loading, 'step' will show "
+                    "file:line alongside disassembly, and 'where' will resolve addresses to "
+                    "source locations.\n"
+                    "Full workflow: 1) halt  2) erase  3) load FIRMWARE.axf  "
+                    "4) reset -h  5) elf FIRMWARE.axf  6) step",
+            }
+
+    def parse(self, args):
+        self.filename = os.path.expanduser(args[0])
+
+    def execute(self):
+        self.context.session.target.elf = self.filename
+        elf = self.context.session.target.elf
+        self.context.writei("Loaded ELF: %s", os.path.basename(self.filename))
+        # 输出 ELF 的 CPU 信息（可选，帮助确认正确加载）
+        if elf and hasattr(elf, 'decoder'):
+            pass  # ELF 对象创建成功即可
+
 class ContinueCommand(CommandBase):
     INFO = {
             'names': ['continue', 'c', 'go', 'g'],
@@ -1031,7 +1058,37 @@ class StepCommand(CommandBase):
             if IS_CAPSTONE_AVAILABLE:
                 addr &= ~1
                 data = self.context.selected_ap.read_memory_block8(addr, 4)
-                print_disasm(self.context, bytes(bytearray(data)), addr, max_instructions=1)
+                # 内联反汇编，以便同行附加源码信息
+                md = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB)
+                hex_bytes = ''; mnemonic = ''; op_str = ''
+                for insn in md.disasm(bytes(bytearray(data)), addr):
+                    hex_bytes = ''.join('%02x' % b for b in insn.bytes)
+                    mnemonic = insn.mnemonic
+                    op_str = insn.op_str
+                    break
+                # 查找源码行
+                src_tag = ''
+                if self.context.elf is not None:
+                    line_info = self.context.elf.address_decoder.get_line_for_address(addr)
+                    if line_info is not None:
+                        base = line_info.dirname or getattr(line_info, 'comp_dir', '')
+                        path = os.path.normpath(os.path.join(base, line_info.filename))
+                        fname = os.path.basename(path)
+                        code = ''
+                        try:
+                            if os.path.isfile(path):
+                                with open(path, 'r', encoding='utf-8', errors='replace') as f:
+                                    for _ in range(line_info.line - 1):
+                                        next(f, None)
+                                    code = next(f, '').rstrip()
+                        except (OSError, StopIteration):
+                            pass
+                        src_tag = f"  {fname}:{line_info.line}  {code}" if code else f"  {fname}:{line_info.line}"
+                # 同行输出：反汇编 + 源码
+                self.context.writef(
+                    "{addr:#010x}:* {bytes:<10}{mnemonic:<8}{args}{src}",
+                    addr=addr, bytes=hex_bytes, mnemonic=mnemonic,
+                    args=op_str, src=src_tag)
             else:
                 self.context.writei("PC = 0x%08x", addr)
 
@@ -1438,7 +1495,7 @@ class WhereCommand(CommandBase):
 
         lineInfo = self.context.elf.address_decoder.get_line_for_address(self.addr)
         if lineInfo is not None:
-            path = os.path.join(lineInfo.dirname, lineInfo.filename).decode()
+            path = os.path.join(lineInfo.dirname, lineInfo.filename) if isinstance(lineInfo.filename, str) else os.path.join(lineInfo.dirname, lineInfo.filename).decode()
             line = lineInfo.line
             pathline = "{}:{}".format(path, line)
         else:

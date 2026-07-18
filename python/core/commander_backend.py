@@ -338,17 +338,6 @@ class CommanderBackend:
         if command.startswith('run_batch ') or command == 'run_batch':
             return self._execute_batch(uid, command[10:].strip() if len(command) > 10 else '')
 
-        # 拦截 erase 命令：添加全局进度通知（erase 可能耗时较长）
-        cmd_lower = command.strip().lower()
-        is_erase_cmd = cmd_lower == 'erase' or cmd_lower.startswith('erase ')
-
-        if is_erase_cmd:
-            # 发送开始通知
-            event_manager.emit("notification", {
-                "type": "info",
-                "title": "Flash 擦除",
-                "message": "正在擦除 Flash...",
-            })
 
         # 判断命令是否需要连接探针
         # ! 和 $ 前缀命令：! 是 shell 命令（离线可用），$ 是 Python 表达式（需要连接）
@@ -387,17 +376,6 @@ class CommanderBackend:
                 with contextlib.redirect_stdout(buf):
                     ctx.process_command_line(command)
                 output = buf.getvalue()
-
-                # erase 命令完成通知
-                if is_erase_cmd:
-                    event_manager.emit("notification", {
-                        "type": "success",
-                        "title": "Flash 擦除完成",
-                        "message": "Flash 擦除成功",
-                        "autoClose": True,
-                        "autoCloseDelay": 3000,
-                    })
-
                 return {
                     "success": True,
                     "output": output,
@@ -425,17 +403,6 @@ class CommanderBackend:
                     error_msg = f"{exc_type}"
 
                 logger.warning(f"Command '{command}' failed: {exc_type}: {error_msg}")
-
-                # erase 命令失败通知
-                if is_erase_cmd:
-                    event_manager.emit("notification", {
-                        "type": "error",
-                        "title": "Flash 擦除失败",
-                        "message": error_msg,
-                        "autoClose": True,
-                        "autoCloseDelay": 5000,
-                    })
-
                 return {
                     "success": False,
                     "output": output,
@@ -637,6 +604,20 @@ class CommanderBackend:
         self._cleanup_context(uid)
         logger.info(f"Commander context reset for probe {uid[:16]}")
         return True
+
+    def cancel_command(self, uid: str) -> bool:
+        """取消该探针上正在执行的命令。
+
+        通过中断底层探针操作实现。中断后的命令会返回错误。
+        主要用于 Ctrl+C 中断卡死的 erase/load 等操作。
+        """
+        try:
+            backend.cancel_operation()
+            logger.info(f"Command cancel requested for probe {uid[:16]}")
+            return True
+        except Exception as e:
+            logger.warning(f"Command cancel failed: {e}")
+            return False
 
     def cleanup_all(self):
         """清理所有上下文（应用退出时调用）"""
