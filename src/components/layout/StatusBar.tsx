@@ -175,7 +175,7 @@ export function StatusBar() {
 
   return (
     <div className="flex h-6 items-center justify-between bg-primary text-white px-1 text-xs select-none shrink-0">
-      {/* 左侧：后端状态 + 接口/速度 */}
+      {/* 左侧：后端状态 + 接口/速度 + 连接 + RTT 统计（紧凑内联） */}
       <div className="flex items-center gap-0.5">
         {/* 后端状态 */}
         <div className="flex items-center gap-1 px-2">
@@ -227,38 +227,32 @@ export function StatusBar() {
             </>
           )}
         </div>
-      </div>
 
-      {/* 中间：RTT 统计信息（运行时显示） */}
-      {rttRunning && (
-        <div className="flex items-center gap-3 absolute left-1/2 -translate-x-1/2">
-          <div className="flex items-center gap-1" title="RTT 会话运行中">
-            <Activity className="size-3 text-green-400 animate-pulse" />
-            <span className="text-white/80">RTT</span>
-          </div>
-          <div className="w-px h-3 bg-white/20" />
-          <div className="flex items-center gap-1" title={`接收：${rttBytesReceived} 字节`}>
-            <ArrowDownToLine className="size-3 text-blue-300" />
-            <span className="text-white/80 font-mono">{fmtBytes(rttBytesReceived)}</span>
-          </div>
-          <div className="flex items-center gap-1" title={`发送：${rttBytesSent} 字节`}>
-            <ArrowUpFromLine className="size-3 text-amber-300" />
-            <span className="text-white/80 font-mono">{fmtBytes(rttBytesSent)}</span>
-          </div>
-          {rttRecordToFile && (
-            <>
-              <div className="w-px h-3 bg-white/20" />
-              <span className="text-amber-300" title="正在录制到文件">●REC</span>
-            </>
-          )}
-          {rttSendTiming && (
-            <>
-              <div className="w-px h-3 bg-white/20" />
-              <span className="text-amber-300" title="定时发送中">⏱</span>
-            </>
-          )}
-        </div>
-      )}
+        {/* RTT 统计：运行时紧凑内联显示，与左侧项一致分隔 */}
+        {rttRunning && (
+          <>
+            <div className="w-px h-3 bg-white/20" />
+            <div className="flex items-center gap-1 px-2" title="RTT 会话运行中">
+              <Activity className="size-3 text-green-400 animate-pulse" />
+              <span className="text-white/80">RTT</span>
+            </div>
+            <div className="flex items-center gap-1 px-2" title={`接收：${rttBytesReceived} 字节`}>
+              <ArrowDownToLine className="size-3 text-blue-300" />
+              <span className="text-white/80 font-mono">{fmtBytes(rttBytesReceived)}</span>
+            </div>
+            <div className="flex items-center gap-1 px-2" title={`发送：${rttBytesSent} 字节`}>
+              <ArrowUpFromLine className="size-3 text-amber-300" />
+              <span className="text-white/80 font-mono">{fmtBytes(rttBytesSent)}</span>
+            </div>
+            {rttRecordToFile && (
+              <span className="text-amber-300 px-1" title="正在录制到文件">●REC</span>
+            )}
+            {rttSendTiming && (
+              <span className="text-amber-300 px-1" title="定时发送中">⏱</span>
+            )}
+          </>
+        )}
+      </div>
 
       {/* 右侧：铃铛 */}
       <div className="flex items-center">

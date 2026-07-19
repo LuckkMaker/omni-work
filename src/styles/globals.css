@@ -56,9 +56,12 @@
   height: 100%;
 }
 
-/* 文字行四周留间距（滚动条仍贴边框） */
+/* 文字行四周留间距（滚动条仍贴边框）
+ * 注意：xterm-rows 的 padding 会导致选中区域与字符单元错位，
+ * 选中框向左右延伸覆盖相邻字符。改用容器层 padding（在组件中实现）。
+ * 但为兼容现有布局，保留 xterm-rows 的垂直 padding，移除水平 padding。 */
 .xterm .xterm-rows {
-  padding: 4px 8px;
+  padding: 4px 0;
 }
 
 /* 选中区域完全不透明，避免半透明背景遮挡文字。

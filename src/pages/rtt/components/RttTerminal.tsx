@@ -321,6 +321,6 @@ export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
       termRef.current?.clear()
     }, [tabId])
 
-    return <div ref={containerRef} className="h-full w-full overflow-hidden" />
+    return <div ref={containerRef} className="h-full w-full overflow-hidden px-2" />
   }
 )

@@ -116,7 +116,7 @@ export function RttTabBar({ running }: RttTabBarProps) {
                 <SelectContent>
                   {upChannels.map((ch) => (
                     <SelectItem key={ch.index} value={String(ch.index)} className="text-sm">
-                      Ch{ch.index}{ch.name ? ` - ${ch.name}` : ''} ({ch.size}B)
+                      Channel {ch.index}{ch.name ? ` - ${ch.name}` : ''} ({ch.size}B)
                     </SelectItem>
                   ))}
                 </SelectContent>

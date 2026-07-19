@@ -814,5 +814,5 @@ export function Terminal({ uid, connected, commands, apiRef }: TerminalProps) {
     }
   }, [connected])
 
-  return <div ref={containerRef} className="h-full w-full overflow-hidden" />
+  return <div ref={containerRef} className="h-full w-full overflow-hidden px-2" />
 }

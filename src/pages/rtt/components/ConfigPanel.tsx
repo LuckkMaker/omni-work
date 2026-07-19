@@ -1,10 +1,10 @@
 import { useCallback, useState } from 'react'
-import { Play, Square, Eraser, Trash2, Download, Keyboard, MessageSquare, Eye, Hexagon, FileDown, ListChecks, CornerDownLeft, Timer, ShieldCheck } from 'lucide-react'
+import { Play, Square, Eraser, Trash2, Download, Keyboard, MessageSquare, FileDown, ListChecks, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
-import { Switch } from '@/components/ui/switch'
+import { Checkbox } from '@/components/ui/checkbox'
 import {
   Select,
   SelectTrigger,
@@ -27,34 +27,36 @@ interface ConfigPanelProps {
   onOpenMultiString: () => void
 }
 
-/** 紧凑配置行：左侧标签，右侧 Switch */
-function SwitchRow({
+/** 统一配置行：复选框 + 文字 + 配置项（配置项常驻，未勾选时禁用） */
+function CheckRow({
   label,
-  icon: Icon,
   checked,
   onCheckedChange,
   disabled,
   title,
+  children,
 }: {
   label: string
-  icon: React.ComponentType<{ className?: string }>
   checked: boolean
   onCheckedChange: (v: boolean) => void
   disabled?: boolean
   title?: string
+  children?: React.ReactNode
 }) {
   return (
-    <div className="flex h-7 items-center justify-between">
-      <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground" title={title}>
-        <Icon className="size-3" />
-        {label}
-      </span>
-      <Switch
+    <div className="flex h-7 items-center gap-1.5">
+      <Checkbox
         checked={checked}
         onCheckedChange={onCheckedChange}
         disabled={disabled}
         title={title}
       />
+      <span className="text-[11px] whitespace-nowrap" title={title}>{label}</span>
+      {children && (
+        <div className="ml-auto flex items-center gap-1">
+          {children}
+        </div>
+      )}
     </div>
   )
 }
@@ -75,7 +77,6 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
     recordFileName,
     searchAddress,
     searchSize,
-    // 发送配置
     sendHex,
     sendNewline,
     sendTiming,
@@ -141,17 +142,12 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
 
   const handleStop = useCallback(async () => {
     if (!uid) return
-    try {
-      await rttService.stop(uid)
-    } catch { /* 忽略 */ }
+    try { await rttService.stop(uid) } catch { /* 忽略 */ }
     setRunning(false)
     reset()
   }, [uid, setRunning, reset])
 
-  const handleClear = useCallback(() => {
-    terminalRef.current?.clear()
-  }, [terminalRef])
-
+  const handleClear = useCallback(() => { terminalRef.current?.clear() }, [terminalRef])
   const handleClearData = useCallback(() => {
     terminalRef.current?.clear()
     terminalRef.current?.clearData()
@@ -209,11 +205,7 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
   }, [terminalRef])
 
   const handleToggleRecord = useCallback(() => {
-    if (recordToFile) {
-      setRecordToFile(false, null)
-    } else {
-      setRecordToFile(true, null)
-    }
+    setRecordToFile(!recordToFile, null)
   }, [recordToFile, setRecordToFile])
 
   const getSendChannel = useCallback(() => {
@@ -234,48 +226,25 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
           会话控制
         </Label>
         <div className="flex gap-2">
-          <Button
-            onClick={handleStart}
-            disabled={!canStart}
-            className="flex-1"
-            size="sm"
-          >
+          <Button onClick={handleStart} disabled={!canStart} className="flex-1" size="sm">
             <Play className="mr-1 h-3.5 w-3.5" />
             {starting ? '启动中...' : '启动'}
           </Button>
-          <Button
-            onClick={handleStop}
-            disabled={!canStop}
-            variant="destructive"
-            className="flex-1"
-            size="sm"
-          >
+          <Button onClick={handleStop} disabled={!canStop} variant="destructive" className="flex-1" size="sm">
             <Square className="mr-1 h-3.5 w-3.5" />
             停止
           </Button>
         </div>
         {!running && (
           <div className="grid grid-cols-2 gap-1.5">
-            <Input
-              placeholder="地址 (hex)"
-              value={searchAddress}
-              onChange={(e) => setSearchAddress(e.target.value)}
-              className="h-7 text-[11px] font-mono"
-            />
-            <Input
-              placeholder="范围 (hex)"
-              value={searchSize}
-              onChange={(e) => setSearchSize(e.target.value)}
-              className="h-7 text-[11px] font-mono"
-            />
+            <Input placeholder="地址 (hex)" value={searchAddress} onChange={(e) => setSearchAddress(e.target.value)} className="h-7 text-[11px] font-mono" />
+            <Input placeholder="范围 (hex)" value={searchSize} onChange={(e) => setSearchSize(e.target.value)} className="h-7 text-[11px] font-mono" />
           </div>
         )}
         {recordToFile && (
           <div className="flex items-center gap-1.5 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-600">
             <span className="size-1.5 rounded-full bg-amber-500 animate-pulse" />
-            <span className="truncate" title={recordFileName ?? ''}>
-              {recordFileName ?? '选择文件中...'}
-            </span>
+            <span className="truncate" title={recordFileName ?? ''}>{recordFileName ?? '选择文件中...'}</span>
           </div>
         )}
       </section>
@@ -314,22 +283,22 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
           </button>
         </div>
 
+        {/* 本地回显：复选框 + 文字（仅终端模式） */}
         {inputMode === 'terminal' && (
-          <SwitchRow
+          <CheckRow
             label="本地回显"
-            icon={Eye}
             checked={localEcho}
             onCheckedChange={setLocalEcho}
-            title="本地回显：输入会显示在终端"
+            title="开启后输入立即显示在终端。下位机 shell 通常会回显，无需开启；仅当下位机不回显时开启"
           />
         )}
 
-        <SwitchRow
+        {/* HEX 显示：复选框 + 文字 */}
+        <CheckRow
           label="HEX 显示"
-          icon={Hexagon}
           checked={displayMode === 'hex'}
           onCheckedChange={(v) => setDisplayMode(v ? 'hex' : 'text')}
-          title="切换 hex/文本显示"
+          title="以十六进制格式显示接收数据"
         />
 
         <div className="grid grid-cols-2 gap-1.5 pt-0.5">
@@ -343,26 +312,12 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
           </Button>
         </div>
 
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={() => setShowSaveDialog(true)}
-          disabled={dataSize === 0}
-          className="h-7 w-full text-[11px]"
-          title="保存接收数据到文件"
-        >
+        <Button variant="outline" size="sm" onClick={() => setShowSaveDialog(true)} disabled={dataSize === 0} className="h-7 w-full text-[11px]" title="保存接收数据到文件">
           <Download className="mr-1 h-3 w-3" />
           保存数据{dataSize > 0 ? ` (${dataSize < 1024 ? `${dataSize}B` : `${(dataSize / 1024).toFixed(1)}K`})` : ''}
         </Button>
 
-        <Button
-          variant={recordToFile ? 'default' : 'outline'}
-          size="sm"
-          onClick={handleToggleRecord}
-          disabled={!running}
-          className="h-7 w-full text-[11px]"
-          title="开启后持续把接收到的数据存入 .dat 文件"
-        >
+        <Button variant={recordToFile ? 'default' : 'outline'} size="sm" onClick={handleToggleRecord} disabled={!running} className="h-7 w-full text-[11px]" title="开启后持续把接收到的数据存入 .dat 文件">
           <FileDown className="mr-1 h-3 w-3" />
           {recordToFile ? '停止录制' : '接收数据到文件'}
         </Button>
@@ -376,107 +331,86 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
           发送配置
         </Label>
 
-        <SwitchRow
-          label="HEX 发送"
-          icon={Hexagon}
-          checked={sendHex}
-          onCheckedChange={setSendHex}
-          disabled={!running}
-          title="以十六进制格式发送"
-        />
+        {/* HEX 发送 + 回车换行：同行并列两个复选框 */}
+        <div className="flex h-7 items-center gap-4">
+          <Checkbox checked={sendHex} onCheckedChange={setSendHex} disabled={!running} title="以十六进制格式发送" />
+          <span className="text-[11px]" title="以十六进制格式发送">HEX 发送</span>
+          <Checkbox checked={sendNewline} onCheckedChange={setSendNewline} disabled={!running || sendHex} title="发送时追加换行符" />
+          <span className="text-[11px]" title="发送时追加换行符">回车换行</span>
+        </div>
 
-        <SwitchRow
-          label="加回车换行"
-          icon={CornerDownLeft}
-          checked={sendNewline}
-          onCheckedChange={setSendNewline}
-          disabled={!running || sendHex}
-          title="发送时追加换行符"
-        />
-
-        <SwitchRow
+        {/* 定时发送：复选框 + 间隔配置（常驻，未勾选时禁用） */}
+        <CheckRow
           label="定时发送"
-          icon={Timer}
           checked={sendTiming}
           onCheckedChange={setSendTiming}
           disabled={!running}
           title="按间隔自动发送输入栏内容"
-        />
-        {sendTiming && (
-          <div className="flex items-center gap-1.5 pl-1">
-            <Input
-              type="number"
-              min={10}
-              max={60000}
-              value={sendTimingInterval}
-              onChange={(e) => setSendTimingInterval(Number(e.target.value))}
-              className="h-6 w-16 text-[11px] font-mono"
-              title="定时发送间隔（ms）"
-            />
-            <span className="text-[10px] text-muted-foreground">ms</span>
-          </div>
-        )}
+        >
+          <Input
+            type="number"
+            min={10}
+            max={60000}
+            value={sendTimingInterval}
+            onChange={(e) => setSendTimingInterval(Number(e.target.value))}
+            disabled={!sendTiming || !running}
+            className="h-5 w-14 text-[11px] font-mono"
+            title="定时发送间隔（ms）"
+          />
+          <span className="text-[10px] text-muted-foreground">ms</span>
+        </CheckRow>
 
-        <SwitchRow
-          label="加校验"
-          icon={ShieldCheck}
+        {/* 校验：复选框 + 配置项（常驻，未勾选时禁用） */}
+        <CheckRow
+          label="校验"
           checked={sendChecksum}
           onCheckedChange={setSendChecksum}
           disabled={!running}
           title="附加校验值到数据末尾"
-        />
-        {sendChecksum && (
-          <div className="space-y-1 pl-1">
-            <Select
-              value={sendChecksumType}
-              onValueChange={(v) => setSendChecksumType(v as ChecksumType)}
-            >
-              <SelectTrigger className="h-6 w-full text-[11px] px-1.5" title="校验类型">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {CHECKSUM_OPTIONS.map((opt) => (
-                  <SelectItem key={opt.value} value={opt.value} className="text-xs">
-                    {opt.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <div className="flex items-center gap-1">
-              <span className="text-[10px] text-muted-foreground">字节</span>
-              <Input
-                type="number"
-                min={0}
-                value={sendChecksumStart}
-                onChange={(e) => setSendChecksumStart(Number(e.target.value))}
-                className="h-6 w-12 text-[11px] font-mono"
-                title="校验起始字节索引（0-based，含）"
-              />
-              <span className="text-[10px] text-muted-foreground">至</span>
-              <Input
-                type="number"
-                min={-1}
-                value={sendChecksumEnd}
-                onChange={(e) => setSendChecksumEnd(Number(e.target.value))}
-                className="h-6 w-12 text-[11px] font-mono"
-                title="校验结束字节索引（-1=末尾）"
-              />
-            </div>
-          </div>
-        )}
+        >
+          <Select value={sendChecksumType} onValueChange={(v) => setSendChecksumType(v as ChecksumType)}>
+            <SelectTrigger className="h-5 w-[110px] text-[11px] px-1.5" title="校验类型">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {CHECKSUM_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={opt.value} className="text-xs">
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </CheckRow>
+
+        {/* 校验范围：第二行，常驻显示，未勾选时禁用 */}
+        <div className={cn('flex h-6 items-center gap-1 pl-1', !sendChecksum && 'opacity-50')}>
+          <span className="text-[10px] text-muted-foreground">字节</span>
+          <Input
+            type="number"
+            min={0}
+            value={sendChecksumStart}
+            onChange={(e) => setSendChecksumStart(Number(e.target.value))}
+            disabled={!sendChecksum || !running}
+            className="h-5 w-12 text-[11px] font-mono"
+            title="校验起始字节索引（0-based，含）"
+          />
+          <span className="text-[10px] text-muted-foreground">至</span>
+          <Input
+            type="number"
+            min={-1}
+            value={sendChecksumEnd}
+            onChange={(e) => setSendChecksumEnd(Number(e.target.value))}
+            disabled={!sendChecksum || !running}
+            className="h-5 w-12 text-[11px] font-mono"
+            title="校验结束字节索引（-1=末尾）"
+          />
+        </div>
 
         {/* 发送文件 */}
         <SendFileButton uid={uid} running={running} getSendChannel={getSendChannel} />
 
         {/* 多字符串 */}
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onOpenMultiString}
-          disabled={!running}
-          className="w-full justify-start text-[11px] h-7"
-          title="多字符串管理"
-        >
+        <Button variant="outline" size="sm" onClick={onOpenMultiString} disabled={!running} className="w-full justify-start text-[11px] h-7" title="多字符串管理">
           <ListChecks className="mr-1.5 h-3 w-3" />
           多字符串
         </Button>
@@ -489,12 +423,7 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
         </div>
       )}
 
-      <SaveFormatDialog
-        open={showSaveDialog}
-        onOpenChange={setShowSaveDialog}
-        onConfirm={handleSave}
-        dataSize={dataSize}
-      />
+      <SaveFormatDialog open={showSaveDialog} onOpenChange={setShowSaveDialog} onConfirm={handleSave} dataSize={dataSize} />
     </div>
   )
 }

@@ -24,6 +24,8 @@ export interface MultiStringItem {
   enabled: boolean
   /** 发送顺序（从 0 开始） */
   order: number
+  /** 发送延时（ms，每条独立，发送后等待此时长再发下一条） */
+  delayMs: number
 }
 
 /** RTT 终端 Tab */
@@ -82,7 +84,8 @@ function loadLocalEcho(): boolean {
     const v = localStorage.getItem(LOCAL_ECHO_KEY)
     if (v !== null) return v === '1'
   } catch { /* ignore */ }
-  return true
+  // 默认关闭：真实终端场景下位机 shell 会回显，无需本地回显
+  return false
 }
 
 function loadBool(key: string, def: boolean): boolean {
@@ -117,7 +120,13 @@ function loadMultiStrings(): MultiStringItem[] {
     const v = localStorage.getItem(MULTI_STRINGS_KEY)
     if (v) {
       const arr = JSON.parse(v) as MultiStringItem[]
-      if (Array.isArray(arr)) return arr.slice(0, 100)
+      if (Array.isArray(arr)) {
+        // 兼容旧数据：无 delayMs 字段时默认 1000ms
+        return arr.slice(0, 100).map((it) => ({
+          ...it,
+          delayMs: typeof it.delayMs === 'number' ? it.delayMs : 1000,
+        }))
+      }
     }
   } catch { /* ignore */ }
   return []
@@ -364,7 +373,7 @@ export const useRttStore = create<RttState>((set, get) => ({
     if (s.multiStrings.length >= 100) return s
     const id = `ms_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
     const order = s.multiStrings.length
-    const next = [...s.multiStrings, { ...item, id, order }]
+    const next = [...s.multiStrings, { ...item, id, order, delayMs: item.delayMs ?? 1000 }]
     try { localStorage.setItem(MULTI_STRINGS_KEY, JSON.stringify(next)) } catch { /* ignore */ }
     return { multiStrings: next }
   }),
@@ -459,8 +468,8 @@ export const useRttStore = create<RttState>((set, get) => ({
 
   addTab: (channel, channelName) => {
     const id = genTabId()
-    // 标题统一为 Ch N，不附加通道名，避免不同通道显示风格不一致
-    const title = `Ch${channel}`
+    // 标题统一为 Channel N，不附加通道名，避免不同通道显示风格不一致
+    const title = `Channel ${channel}`
     set((s) => ({
       tabs: [...s.tabs, {
         id,
