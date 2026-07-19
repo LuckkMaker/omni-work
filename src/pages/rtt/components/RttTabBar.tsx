@@ -49,24 +49,24 @@ export function RttTabBar({ running }: RttTabBarProps) {
 
   return (
     <>
-      <div className="flex items-center gap-1 border-b border-border bg-muted/30 px-2 py-1">
+      <div className="flex items-center gap-0.5 border-b border-border px-1 py-1 overflow-x-auto">
         {tabs.map((tab) => (
           <div
             key={tab.id}
             className={cn(
-              'group flex items-center gap-1 rounded-t border px-2 py-1 text-xs transition-colors cursor-pointer',
+              'group flex items-center gap-1.5 px-2.5 py-1 rounded-t-md cursor-pointer text-xs whitespace-nowrap transition-colors border-b-2',
               activeTabId === tab.id
-                ? 'border-b-border bg-background text-foreground border-t border-l border-r'
-                : 'border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+                ? 'bg-primary/10 text-primary border-primary font-medium'
+                : 'text-muted-foreground border-transparent hover:text-foreground hover:bg-muted/30'
             )}
             onClick={() => setActiveTab(tab.id)}
             title={tab.mode === 'single' && tab.channelName
               ? `${tab.title} - ${tab.channelName}`
               : tab.title}
           >
-            <span className="font-medium">{tab.title}</span>
+            <span>{tab.title}</span>
             {tab.bytesReceived > 0 && (
-              <span className="text-[10px] text-muted-foreground">
+              <span className="text-[10px] opacity-70">
                 ({(tab.bytesReceived / 1024).toFixed(1)}K)
               </span>
             )}
@@ -76,7 +76,7 @@ export function RttTabBar({ running }: RttTabBarProps) {
                   e.stopPropagation()
                   removeTab(tab.id)
                 }}
-                className="ml-1 rounded p-0.5 opacity-0 group-hover:opacity-100 hover:bg-destructive/20 hover:text-destructive transition-opacity"
+                className="ml-0.5 opacity-0 group-hover:opacity-100 text-muted-foreground hover:text-foreground transition-opacity"
                 title="关闭 Tab"
               >
                 <X className="size-3" />

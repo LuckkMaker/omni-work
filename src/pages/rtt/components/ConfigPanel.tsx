@@ -150,7 +150,8 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
     if (!uid) return
     setStarting(true)
     setError(null)
-    useNotificationStore.getState().push({
+    // 整合"启动中"与"已完成"为同一条通知：先以 progress 显示，完成后 update 为 success/error
+    const notifId = useNotificationStore.getState().push({
       type: 'progress',
       title: 'RTT 会话启动中',
       message: '正在与下位机建立 RTT 连接...',
@@ -166,26 +167,32 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
         setSelectedUpChannel(result.up_channel)
         setSelectedDownChannel(result.down_channel)
         useRttStore.getState().resetTabs()
-        useNotificationStore.getState().push({
+        useNotificationStore.getState().update(notifId, {
           type: 'success',
           title: 'RTT 会话已启动',
           message: `Up: Channel ${result.up_channel}, Down: Channel ${result.down_channel}`,
+          autoClose: true,
+          autoCloseDelay: 3000,
         })
       } else {
         setError(result.error || '启动失败')
-        useNotificationStore.getState().push({
+        useNotificationStore.getState().update(notifId, {
           type: 'error',
           title: 'RTT 启动失败',
           message: result.error || '未知错误',
+          autoClose: true,
+          autoCloseDelay: 5000,
         })
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e)
       setError(msg)
-      useNotificationStore.getState().push({
+      useNotificationStore.getState().update(notifId, {
         type: 'error',
         title: 'RTT 启动失败',
         message: msg,
+        autoClose: true,
+        autoCloseDelay: 5000,
       })
     } finally {
       setStarting(false)
