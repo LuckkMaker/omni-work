@@ -491,34 +491,79 @@ def _sample_loop(self, uid):
 
         <h4>RingBuffer 设计</h4>
         <p>后端维护一个环形缓冲区，容量 = <code>max_points</code>（默认 100000）。每个采样点存储时间戳 + 所有变量值。支持暂停后回看、CSV 导出。高频模式下 RingBuffer 满时自动覆盖最旧数据。</p>
+
+        <h3>4.5 并发协调与对现有功能的影响评估</h3>
+        <p>Monitor 采样线程会持续占用探针的 SWD 事务，与现有 Flash、Commander、RTT 共享同一探针 session。以下是经评审确认的三个协调决策，是整个后端实现的正确性前提。</p>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>冲突场景</th><th>决策</th><th>实现方式</th></tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td>Monitor 采样运行时执行 Flash 擦写或 Commander 命令（需 halt CPU 独占探针）</td>
+                <td><strong>自动暂停并恢复</strong></td>
+                <td>在 <code>flash.py</code> / <code>commander.py</code> 路由入口调用 <code>monitor_backend.pause(uid)</code>，操作完成后调用 <code>monitor_backend.resume(uid)</code>。前端通过 <code>monitor.info</code> 事件提示"采样已暂停（Flash 操作中）"。</td>
+              </tr>
+              <tr>
+                <td>Monitor 采样线程与 RTT 轮询线程并发读同一探针 SWD（pyOCD deferred_transfers 线程安全性未经验证）</td>
+                <td><strong>Monitor 与 RTT 互斥运行</strong></td>
+                <td>同一探针下 Monitor 和 RTT 只能运行其一。启动 Monitor 时若 RTT 在运行则提示用户先停止 RTT，反之亦然。<code>monitor_backend.start()</code> 检查 RTT 状态，<code>rtt_backend.start()</code> 检查 Monitor 状态，互斥准入。</td>
+              </tr>
+              <tr>
+                <td>探针断开时 Monitor 会话清理</td>
+                <td><strong>复用 RTT 断开清理机制</strong></td>
+                <td>在现有探针断开回调（<code>probe_monitor</code> / <code>pyocd_backend</code> 的 disconnect 处理）中加入 <code>monitor_backend.stop(uid)</code>，与 RTT 保持一致，无额外影响。</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+
+        <div class="callout warn">
+          <div class="callout-title">对现有代码的改动点</div>
+          <p>上述决策需要对现有文件做<strong>最小化侵入式改动</strong>：</p>
+          <ul>
+            <li><code>python/api/flash.py</code> / <code>python/api/commander.py</code>：在会话操作入口加 <code>monitor_backend.pause/resume</code> 钩子（2-3 行/处）</li>
+            <li><code>python/core/rtt_backend.py</code>：<code>start()</code> 增加 Monitor 状态检查（3-5 行）</li>
+            <li><code>python/core/pyocd_backend.py</code> 或 <code>probe_monitor.py</code>：断开回调加 <code>monitor_backend.stop</code>（1-2 行）</li>
+            <li><strong>不改动</strong> Flash/Commander/RTT 的核心业务逻辑，仅在边界加协调钩子</li>
+          </ul>
+        </div>
+
+        <div class="callout ok">
+          <div class="callout-title">无影响的部分</div>
+          <p>前端新增 Monitor 路由/store/service 为纯新增，不影响现有页面；<code>EventManager</code> 新增 <code>monitor.*</code> 事件不影响现有事件；ELF 解析复用 pyOCD <code>ElfSymbolDecoder</code>（只读操作）；REST 新增路由不改现有路由。</p>
+        </div>
       </section>
 
       <section id="layout">
         <h2>5 前端页面布局</h2>
-        <p>布局复用 RTT 页面的"左侧主区 + 右侧可拖拽配置面板 + 底部可隐藏日志"模式，用户已熟悉。整体分为<strong>顶部工具栏 + 左侧变量浏览器 + 中央波形区 + 右侧通道面板 + 底部 Watch 面板</strong>五区。</p>
+        <p>布局复用 RTT 页面的"主区 + 右侧可拖拽配置面板 + 底部可隐藏面板"模式。根据评审反馈调整：<strong>变量浏览器改为弹窗</strong>（非常驻），"添加变量"入口放在右侧边栏顶部，顶部工具栏只保留采样控制，中央全部留给波形显示区。</p>
 
-        <div class="wireframe">┌──────────────────────────────────────────────────────────────────┐
-│ <span class="hl">Toolbar</span> [加载ELF] [采样率▼ 1kHz] [▶启动/⏹停止] [●录制] [导出] [Follow] │
-├─────────────┬────────────────────────────────────┬───────────────────┤
-│ <span class="hl2">变量浏览器</span>  │ <span class="hl">波形显示区（主区域）</span>                │ <span class="hl2">通道面板</span>          │
-│             │                                    │                   │
-│ <span class="lbl">[搜索框]</span>   │  ┌──────────────────────────────┐ │ ☑ ch1 motor_rpm  │
-│ ─────────  │  │ Channel 1: motor_rpm         │ │   <span class="lbl">● 蓝色</span> 偏移 0   │
-│ ☑ counter  │  │  ～～～～～～～～～～～～～～  │ │   缩放 1.0        │
-│ ☑ voltage  │  ├──────────────────────────────┤ │ ☑ ch2 voltage    │
-│ ☐ temp     │  │ Channel 2: voltage / current │ │   <span class="lbl">● 绿色</span> 偏移 0   │
-│ ☑ current  │  │  ～～～～～～～～～～～～～～  │ │   缩放 1.0        │
-│  ...        │  ├──────────────────────────────┤ │ ☐ ch3 temp       │
-│             │  │ <span class="lbl">游标A</span>│<span class="lbl">游标B</span>                    │ │   <span class="lbl">● 橙色</span>           │
-│ <span class="lbl">[+手动地址]</span>│  │ Δt=2.3ms Δv=1.24             │ │                   │
-├─────────────┴────────────────────────────────────┴───────────────────┤
-│ <span class="hl">Watch 监视面板</span>（可拖拽调整高度，可隐藏）                      │
+        <div class="wireframe">┌──────────────────────────────────────────────────────────────┐
+│ <span class="hl">Toolbar</span> [采样率▼ 1kHz] [▶启动/⏹停止] [●录制] [导出] [Follow] [游标] │
+├────────────────────────────────────────────┬─────────────────┤
+│ <span class="hl">波形显示区（占满主区域）</span>                  │ <span class="hl2">右侧边栏</span>        │
+│                                            │                 │
+│  ┌──────────────────────────────────────┐  │ [<span class="hl">+ 添加变量</span>]    │ ← 点击弹窗
+│  │ Channel 1: motor_rpm                 │  ├─────────────────┤
+│  │  ～～～～～～～～～～～～～～～～    │  │ <span class="hl2">通道面板</span>        │
+│  ├──────────────────────────────────────┤  │ ☑ ch1 motor_rpm │
+│  │ Channel 2: voltage / current         │  │   <span class="lbl">● 蓝</span> 偏移0 缩放1│
+│  │  ～～～～～～～～～～～～～～～～    │  │ ☑ ch2 voltage   │
+│  ├──────────────────────────────────────┤  │   <span class="lbl">● 绿</span> 偏移0 缩放1│
+│  │ <span class="lbl">游标A</span>│<span class="lbl">游标B</span>  Δt=2.3ms Δv=1.24      │  │ ☐ ch3 temp     │
+│  └──────────────────────────────────────┘  │   <span class="lbl">● 橙</span>           │
+│                                            │                 │
+├────────────────────────────────────────────┴─────────────────┤
+│ <span class="hl">Watch 监视面板</span>（可拖拽调整高度，可隐藏）              │
 │ Name      │ Address     │ Type   │ Value    │ Refresh(s) │ Remark    │
 │ counter   │ 0x20000000  │ uint32 │ 12345    │ 0.001      │ 电机转速  │
 │ voltage   │ 0x20000004  │ float  │ 12.34    │ 0.001      │ 母线电压  │
-├────────────────────────────────────────────────────────────────────-┤
-│ <span class="lbl">可拖拽日志区（可选隐藏）</span>                                  │
-└──────────────────────────────────────────────────────────────────┘</div>
+└──────────────────────────────────────────────────────────────┘</div>
+
+        <p>与原计划相比的关键变化：去掉左侧变量浏览器栏，主区域宽度增加；变量浏览器改为弹窗（点"添加变量"按钮触发），非常驻；"添加变量"按钮固定在右侧边栏顶部，下方是通道面板。</p>
 
         <h3>5.1 组件清单</h3>
         <div class="table-wrap">
@@ -527,14 +572,13 @@ def _sample_loop(self, uid):
               <tr><th>组件</th><th>路径</th><th>说明</th></tr>
             </thead>
             <tbody>
-              <tr><td>MonitorToolbar</td><td><code>pages/monitor/components/</code></td><td>顶部工具栏：ELF 加载、采样率、启停、录制、Follow 开关</td></tr>
-              <tr><td>VariableBrowser</td><td>同上</td><td>左栏：ELF 符号列表 + 搜索 + 勾选 + 手动地址</td></tr>
+              <tr><td>MonitorToolbar</td><td><code>pages/monitor/components/</code></td><td>顶部工具栏：采样率、启停、录制、Follow、游标开关（不含变量添加）</td></tr>
+              <tr><td>VariableBrowserDialog</td><td>同上</td><td>ELF 变量浏览器弹窗：符号搜索 + 勾选 + 手动地址</td></tr>
+              <tr><td>ChannelPanel</td><td>同上</td><td>右侧边栏：顶部"添加变量"按钮 + 通道列表（颜色/显隐/偏移/缩放）</td></tr>
               <tr><td>WaveformPanel</td><td>同上</td><td>中区：uPlot 图表网格，支持多通道叠加/分屏</td></tr>
               <tr><td>WaveformChart</td><td>同上</td><td>单个 uPlot 图表实例</td></tr>
-              <tr><td>ChannelPanel</td><td>同上</td><td>右栏：通道颜色/显隐/偏移/缩放配置</td></tr>
               <tr><td>WatchPanel</td><td>同上</td><td>底部：6 列变量监视表格</td></tr>
               <tr><td>CursorOverlay</td><td>同上</td><td>游标叠加层：左右双游标 + 测量值</td></tr>
-              <tr><td>ElfLoadDialog</td><td>同上</td><td>ELF 文件选择对话框</td></tr>
             </tbody>
           </table>
         </div>
@@ -551,27 +595,29 @@ def _sample_loop(self, uid):
       </section>
 
       <section id="elf-browser">
-        <h2>6 ELF 变量浏览器</h2>
-        <p>参考 SEGGER Ozone 的 AXF 变量浏览器 UI 风格（见用户提供的参考截图），实现一个专业的符号浏览与勾选面板。核心交互：加载 ELF → 自动解析 DWARF → 表格展示变量名/地址/类型 → 勾选添加到监视。</p>
+        <h2>6 ELF 变量浏览器（弹窗）</h2>
+        <p>变量浏览器以<strong>弹窗（Dialog）</strong>形式呈现，用户点击右侧边栏的"添加变量"按钮触发。参考 SEGGER Ozone 的 AXF 变量浏览器 UI 风格，实现专业符号浏览与勾选。核心交互：加载 ELF → 自动解析 DWARF → 表格展示变量名/地址/类型 → 勾选 → 点击"添加到监视"关闭弹窗。</p>
 
-        <h3>6.1 UI 布局</h3>
-        <div class="wireframe">┌─────────────────────────────────────┐
-│ <span class="lbl">📁</span> ELF: D:\...\omni.axf  [<span class="hl">重新加载</span>] │
-├─────────────────────────────────────┤
-│ <span class="lbl">🔍</span> <span class="hl">Filter on variable name</span>        │
-│ <span class="lbl">类型▼</span> 全部  地址范围▼            │
-├──┬──────────────┬─────────────┬───────┤
-│☐│ Name      ↕  │ Address     │ Type  │
-├──┼──────────────┼─────────────┼───────┤
-│☑│ counter       │ 0x20000000  │uint32 │ <span class="hl2">← 斑马纹</span>
-│☑│ voltage       │ 0x20000004  │float  │
-│☐│ temp_buf      │ 0x20000008  │int8[16│
-│☑│ motor_rpm     │ 0x20000020  │int32  │
-│☐│ _SEGGER_RTT...│ 0x20000024  │struct │ <span class="lbl">← 截断+tooltip</span>
-│  │ ...           │             │       │
-├──┴──────────────┴─────────────┴───────┤
-│ <span class="hl">☑全选</span>  取消全选        4/128 已选│
-└─────────────────────────────────────┘</div>
+        <h3>6.1 弹窗布局</h3>
+        <div class="wireframe">┌─ 添加变量 ──────────────────────────────────────┐
+│ <span class="lbl">📁</span> ELF: D:\...\omni.axf  [<span class="hl">重新加载</span>]         │
+├──────────────────────────────────────────────┤
+│ <span class="lbl">🔍</span> <span class="hl">Filter on variable name</span>                  │
+│ <span class="lbl">类型▼</span> 全部  地址范围▼                          │
+├──┬──────────────────┬─────────────┬───────┬──────┤
+│☐│ Name          ↕  │ Address     │ Type  │ Size │
+├──┼──────────────────┼─────────────┼───────┼──────┤
+│☑│ counter           │ 0x20000000  │uint32 │ 4    │ <span class="hl2">← 斑马纹</span>
+│☑│ voltage           │ 0x20000004  │float  │ 4    │
+│☐│ temp_buf          │ 0x20000008  │int8[16│ 16   │
+│☑│ motor_rpm         │ 0x20000020  │int32  │ 4    │
+│☐│ _SEGGER_RTT...    │ 0x20000024  │struct │ 48   │ <span class="lbl">← 截断+tooltip</span>
+│  │ ...               │             │       │      │
+├──┴──────────────────┴─────────────┴───────┴──────┤
+│ <span class="hl">☑全选</span>  取消全选        4/128 已选  [+手动地址]│
+├──────────────────────────────────────────────┤
+│                              [取消]  [添加到监视] │
+└──────────────────────────────────────────────┘</div>
 
         <h3>6.2 列定义</h3>
         <div class="table-wrap">
