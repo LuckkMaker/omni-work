@@ -151,7 +151,7 @@ export function MultiStringDialog({ open, onOpenChange, uid, running, getSendCha
           <div className="flex items-center gap-2 rounded-md border border-border p-2">
             <Checkbox
               checked={newIsHex}
-              onCheckedChange={(v) => setNewIsHex(v === true)}
+              onCheckedChange={(v) => setNewIsHex(v)}
               title="以 hex 格式发送"
             />
             <Input
@@ -180,17 +180,17 @@ export function MultiStringDialog({ open, onOpenChange, uid, running, getSendCha
                 暂无字符串，请在上方添加
               </div>
             ) : (
-              <table className="w-full text-xs">
+              <table className="w-full text-xs border-collapse">
                 <thead className="sticky top-0 bg-muted/50">
-                  <tr className="text-left text-muted-foreground">
-                    <th className="w-16 px-2 py-1.5 font-medium text-center" title="启用发送">发送</th>
-                    <th className="w-16 px-2 py-1.5 font-medium text-center" title="以 hex 格式发送">HEX</th>
-                    <th className="px-2 py-1.5 font-medium text-center">内容</th>
-                    <th className="w-16 px-2 py-1.5 font-medium text-center">注释</th>
-                    <th className="w-16 px-2 py-1.5 font-medium text-center" title="发送顺序">顺序</th>
-                    <th className="w-16 px-2 py-1.5 font-medium text-center" title="发送后延时（ms）">延时</th>
-                    <th className="w-16 px-2 py-1.5 font-medium text-center" title="字节数">字节</th>
-                    <th className="w-16 px-2 py-1.5 font-medium text-center">操作</th>
+                  <tr className="text-muted-foreground">
+                    <th className="w-16 px-2 py-1.5 font-medium text-center border border-border" title="启用发送">发送</th>
+                    <th className="w-16 px-2 py-1.5 font-medium text-center border border-border" title="以 hex 格式发送">HEX</th>
+                    <th className="px-2 py-1.5 font-medium text-left border border-border">内容</th>
+                    <th className="w-16 px-2 py-1.5 font-medium text-center border border-border">注释</th>
+                    <th className="w-16 px-2 py-1.5 font-medium text-center border border-border" title="发送顺序">顺序</th>
+                    <th className="w-16 px-2 py-1.5 font-medium text-center border border-border" title="发送后延时（ms）">延时</th>
+                    <th className="w-16 px-2 py-1.5 font-medium text-center border border-border" title="字节数">字节</th>
+                    <th className="w-16 px-2 py-1.5 font-medium text-center border border-border">操作</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -198,20 +198,20 @@ export function MultiStringDialog({ open, onOpenChange, uid, running, getSendCha
                     const bytes = parseItemBytes(item)
                     const isSendingThis = sendingId === item.id
                     return (
-                      <tr key={item.id} className="border-t border-border/50 hover:bg-muted/30">
-                        <td className="px-2 py-1 text-center">
+                      <tr key={item.id} className="hover:bg-muted/30">
+                        <td className="px-2 py-1 text-center border border-border">
                           <Checkbox
                             checked={item.enabled}
-                            onCheckedChange={(v) => updateMultiString(item.id, { enabled: v === true })}
+                            onCheckedChange={(v) => updateMultiString(item.id, { enabled: v })}
                           />
                         </td>
-                        <td className="px-2 py-1 text-center">
+                        <td className="px-2 py-1 text-center border border-border">
                           <Checkbox
                             checked={item.isHex}
-                            onCheckedChange={(v) => updateMultiString(item.id, { isHex: v === true })}
+                            onCheckedChange={(v) => updateMultiString(item.id, { isHex: v })}
                           />
                         </td>
-                        <td className="px-2 py-1 text-center">
+                        <td className="px-2 py-1 text-left border border-border">
                           <input
                             type="text"
                             value={item.content}
@@ -219,17 +219,17 @@ export function MultiStringDialog({ open, onOpenChange, uid, running, getSendCha
                             className="w-full bg-transparent font-mono text-xs outline-none focus:bg-background focus:px-1"
                           />
                         </td>
-                        <td className="px-2 py-1 text-center">
+                        <td className="px-2 py-1 text-center border border-border">
                           <input
                             type="text"
                             value={item.comment}
                             onChange={(e) => updateMultiString(item.id, { comment: e.target.value })}
                             placeholder="-"
-                            className="w-full bg-transparent text-xs text-muted-foreground outline-none focus:bg-background focus:px-1"
+                            className="w-full bg-transparent text-xs text-muted-foreground text-center outline-none focus:bg-background focus:px-1"
                           />
                         </td>
-                        <td className="px-2 py-1 text-center font-mono text-muted-foreground">{idx + 1}</td>
-                        <td className="px-2 py-1 text-center">
+                        <td className="px-2 py-1 text-center border border-border font-mono text-muted-foreground">{idx + 1}</td>
+                        <td className="px-2 py-1 text-center border border-border">
                           <input
                             type="number"
                             min={0}
@@ -240,10 +240,10 @@ export function MultiStringDialog({ open, onOpenChange, uid, running, getSendCha
                             title="发送后延时（ms）"
                           />
                         </td>
-                        <td className="px-2 py-1 text-center font-mono text-muted-foreground">
+                        <td className="px-2 py-1 text-center border border-border font-mono text-muted-foreground">
                           {bytes?.length ?? '?'}
                         </td>
-                        <td className="px-2 py-1">
+                        <td className="px-2 py-1 text-center border border-border">
                           <div className="flex items-center justify-center gap-0.5">
                             <button
                               onClick={() => handleSendOne(item)}

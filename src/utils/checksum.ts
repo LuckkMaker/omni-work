@@ -127,7 +127,12 @@ export function computeChecksum(data: Uint8Array, type: ChecksumType): Uint8Arra
  * @param data 原始数据
  * @param type 校验类型
  * @param start 起始字节索引（0-based，含）
- * @param end 结束字节索引（0-based，含；-1 表示末尾）
+ * @param end 结束字节索引：
+ *   - -1：至末尾（含全部字节）
+ *   - -2：排除末尾 1 字节
+ *   - -3：排除末尾 2 字节
+ *   - 以此类推，负值 N 表示排除末尾 |N+1| 字节
+ *   - >=0：0-based 索引（含）
  */
 export function computeChecksumWithRange(
   data: Uint8Array,
@@ -136,7 +141,9 @@ export function computeChecksumWithRange(
   end: number,
 ): Uint8Array {
   const safeStart = Math.max(0, Math.min(start, data.length))
-  const safeEnd = end < 0 ? data.length : Math.min(end + 1, data.length)
+  const safeEnd = end < 0
+    ? Math.max(safeStart, data.length + (end + 1))
+    : Math.min(end + 1, data.length)
   const slice = data.slice(safeStart, safeEnd)
   return computeChecksum(slice, type)
 }

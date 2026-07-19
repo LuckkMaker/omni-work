@@ -158,9 +158,11 @@ export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
       termRef.current = term
       fitRef.current = fit
 
-      // 欢迎信息
-      term.write(`${COLOR.bold}${COLOR.cyan}RTT Viewer${COLOR.reset}\r\n`)
-      term.write(`${COLOR.dim}等待启动 RTT 会话...${COLOR.reset}\r\n`)
+      // 欢迎信息（仅在未运行时显示；已运行时跳过，避免残留）
+      if (!runningRef.current) {
+        term.write(`${COLOR.bold}${COLOR.cyan}RTT Viewer${COLOR.reset}\r\n`)
+        term.write(`${COLOR.dim}等待启动 RTT 会话...${COLOR.reset}\r\n`)
+      }
 
       // 复制支持 + Ctrl+A 全选
       // 影响评估：
@@ -256,7 +258,7 @@ export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
       }
     }, [inputMode])
 
-    // 运行状态变化：通过全局通知提示（不再写入终端，避免污染接收数据）
+    // 运行状态变化：启动时清除欢迎文字（通知已由 ConfigPanel 发出）
     const isFirstMount = useRef(true)
     useEffect(() => {
       if (isFirstMount.current) {
@@ -264,15 +266,8 @@ export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
         return
       }
       if (running) {
-        useNotificationStore.getState().push({
-          type: 'success',
-          title: 'RTT 会话已启动',
-        })
-      } else {
-        useNotificationStore.getState().push({
-          type: 'info',
-          title: 'RTT 会话已停止',
-        })
+        // 清除"等待启动 RTT 会话"等欢迎文字，让接收数据干净显示
+        termRef.current?.clear()
       }
     }, [running])
 
@@ -327,6 +322,6 @@ export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
       termRef.current?.clear()
     }, [tabId])
 
-    return <div ref={containerRef} className="h-full w-full overflow-hidden pl-2 py-1" />
+    return <div ref={containerRef} className="h-full w-full overflow-hidden pl-2" />
   }
 )

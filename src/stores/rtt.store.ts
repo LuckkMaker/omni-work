@@ -190,10 +190,6 @@ interface RttState {
   /** 多字符串发送间隔（ms） */
   multiStringInterval: number
 
-  /** 控制块搜索地址（hex 字符串，空则自动检测） */
-  searchAddress: string
-  /** 控制块搜索范围（hex 字符串，空则自动） */
-  searchSize: string
   /** RTT 日志 */
   logs: LogEvent[]
 
@@ -214,8 +210,6 @@ interface RttState {
   setInputMode: (mode: InputMode) => void
   setLocalEcho: (on: boolean) => void
   setAutoWrap: (autoWrap: boolean) => void
-  setSearchAddress: (addr: string) => void
-  setSearchSize: (size: string) => void
   addLog: (log: LogEvent) => void
   clearLogs: () => void
   reset: () => void
@@ -300,9 +294,6 @@ export const useRttStore = create<RttState>((set, get) => ({
   // 多字符串
   multiStrings: loadMultiStrings(),
   multiStringInterval: loadNum('rtt:multiStringInterval', 1000),
-
-  searchAddress: '',
-  searchSize: '',
   logs: [],
 
   tabs: [createAllChannelTab()],
@@ -405,8 +396,6 @@ export const useRttStore = create<RttState>((set, get) => ({
     try { localStorage.setItem('rtt:multiStringInterval', String(v)) } catch { /* ignore */ }
     set({ multiStringInterval: v })
   },
-  setSearchAddress: (addr) => set({ searchAddress: addr }),
-  setSearchSize: (size) => set({ searchSize: size }),
   addLog: (log) => set((s) => ({ logs: [...s.logs, log].slice(-500) })),
   clearLogs: () => set({ logs: [] }),
   reset: () =>

@@ -13,11 +13,27 @@ import {
   SelectItem,
 } from '@/components/ui/select'
 import { useRttStore } from '@/stores/rtt.store'
+import { useNotificationStore } from '@/stores/notification.store'
 import { rttService } from '@/services/rtt.service'
 import { CHECKSUM_OPTIONS, type ChecksumType } from '@/utils/checksum'
 import { cn } from '@/lib/utils'
 import { SaveFormatDialog } from './SaveFormatDialog'
 import { SendFileButton } from './SendFileButton'
+
+/** 校验起始字节选项（UI 为 1-based 显示，值为 0-based 内部索引） */
+const CHECKSUM_START_OPTIONS = Array.from({ length: 8 }, (_, i) => ({
+  label: `第${i + 1}字节`,
+  value: i,
+}))
+
+/** 校验结束字节选项（负值表示从末尾排除 N 字节） */
+const CHECKSUM_END_OPTIONS = [
+  { label: '末尾', value: -1 },
+  { label: '倒数第1字节', value: -2 },
+  { label: '倒数第2字节', value: -3 },
+  { label: '倒数第3字节', value: -4 },
+  { label: '倒数第4字节', value: -5 },
+]
 
 interface ConfigPanelProps {
   uid: string | null
@@ -98,8 +114,6 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
     localEcho,
     recordToFile,
     recordFileName,
-    searchAddress,
-    searchSize,
     sendHex,
     sendNewline,
     sendTiming,
@@ -118,8 +132,6 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
     setInputMode,
     setLocalEcho,
     setRecordToFile,
-    setSearchAddress,
-    setSearchSize,
     reset,
     setSendHex,
     setSendNewline,
@@ -138,12 +150,13 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
     if (!uid) return
     setStarting(true)
     setError(null)
+    useNotificationStore.getState().push({
+      type: 'progress',
+      title: 'RTT 会话启动中',
+      message: '正在与下位机建立 RTT 连接...',
+    })
     try {
-      const addr = searchAddress.trim() ? parseInt(searchAddress.trim(), 16) : undefined
-      const size = searchSize.trim() ? parseInt(searchSize.trim(), 16) : undefined
       const result = await rttService.start(uid, {
-        address: addr,
-        size: size,
         up_channel: selectedUpChannel,
         down_channel: selectedDownChannel,
       })
@@ -153,21 +166,41 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
         setSelectedUpChannel(result.up_channel)
         setSelectedDownChannel(result.down_channel)
         useRttStore.getState().resetTabs()
+        useNotificationStore.getState().push({
+          type: 'success',
+          title: 'RTT 会话已启动',
+          message: `Up: Channel ${result.up_channel}, Down: Channel ${result.down_channel}`,
+        })
       } else {
         setError(result.error || '启动失败')
+        useNotificationStore.getState().push({
+          type: 'error',
+          title: 'RTT 启动失败',
+          message: result.error || '未知错误',
+        })
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
+      const msg = e instanceof Error ? e.message : String(e)
+      setError(msg)
+      useNotificationStore.getState().push({
+        type: 'error',
+        title: 'RTT 启动失败',
+        message: msg,
+      })
     } finally {
       setStarting(false)
     }
-  }, [uid, searchAddress, searchSize, selectedUpChannel, selectedDownChannel, setStarting, setError, setChannels, setRunning, setSelectedUpChannel, setSelectedDownChannel])
+  }, [uid, selectedUpChannel, selectedDownChannel, setStarting, setError, setChannels, setRunning, setSelectedUpChannel, setSelectedDownChannel])
 
   const handleStop = useCallback(async () => {
     if (!uid) return
     try { await rttService.stop(uid) } catch { /* 忽略 */ }
     setRunning(false)
     reset()
+    useNotificationStore.getState().push({
+      type: 'info',
+      title: 'RTT 会话已停止',
+    })
   }, [uid, setRunning, reset])
 
   const handleClear = useCallback(() => { terminalRef.current?.clear() }, [terminalRef])
@@ -258,12 +291,6 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
             停止
           </Button>
         </div>
-        {!running && (
-          <div className="grid grid-cols-2 gap-1.5">
-            <Input placeholder="地址 (hex)" value={searchAddress} onChange={(e) => setSearchAddress(e.target.value)} className="h-7 text-[11px] font-mono" />
-            <Input placeholder="范围 (hex)" value={searchSize} onChange={(e) => setSearchSize(e.target.value)} className="h-7 text-[11px] font-mono" />
-          </div>
-        )}
         {recordToFile && (
           <div className="flex items-center gap-1.5 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-600">
             <span className="size-1.5 rounded-full bg-amber-500 animate-pulse" />
@@ -418,27 +445,42 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
             </SelectContent>
           </Select>
         </ConfigSubRow>
+        {/* 校验范围：第 3 行起始字节下拉；第 4 行结束字节下拉 */}
         <ConfigSubRow disabled={!sendChecksum || !running}>
-          <span className="text-[10px] text-muted-foreground">字节</span>
-          <Input
-            type="number"
-            min={0}
-            value={sendChecksumStart}
-            onChange={(e) => setSendChecksumStart(Number(e.target.value))}
-            disabled={!sendChecksum || !running}
-            className="h-5 w-12 text-[11px] font-mono"
-            title="校验起始字节索引（0-based，含）"
-          />
-          <span className="text-[10px] text-muted-foreground">至</span>
-          <Input
-            type="number"
-            min={-1}
-            value={sendChecksumEnd}
-            onChange={(e) => setSendChecksumEnd(Number(e.target.value))}
-            disabled={!sendChecksum || !running}
-            className="h-5 w-12 text-[11px] font-mono"
-            title="校验结束字节索引（-1=末尾）"
-          />
+          <span className="text-[10px] text-muted-foreground">起始</span>
+          <Select
+            value={String(sendChecksumStart)}
+            onValueChange={(v) => setSendChecksumStart(Number(v))}
+          >
+            <SelectTrigger className="h-5 flex-1 text-[11px] px-1.5" title="校验起始字节">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {CHECKSUM_START_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={String(opt.value)} className="text-xs">
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </ConfigSubRow>
+        <ConfigSubRow disabled={!sendChecksum || !running}>
+          <span className="text-[10px] text-muted-foreground">结束</span>
+          <Select
+            value={String(sendChecksumEnd)}
+            onValueChange={(v) => setSendChecksumEnd(Number(v))}
+          >
+            <SelectTrigger className="h-5 flex-1 text-[11px] px-1.5" title="校验结束字节">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              {CHECKSUM_END_OPTIONS.map((opt) => (
+                <SelectItem key={opt.value} value={String(opt.value)} className="text-xs">
+                  {opt.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </ConfigSubRow>
 
         {/* 发送文件：高度统一 h-7 */}
