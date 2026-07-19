@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { NavLink, Outlet, useLocation } from 'react-router-dom'
-import { Zap, Terminal, Radio, Settings, Cpu, Wrench, ChevronDown, AlertOctagon, FileBarChart, Binary, FileCheck2 } from 'lucide-react'
+import { Download, SquareTerminal, Logs, Settings, SquareActivity, Wrench, ChevronDown, AlertOctagon, FileBarChart, Binary, FileCheck2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useBackendStatus } from '@/hooks/useBackendStatus'
 import { useProbeWs } from '@/hooks/useProbeWs'
@@ -14,10 +14,10 @@ import { NotificationContainer } from '@/components/NotificationContainer'
 import CommanderPage from '@/pages/commander'
 
 const navItems = [
-  { to: '/flash', label: 'Flash', icon: Zap },
-  { to: '/commander', label: 'Commander', icon: Terminal },
-  { to: '/rtt', label: 'RTT Viewer', icon: Radio },
-  { to: '/monitor', label: 'Monitor', icon: Cpu },
+  { to: '/flash', label: 'Flash', icon: Download },
+  { to: '/commander', label: 'Commander', icon: SquareTerminal },
+  { to: '/rtt', label: 'RTT Viewer', icon: Logs },
+  { to: '/monitor', label: 'Monitor', icon: SquareActivity },
   { to: '/settings', label: '设置', icon: Settings },
 ]
 

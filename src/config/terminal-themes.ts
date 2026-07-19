@@ -275,8 +275,9 @@ export const TERMINAL_THEMES: TerminalTheme[] = [
       background: '#0C0C0C',
       foreground: '#CCCCCC',
       cursor: '#FFFFFF',
-      selectionBackground: '#264F78',
-      selectionForeground: '#FFFFFF',
+      // 选区改为白底黑字，提升选中可读性（对标 Windows Terminal 默认选区行为）
+      selectionBackground: '#FFFFFF',
+      selectionForeground: '#000000',
       black: '#0C0C0C',
       red: '#C50F1F',
       green: '#13A10E',

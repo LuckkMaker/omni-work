@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { RttChannel } from '@/services/rtt.service'
 import type { LogEvent } from '@shared/types'
+import type { ChecksumType } from '@/utils/checksum'
 
 export type DisplayMode = 'text' | 'hex'
 
@@ -9,6 +10,21 @@ export type InputMode = 'bar' | 'terminal'
 
 /** Tab 模式 */
 export type TabMode = 'all' | 'single'
+
+/** 多字符串条目 */
+export interface MultiStringItem {
+  id: string
+  /** 内容（文本或 hex 字符串，由 isHex 决定解析方式） */
+  content: string
+  /** 是否以 hex 格式发送 */
+  isHex: boolean
+  /** 用户注释 */
+  comment: string
+  /** 是否启用发送 */
+  enabled: boolean
+  /** 发送顺序（从 0 开始） */
+  order: number
+}
 
 /** RTT 终端 Tab */
 export interface RttTab {
@@ -40,6 +56,17 @@ const MAX_BUFFER_SIZE = 10 * 1024 * 1024
 const INPUT_MODE_KEY = 'rtt:inputMode'
 const LOCAL_ECHO_KEY = 'rtt:localEcho'
 
+// ── 发送配置持久化 ──────────────────────────
+const SEND_HEX_KEY = 'rtt:sendHex'
+const SEND_NEWLINE_KEY = 'rtt:sendNewline'
+const SEND_TIMING_KEY = 'rtt:sendTiming'
+const SEND_TIMING_INTERVAL_KEY = 'rtt:sendTimingInterval'
+const SEND_CHECKSUM_KEY = 'rtt:sendChecksum'
+const SEND_CHECKSUM_TYPE_KEY = 'rtt:sendChecksumType'
+const SEND_CHECKSUM_START_KEY = 'rtt:sendChecksumStart'
+const SEND_CHECKSUM_END_KEY = 'rtt:sendChecksumEnd'
+const MULTI_STRINGS_KEY = 'rtt:multiStrings'
+
 function loadInputMode(): InputMode {
   try {
     const v = localStorage.getItem(INPUT_MODE_KEY)
@@ -54,6 +81,44 @@ function loadLocalEcho(): boolean {
     if (v !== null) return v === '1'
   } catch { /* ignore */ }
   return true
+}
+
+function loadBool(key: string, def: boolean): boolean {
+  try {
+    const v = localStorage.getItem(key)
+    if (v !== null) return v === '1'
+  } catch { /* ignore */ }
+  return def
+}
+
+function loadNum(key: string, def: number): number {
+  try {
+    const v = localStorage.getItem(key)
+    if (v !== null) {
+      const n = Number(v)
+      if (!Number.isNaN(n)) return n
+    }
+  } catch { /* ignore */ }
+  return def
+}
+
+function loadStr(key: string, def: string): string {
+  try {
+    const v = localStorage.getItem(key)
+    if (v !== null) return v
+  } catch { /* ignore */ }
+  return def
+}
+
+function loadMultiStrings(): MultiStringItem[] {
+  try {
+    const v = localStorage.getItem(MULTI_STRINGS_KEY)
+    if (v) {
+      const arr = JSON.parse(v) as MultiStringItem[]
+      if (Array.isArray(arr)) return arr.slice(0, 100)
+    }
+  } catch { /* ignore */ }
+  return []
 }
 
 interface RttState {
@@ -83,6 +148,37 @@ interface RttState {
   localEcho: boolean
   /** 是否自动换行 */
   autoWrap: boolean
+
+  // ── 发送配置 ──────────────────────────
+  /** hex 发送模式 */
+  sendHex: boolean
+  /** 发送时追加换行 */
+  sendNewline: boolean
+  /** 定时发送开关 */
+  sendTiming: boolean
+  /** 定时发送间隔（ms） */
+  sendTimingInterval: number
+  /** 加校验开关 */
+  sendChecksum: boolean
+  /** 校验类型 */
+  sendChecksumType: ChecksumType
+  /** 校验起始字节索引（0-based，含） */
+  sendChecksumStart: number
+  /** 校验结束字节索引（-1=末尾，否则 0-based 含） */
+  sendChecksumEnd: number
+
+  // ── 接收到文件 ──────────────────────────
+  /** 是否正在把接收数据写入文件 */
+  recordToFile: boolean
+  /** 当前录制文件名（仅显示用） */
+  recordFileName: string | null
+
+  // ── 多字符串 ──────────────────────────
+  /** 多字符串列表（上限 100） */
+  multiStrings: MultiStringItem[]
+  /** 多字符串发送间隔（ms） */
+  multiStringInterval: number
+
   /** 控制块搜索地址（hex 字符串，空则自动检测） */
   searchAddress: string
   /** 控制块搜索范围（hex 字符串，空则自动） */
@@ -112,6 +208,26 @@ interface RttState {
   addLog: (log: LogEvent) => void
   clearLogs: () => void
   reset: () => void
+
+  // 发送配置 setter
+  setSendHex: (on: boolean) => void
+  setSendNewline: (on: boolean) => void
+  setSendTiming: (on: boolean) => void
+  setSendTimingInterval: (n: number) => void
+  setSendChecksum: (on: boolean) => void
+  setSendChecksumType: (t: ChecksumType) => void
+  setSendChecksumStart: (n: number) => void
+  setSendChecksumEnd: (n: number) => void
+
+  // 接收到文件 setter
+  setRecordToFile: (on: boolean, fileName?: string | null) => void
+
+  // 多字符串 setter
+  addMultiString: (item: Omit<MultiStringItem, 'id' | 'order'>) => void
+  updateMultiString: (id: string, patch: Partial<Omit<MultiStringItem, 'id'>>) => void
+  removeMultiString: (id: string) => void
+  reorderMultiStrings: (id: string, direction: 'up' | 'down') => void
+  setMultiStringInterval: (n: number) => void
 
   /** 向指定 Tab 追加数据 */
   appendTabData: (tabId: string, data: Uint8Array) => void
@@ -155,6 +271,25 @@ export const useRttStore = create<RttState>((set, get) => ({
   inputMode: loadInputMode(),
   localEcho: loadLocalEcho(),
   autoWrap: true,
+
+  // 发送配置初始值（持久化）
+  sendHex: loadBool(SEND_HEX_KEY, false),
+  sendNewline: loadBool(SEND_NEWLINE_KEY, true),
+  sendTiming: loadBool(SEND_TIMING_KEY, false),
+  sendTimingInterval: loadNum(SEND_TIMING_INTERVAL_KEY, 1000),
+  sendChecksum: loadBool(SEND_CHECKSUM_KEY, false),
+  sendChecksumType: (loadStr(SEND_CHECKSUM_TYPE_KEY, 'modbus-crc16') as ChecksumType),
+  sendChecksumStart: loadNum(SEND_CHECKSUM_START_KEY, 0),
+  sendChecksumEnd: loadNum(SEND_CHECKSUM_END_KEY, -1),
+
+  // 接收到文件
+  recordToFile: false,
+  recordFileName: null,
+
+  // 多字符串
+  multiStrings: loadMultiStrings(),
+  multiStringInterval: loadNum('rtt:multiStringInterval', 1000),
+
   searchAddress: '',
   searchSize: '',
   logs: [],
@@ -180,6 +315,85 @@ export const useRttStore = create<RttState>((set, get) => ({
     set({ localEcho: on })
   },
   setAutoWrap: (autoWrap) => set({ autoWrap }),
+
+  // 发送配置 setter（带持久化）
+  setSendHex: (on) => {
+    try { localStorage.setItem(SEND_HEX_KEY, on ? '1' : '0') } catch { /* ignore */ }
+    set({ sendHex: on })
+  },
+  setSendNewline: (on) => {
+    try { localStorage.setItem(SEND_NEWLINE_KEY, on ? '1' : '0') } catch { /* ignore */ }
+    set({ sendNewline: on })
+  },
+  setSendTiming: (on) => {
+    try { localStorage.setItem(SEND_TIMING_KEY, on ? '1' : '0') } catch { /* ignore */ }
+    set({ sendTiming: on })
+  },
+  setSendTimingInterval: (n) => {
+    const v = Math.max(10, Math.min(60000, Math.floor(n)))
+    try { localStorage.setItem(SEND_TIMING_INTERVAL_KEY, String(v)) } catch { /* ignore */ }
+    set({ sendTimingInterval: v })
+  },
+  setSendChecksum: (on) => {
+    try { localStorage.setItem(SEND_CHECKSUM_KEY, on ? '1' : '0') } catch { /* ignore */ }
+    set({ sendChecksum: on })
+  },
+  setSendChecksumType: (t) => {
+    try { localStorage.setItem(SEND_CHECKSUM_TYPE_KEY, t) } catch { /* ignore */ }
+    set({ sendChecksumType: t })
+  },
+  setSendChecksumStart: (n) => {
+    try { localStorage.setItem(SEND_CHECKSUM_START_KEY, String(n)) } catch { /* ignore */ }
+    set({ sendChecksumStart: n })
+  },
+  setSendChecksumEnd: (n) => {
+    try { localStorage.setItem(SEND_CHECKSUM_END_KEY, String(n)) } catch { /* ignore */ }
+    set({ sendChecksumEnd: n })
+  },
+
+  // 接收到文件 setter
+  setRecordToFile: (on, fileName) => set({
+    recordToFile: on,
+    recordFileName: fileName ?? (on ? null : null),
+  }),
+
+  // 多字符串 setter
+  addMultiString: (item) => set((s) => {
+    if (s.multiStrings.length >= 100) return s
+    const id = `ms_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+    const order = s.multiStrings.length
+    const next = [...s.multiStrings, { ...item, id, order }]
+    try { localStorage.setItem(MULTI_STRINGS_KEY, JSON.stringify(next)) } catch { /* ignore */ }
+    return { multiStrings: next }
+  }),
+  updateMultiString: (id, patch) => set((s) => {
+    const next = s.multiStrings.map((it) => it.id === id ? { ...it, ...patch } : it)
+    try { localStorage.setItem(MULTI_STRINGS_KEY, JSON.stringify(next)) } catch { /* ignore */ }
+    return { multiStrings: next }
+  }),
+  removeMultiString: (id) => set((s) => {
+    const filtered = s.multiStrings.filter((it) => it.id !== id)
+    // 重新编号 order
+    const next = filtered.map((it, idx) => ({ ...it, order: idx }))
+    try { localStorage.setItem(MULTI_STRINGS_KEY, JSON.stringify(next)) } catch { /* ignore */ }
+    return { multiStrings: next }
+  }),
+  reorderMultiStrings: (id, direction) => set((s) => {
+    const arr = [...s.multiStrings].sort((a, b) => a.order - b.order)
+    const idx = arr.findIndex((it) => it.id === id)
+    if (idx < 0) return s
+    const target = direction === 'up' ? idx - 1 : idx + 1
+    if (target < 0 || target >= arr.length) return s
+    ;[arr[idx], arr[target]] = [arr[target], arr[idx]]
+    const next = arr.map((it, i) => ({ ...it, order: i }))
+    try { localStorage.setItem(MULTI_STRINGS_KEY, JSON.stringify(next)) } catch { /* ignore */ }
+    return { multiStrings: next }
+  }),
+  setMultiStringInterval: (n) => {
+    const v = Math.max(0, Math.min(60000, Math.floor(n)))
+    try { localStorage.setItem('rtt:multiStringInterval', String(v)) } catch { /* ignore */ }
+    set({ multiStringInterval: v })
+  },
   setSearchAddress: (addr) => set({ searchAddress: addr }),
   setSearchSize: (size) => set({ searchSize: size }),
   addLog: (log) => set((s) => ({ logs: [...s.logs, log].slice(-500) })),

@@ -161,8 +161,13 @@ export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
       term.write(`${COLOR.bold}${COLOR.cyan}RTT Viewer${COLOR.reset}\r\n`)
       term.write(`${COLOR.dim}等待启动 RTT 会话...${COLOR.reset}\r\n`)
 
-      // 复制支持
+      // 复制支持 + Ctrl+A 全选
+      // 影响评估：
+      // - 终端模式：Ctrl+A 原是 readline "行首" 快捷键，但 RTT shell 场景极少用，
+      //   全选更实用；若下位机 shell 需要 Ctrl+A，可在 InputBar 模式输入 \x01 发送。
+      // - 输入栏模式：无影响（焦点在 InputBar 时 Ctrl+A 选中文本框内容）。
       term.attachCustomKeyEventHandler((event: KeyboardEvent) => {
+        // Ctrl+Shift+C 复制选中
         if (event.ctrlKey && event.shiftKey && event.code === 'KeyC') {
           const selection = term.getSelection()
           if (selection) {
@@ -170,6 +175,12 @@ export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
             event.preventDefault()
             return false
           }
+        }
+        // Ctrl+A 全选（仅在终端有焦点时生效）
+        if (event.ctrlKey && !event.shiftKey && !event.altKey && event.code === 'KeyA') {
+          term.selectAll()
+          event.preventDefault()
+          return false
         }
         return true
       })

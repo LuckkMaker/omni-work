@@ -1,14 +1,14 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
-import { Keyboard, MessageSquare, Eye } from 'lucide-react'
 import { RttTerminal, type RttTerminalApi } from './components/RttTerminal'
 import { ConfigPanel } from './components/ConfigPanel'
 import { InputBar } from './components/InputBar'
 import { RttTabBar } from './components/RttTabBar'
+import { MultiStringDialog } from './components/MultiStringDialog'
 import { LogConsole, ResizeHandle } from '@/components/LogConsole'
+import { useRecordToFile } from './hooks/useRecordToFile'
 import { useProbeStore } from '@/stores/probe.store'
 import { useRttStore } from '@/stores/rtt.store'
 import { useUiStore } from '@/stores/ui.store'
-import { cn } from '@/lib/utils'
 
 const LOG_MIN_HEIGHT = 0 // 0 = 完全隐藏
 const LOG_DEFAULT_EXPANDED = 220
@@ -21,11 +21,10 @@ function getSidebarMaxWidth(): number {
 
 export default function RttPage() {
   const terminalRef = useRef<RttTerminalApi | null>(null)
-  // 日志区默认收缩到最小值；lastExpandedHeight 保存上次展开值用于双击恢复
   const [bottomHeight, setBottomHeight] = useState(LOG_MIN_HEIGHT)
   const lastExpandedHeight = useRef(LOG_DEFAULT_EXPANDED)
-  // 右侧配置面板宽度：0 = 完全隐藏；>0 = 展开宽度（上限 = 窗口 1/4）
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH)
+  const [showMultiString, setShowMultiString] = useState(false)
 
   const selectedProbe = useProbeStore((s) => {
     const uid = s.selectedUid
@@ -38,13 +37,12 @@ export default function RttPage() {
   const activeTabId = useRttStore((s) => s.activeTabId)
   const logs = useRttStore((s) => s.logs)
   const clearLogs = useRttStore((s) => s.clearLogs)
-  // 终端主题：用于让终端容器背景跟随主题即时切换（无需启动会话）
   const terminalTheme = useUiStore((s) => s.terminalTheme)
-  // 输入模式与本地回显（终端输入模式用）
   const inputMode = useRttStore((s) => s.inputMode)
   const localEcho = useRttStore((s) => s.localEcho)
-  const setInputMode = useRttStore((s) => s.setInputMode)
-  const setLocalEcho = useRttStore((s) => s.setLocalEcho)
+
+  // 接收数据到文件（持续录制 .dat）
+  useRecordToFile(activeTabId)
 
   // 侧边栏宽度变化后触发 resize 让 xterm 重新 fit
   useEffect(() => {
@@ -52,10 +50,9 @@ export default function RttPage() {
       window.dispatchEvent(new Event('resize'))
     }, 50)
     return () => clearTimeout(timer)
-  }, [sidebarWidth])
+  }, [sidebarWidth, inputMode])
 
   const handleSidebarResize = useCallback((delta: number) => {
-    // 右侧边栏：鼠标向左拖（delta<0）应扩大宽度，向右拖（delta>0）应缩小宽度
     setSidebarWidth((w) => {
       const next = Math.max(0, Math.min(getSidebarMaxWidth(), w - delta))
       return next
@@ -63,7 +60,6 @@ export default function RttPage() {
   }, [])
 
   const handleToggleSidebar = useCallback(() => {
-    // 双击在[完全隐藏(0)]和[最大尺寸(窗口1/4)]之间切换
     setSidebarWidth((w) => (w > 0 ? 0 : getSidebarMaxWidth()))
   }, [])
 
@@ -82,6 +78,13 @@ export default function RttPage() {
     })
   }, [])
 
+  /** 获取发送目标 down channel（供 InputBar/MultiStringDialog 使用） */
+  const getSendChannel = useCallback(() => {
+    const tab = useRttStore.getState().tabs.find((t) => t.id === activeTabId)
+    if (tab?.mode === 'single' && tab.channel !== undefined) return tab.channel
+    return useRttStore.getState().selectedDownChannel
+  }, [activeTabId])
+
   return (
     <div className="flex h-full min-h-0">
       {/* 左侧：终端 + 输入栏 + 日志 */}
@@ -89,64 +92,9 @@ export default function RttPage() {
         {/* Tab 栏 */}
         <RttTabBar running={running} />
 
-        {/* 输入模式工具栏：InputBar(文本/HEX) ↔ Terminal(终端直接输入) */}
-        <div className="flex shrink-0 items-center gap-1 border-b border-border bg-muted/30 px-2 py-1">
-          <div className="flex items-center rounded-md border border-border p-0.5">
-            <button
-              onClick={() => setInputMode('bar')}
-              className={cn(
-                'flex h-6 items-center gap-1 rounded px-2 text-xs font-medium transition-colors',
-                inputMode === 'bar'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:text-foreground'
-              )}
-              title="输入栏模式：文本/HEX 发送，支持追加换行"
-            >
-              <MessageSquare className="size-3" />
-              输入栏
-            </button>
-            <button
-              onClick={() => setInputMode('terminal')}
-              className={cn(
-                'flex h-6 items-center gap-1 rounded px-2 text-xs font-medium transition-colors',
-                inputMode === 'terminal'
-                  ? 'bg-primary text-primary-foreground'
-                  : 'text-muted-foreground hover:text-foreground'
-              )}
-              title="终端模式：直接在终端输入，支持 Tab/方向键/Ctrl 组合键等（适用于下位机 RTT shell）"
-            >
-              <Keyboard className="size-3" />
-              终端
-            </button>
-          </div>
-
-          {/* 本地回显开关（仅终端模式显示） */}
-          {inputMode === 'terminal' && (
-            <button
-              onClick={() => setLocalEcho(!localEcho)}
-              className={cn(
-                'flex h-6 items-center gap-1 rounded-md border px-2 text-xs font-medium transition-colors',
-                localEcho
-                  ? 'border-green-500 bg-green-500/10 text-green-600'
-                  : 'border-border text-muted-foreground hover:text-foreground'
-              )}
-              title={localEcho ? '本地回显已开启：输入会显示在终端' : '本地回显已关闭：输入不显示（适用于下位机自身回显场景）'}
-            >
-              <Eye className="size-3" />
-              回显
-            </button>
-          )}
-
-          {inputMode === 'terminal' && (
-            <span className="ml-auto text-[11px] text-muted-foreground">
-              终端模式：直接输入，Tab 补全 / 方向键 / Ctrl+C 等发送到下位机
-            </span>
-          )}
-        </div>
-
-        {/* 终端：容器背景跟随当前终端主题，未启动会话时也能反映主题切换 */}
+        {/* 终端：容器背景跟随主题；pb-1 留底部余量避免最后行被 InputBar 遮挡 */}
         <div
-          className="flex-1 overflow-hidden"
+          className="relative min-h-0 flex-1 overflow-hidden"
           style={{ backgroundColor: terminalTheme.theme.background }}
         >
           {isConnected ? (
@@ -171,7 +119,13 @@ export default function RttPage() {
         </div>
 
         {/* 输入栏：仅 bar 模式显示（terminal 模式由终端直接输入） */}
-        {inputMode === 'bar' && <InputBar uid={uid} running={running} />}
+        {inputMode === 'bar' && (
+          <InputBar
+            uid={uid}
+            running={running}
+            onOpenMultiString={() => setShowMultiString(true)}
+          />
+        )}
 
         {/* 可拖拽分隔（双击完全隐藏/恢复） */}
         <ResizeHandle
@@ -180,7 +134,7 @@ export default function RttPage() {
           expanded={bottomHeight > LOG_MIN_HEIGHT}
         />
 
-        {/* 底部日志（高度为 0 时完全隐藏，避免残留 border） */}
+        {/* 底部日志 */}
         <div
           className={bottomHeight > LOG_MIN_HEIGHT ? 'shrink-0 border-t border-border' : 'hidden'}
           style={bottomHeight > LOG_MIN_HEIGHT ? { height: bottomHeight } : undefined}
@@ -189,7 +143,7 @@ export default function RttPage() {
         </div>
       </div>
 
-      {/* 水平拖拽分隔条（双击在[完全隐藏]与[最大尺寸]之间切换） */}
+      {/* 水平拖拽分隔条 */}
       <ResizeHandle
         direction="horizontal"
         onResize={handleSidebarResize}
@@ -197,14 +151,11 @@ export default function RttPage() {
         expanded={sidebarWidth > 0}
       />
 
-      {/* 右侧配置面板（宽度为 0 时完全隐藏，避免残留 border） */}
+      {/* 右侧配置面板（无标题，直接渲染 ConfigPanel） */}
       <div
         className={sidebarWidth > 0 ? 'flex shrink-0 flex-col overflow-hidden border-l border-border bg-card' : 'hidden'}
         style={sidebarWidth > 0 ? { width: sidebarWidth } : undefined}
       >
-        <div className="shrink-0 border-b border-border px-4 py-2.5">
-          <h2 className="text-sm font-semibold">RTT 配置</h2>
-        </div>
         <div className="flex-1 overflow-y-auto">
           <ConfigPanel
             uid={uid}
@@ -213,6 +164,15 @@ export default function RttPage() {
           />
         </div>
       </div>
+
+      {/* 多字符串对话框 */}
+      <MultiStringDialog
+        open={showMultiString}
+        onOpenChange={setShowMultiString}
+        uid={uid}
+        running={running}
+        getSendChannel={getSendChannel}
+      />
     </div>
   )
 }

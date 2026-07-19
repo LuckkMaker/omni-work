@@ -367,7 +367,7 @@ export function CommandSidebar({
           className="h-7 flex-1 gap-1.5 text-xs"
           title="重置命令上下文（目标切换后使用）"
         >
-          <Power className="size-3.5 text-muted-foreground" />
+          <RotateCcw className="size-3.5 text-muted-foreground" />
           Reset
         </Button>
       </div>
