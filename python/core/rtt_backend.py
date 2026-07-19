@@ -74,6 +74,15 @@ class RTTBackend:
                 cb = self._control_blocks[uid]
                 return self._build_start_result(cb, uid, up_channel, down_channel)
 
+        # 互斥检查：同一探针下 Monitor 与 RTT 不能同时运行
+        try:
+            from core.monitor_backend import monitor_backend
+            if monitor_backend.is_running(uid):
+                return {"success": False,
+                        "error": "Monitor 采样正在运行，请先停止 Monitor 再启动 RTT"}
+        except Exception:
+            pass
+
         session = backend._get_session(uid)
         if not session:
             return {"success": False, "error": "Probe not connected"}

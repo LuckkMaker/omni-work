@@ -1,15 +1,493 @@
+import { useEffect, useState, useCallback, useRef } from 'react'
+import { Activity, Play, Square, Search, Gauge, Download, X } from 'lucide-react'
+import { useProbeStore } from '@/stores/probe.store'
+import { useMonitorStore } from '@/stores/monitor.store'
+import { useNotificationStore } from '@/stores/notification.store'
+import { monitorService, type SamplePoint } from '@/services/monitor.service'
+import { wsClient } from '@/services/ws'
+import { VariableBrowserDialog } from './components/VariableBrowserDialog'
+import { ChannelPanel } from './components/ChannelPanel'
+import { WatchPanel } from './components/WatchPanel'
+import { WaveformChart, type CursorMeasurement } from './components/WaveformChart'
+import { cn } from '@/lib/utils'
+
+/** 采样率档位（Hz） */
+const RATE_OPTIONS = [
+  { label: '1 Hz', value: 1 },
+  { label: '10 Hz', value: 10 },
+  { label: '100 Hz', value: 100 },
+  { label: '500 Hz', value: 500 },
+  { label: '1 kHz', value: 1000 },
+  { label: '5 kHz', value: 5000 },
+  { label: '10 kHz', value: 10000 },
+  { label: '50 kHz', value: 50000 },
+  { label: '100 kHz', value: 100000 },
+]
+
+const SIDEBAR_DEFAULT_WIDTH = 280
+const SIDEBAR_MAX_RATIO = 0.25
+const WATCH_DEFAULT_HEIGHT = 180
+
+function getSidebarMaxWidth(): number {
+  return Math.floor((window.innerWidth ?? 1280) * SIDEBAR_MAX_RATIO)
+}
+
 export default function MonitorPage() {
+  const selectedProbe = useProbeStore((s) => {
+    const uid = s.selectedUid
+    return uid ? s.probes.find((p) => p.uid === uid) ?? null : null
+  })
+  const isConnected = selectedProbe?.state === 'connected'
+  const uid = selectedProbe?.uid ?? null
+
+  const running = useMonitorStore((s) => s.running)
+  const paused = useMonitorStore((s) => s.paused)
+  const starting = useMonitorStore((s) => s.starting)
+  const error = useMonitorStore((s) => s.error)
+  const rateHz = useMonitorStore((s) => s.rateHz)
+  const elfLoaded = useMonitorStore((s) => s.elfLoaded)
+  const elfPath = useMonitorStore((s) => s.elfPath)
+  const variables = useMonitorStore((s) => s.variables)
+  const samples = useMonitorStore((s) => s.samples)
+  const channels = useMonitorStore((s) => s.channels)
+  const follow = useMonitorStore((s) => s.follow)
+
+  const setRunning = useMonitorStore((s) => s.setRunning)
+  const setPaused = useMonitorStore((s) => s.setPaused)
+  const setStarting = useMonitorStore((s) => s.setStarting)
+  const setError = useMonitorStore((s) => s.setError)
+  const setRateHz = useMonitorStore((s) => s.setRateHz)
+  const setFollow = useMonitorStore((s) => s.setFollow)
+  const appendSamples = useMonitorStore((s) => s.appendSamples)
+  const clearSamples = useMonitorStore((s) => s.clearSamples)
+
+  const pushNotification = useNotificationStore((s) => s.push)
+  const updateNotification = useNotificationStore((s) => s.update)
+
+  const [showBrowser, setShowBrowser] = useState(false)
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH)
+  const [watchHeight, setWatchHeight] = useState(WATCH_DEFAULT_HEIGHT)
+  const [cursorMeasure, setCursorMeasure] = useState<CursorMeasurement | null>(null)
+  const notifIdRef = useRef<string | null>(null)
+
+  // ── 初始化：拉取状态与变量列表 ──
+  useEffect(() => {
+    if (!uid) return
+    monitorService.status(uid).then((st) => {
+      setRunning(st.running)
+      setPaused(st.paused)
+      if (st.rate_hz > 0) setRateHz(st.rate_hz)
+    }).catch(() => { /* ignore */ })
+    monitorService.getVariables(uid).then((res) => {
+      useMonitorStore.getState().setVariables(res.variables)
+    }).catch(() => { /* ignore */ })
+  }, [uid, setRunning, setPaused, setRateHz])
+
+  // ── WebSocket 事件订阅 ──
+  useEffect(() => {
+    if (!uid) return
+
+    const offSample = wsClient.on('monitor.sample', (data: unknown) => {
+      const payload = data as { uid: string; samples: SamplePoint[] }
+      if (payload.uid !== uid) return
+      appendSamples(payload.samples)
+    })
+
+    const offStarted = wsClient.on('monitor.started', (data: unknown) => {
+      const payload = data as { uid: string; rate_hz: number; transport: string }
+      if (payload.uid !== uid) return
+      setRunning(true)
+      setPaused(false)
+      setStarting(false)
+      if (notifIdRef.current) {
+        updateNotification(notifIdRef.current, {
+          type: 'success',
+          title: 'Monitor 采样已启动',
+          message: `${payload.rate_hz} Hz / ${payload.transport}`,
+          autoClose: true,
+          autoCloseDelay: 3000,
+        })
+        notifIdRef.current = null
+      }
+    })
+
+    const offStopped = wsClient.on('monitor.stopped', (data: unknown) => {
+      const payload = data as { uid: string; reason: string }
+      if (payload.uid !== uid) return
+      setRunning(false)
+      setPaused(false)
+      setStarting(false)
+    })
+
+    const offError = wsClient.on('monitor.error', (data: unknown) => {
+      const payload = data as { uid: string; error: string }
+      if (payload.uid !== uid) return
+      setError(payload.error)
+    })
+
+    const offInfo = wsClient.on('monitor.info', (data: unknown) => {
+      const payload = data as { uid: string; paused: boolean }
+      if (payload.uid !== uid) return
+      setPaused(payload.paused)
+    })
+
+    return () => { offSample(); offStarted(); offStopped(); offError(); offInfo() }
+  }, [uid, appendSamples, setRunning, setPaused, setStarting, setError, updateNotification])
+
+  // ── 启动/停止采样 ──
+  const handleToggleSampling = useCallback(async () => {
+    if (!uid) return
+    if (running) {
+      try {
+        await monitorService.stop(uid)
+        setRunning(false)
+        pushNotification({
+          type: 'info',
+          title: 'Monitor 采样已停止',
+          message: '',
+          autoClose: true,
+          autoCloseDelay: 2000,
+        })
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e))
+      }
+    } else {
+      if (variables.length === 0) {
+        pushNotification({
+          type: 'warning',
+          title: '请先添加监视变量',
+          message: '点击右侧"添加变量"按钮，从 ELF 选择变量',
+          autoClose: true,
+          autoCloseDelay: 4000,
+        })
+        return
+      }
+      setStarting(true)
+      setError(null)
+      notifIdRef.current = pushNotification({
+        type: 'progress',
+        title: 'Monitor 采样启动中',
+        message: `正在以 ${rateHz} Hz 启动采样...`,
+      })
+      try {
+        const result = await monitorService.start(uid, { rate_hz: rateHz })
+        if (!result.success) {
+          setStarting(false)
+          if (notifIdRef.current) {
+            updateNotification(notifIdRef.current, {
+              type: 'error',
+              title: 'Monitor 启动失败',
+              message: '未知错误',
+              autoClose: true,
+              autoCloseDelay: 5000,
+            })
+            notifIdRef.current = null
+          }
+        }
+        // 成功时由 monitor.started 事件处理通知转换
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : String(e)
+        setStarting(false)
+        setError(msg)
+        if (notifIdRef.current) {
+          updateNotification(notifIdRef.current, {
+            type: 'error',
+            title: 'Monitor 启动失败',
+            message: msg,
+            autoClose: true,
+            autoCloseDelay: 5000,
+          })
+          notifIdRef.current = null
+        }
+      }
+    }
+  }, [uid, running, variables.length, rateHz, setRunning, setStarting, setError, pushNotification, updateNotification])
+
+  // ── 侧边栏拖拽 ──
+  const handleSidebarResize = useCallback((delta: number) => {
+    setSidebarWidth((w) => Math.max(0, Math.min(getSidebarMaxWidth(), w - delta)))
+  }, [])
+  const handleToggleSidebar = useCallback(() => {
+    setSidebarWidth((w) => (w > 0 ? 0 : getSidebarMaxWidth()))
+  }, [])
+
+  // ── Watch 面板高度拖拽 ──
+  const handleWatchResize = useCallback((deltaY: number) => {
+    setWatchHeight((h) => Math.max(0, Math.min(window.innerHeight / 2, h - deltaY)))
+  }, [])
+
+  // ── CSV 导出 ──
+  const handleExportCsv = useCallback(async () => {
+    if (!uid) return
+    try {
+      const result = await monitorService.exportCsv(uid)
+      if (result.success && result.csv) {
+        const blob = new Blob([result.csv], { type: 'text/csv;charset=utf-8' })
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = `monitor_${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.csv`
+        a.click()
+        URL.revokeObjectURL(url)
+        pushNotification({
+          type: 'success', title: 'CSV 导出成功',
+          message: `${result.count} 个采样点`,
+          autoClose: true, autoCloseDelay: 3000,
+        })
+      }
+    } catch (e) {
+      pushNotification({
+        type: 'error', title: '导出失败',
+        message: e instanceof Error ? e.message : String(e),
+        autoClose: true, autoCloseDelay: 3000,
+      })
+    }
+  }, [uid, pushNotification])
+
   return (
-    <div className="p-6">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold">Monitor</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          实时数据波形可视化
-        </p>
+    <div className="flex h-full min-h-0 flex-col">
+      {/* ── 顶部工具栏 ── */}
+      <div className="flex items-center gap-2 border-b border-border bg-background px-3 py-2">
+        <div className="flex items-center gap-1.5">
+          <Activity className="size-4 text-primary" />
+          <span className="text-sm font-medium">Monitor</span>
+          {elfLoaded && (
+            <span className="ml-2 text-xs text-muted-foreground truncate max-w-[200px]" title={elfPath ?? undefined}>
+              {elfPath?.split(/[\\/]/).pop()}
+            </span>
+          )}
+        </div>
+
+        <div className="ml-auto flex items-center gap-2">
+          {/* 采样率选择 */}
+          <select
+            className="h-7 rounded border border-border bg-background px-2 text-xs"
+            value={rateHz}
+            onChange={(e) => setRateHz(Number(e.target.value))}
+            disabled={running}
+            title="采样率"
+          >
+            {RATE_OPTIONS.map((opt) => (
+              <option key={opt.value} value={opt.value}>{opt.label}</option>
+            ))}
+          </select>
+
+          {/* Follow 开关 */}
+          <button
+            className={cn(
+              'flex h-7 items-center gap-1 rounded border px-2 text-xs transition-colors',
+              follow
+                ? 'border-primary bg-primary/10 text-primary'
+                : 'border-border text-muted-foreground hover:bg-muted/30'
+            )}
+            onClick={() => setFollow(!follow)}
+            title="Follow 模式：跟随最新数据滚动"
+          >
+            <Gauge className="size-3.5" />
+            Follow
+          </button>
+
+          {/* 启动/停止 */}
+          <button
+            className={cn(
+              'flex h-7 items-center gap-1.5 rounded px-3 text-xs font-medium transition-colors',
+              running
+                ? 'bg-destructive/10 text-destructive hover:bg-destructive/20'
+                : 'bg-primary text-primary-foreground hover:bg-primary/90',
+              starting && 'opacity-60 cursor-wait'
+            )}
+            onClick={handleToggleSampling}
+            disabled={!isConnected || starting || (running && paused)}
+          >
+            {running ? (
+              <>
+                <Square className="size-3.5" />
+                停止
+              </>
+            ) : (
+              <>
+                <Play className="size-3.5" />
+                {starting ? '启动中...' : '启动'}
+              </>
+            )}
+          </button>
+        </div>
       </div>
-      <div className="flex h-96 items-center justify-center rounded-lg border border-border bg-muted/30">
-        <span className="text-sm text-muted-foreground">Phase 5 — 待开发</span>
+
+      {/* ── 主区域 ── */}
+      <div className="flex min-h-0 flex-1">
+        {/* 左：波形/数据流区 */}
+        <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+          {/* 状态条 */}
+          {(error || paused) && (
+            <div className={cn(
+              'flex items-center gap-2 px-3 py-1.5 text-xs',
+              error ? 'bg-destructive/10 text-destructive' : 'bg-amber-500/10 text-amber-600'
+            )}>
+              {error ? `错误: ${error}` : '采样已暂停（Flash/Commander 操作中）'}
+            </div>
+          )}
+
+          {/* 波形显示区 */}
+          <div className="min-h-0 flex-1 overflow-hidden bg-muted/20 p-2">
+            {!isConnected ? (
+              <div className="flex h-full items-center justify-center">
+                <p className="text-sm text-muted-foreground">
+                  {uid ? '仿真器未连接' : '请选择并连接仿真器'}
+                </p>
+              </div>
+            ) : variables.length === 0 ? (
+              <div className="flex h-full flex-col items-center justify-center gap-3">
+                <Search className="size-10 text-muted-foreground/40" />
+                <p className="text-sm text-muted-foreground">尚未添加监视变量</p>
+                <button
+                  className="rounded border border-primary bg-primary/10 px-3 py-1.5 text-xs text-primary hover:bg-primary/20"
+                  onClick={() => setShowBrowser(true)}
+                >
+                  + 添加变量
+                </button>
+              </div>
+            ) : !running ? (
+              <div className="flex h-full flex-col items-center justify-center gap-2">
+                <Activity className="size-10 text-muted-foreground/40" />
+                <p className="text-sm text-muted-foreground">
+                  {variables.length} 个变量就绪，点击"启动"开始采样
+                </p>
+                <p className="text-xs text-muted-foreground/70">
+                  {rateHz >= 1000 ? `${(rateHz / 1000).toFixed(0)} kHz` : `${rateHz} Hz`} · SWD 轮询模式
+                </p>
+              </div>
+            ) : (
+              <div className="flex h-full flex-col">
+                {/* 波形工具条 */}
+                <div className="mb-1 flex items-center justify-between px-1">
+                  <span className="text-xs font-medium text-muted-foreground">
+                    {samples.length} 个采样点
+                    {follow && ' · Follow'}
+                    {cursorMeasure && ' · 游标测量中'}
+                  </span>
+                  <div className="flex items-center gap-3">
+                    <button
+                      className="flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
+                      onClick={handleExportCsv}
+                      title="导出 CSV"
+                    >
+                      <Download className="size-3" />
+                      CSV
+                    </button>
+                    <button
+                      className="text-xs text-primary hover:underline"
+                      onClick={clearSamples}
+                    >
+                      清空
+                    </button>
+                  </div>
+                </div>
+                {/* uPlot 波形图 */}
+                <div className="min-h-0 flex-1 rounded border border-border bg-background">
+                  <WaveformChart
+                    variables={variables}
+                    channels={channels}
+                    samples={samples}
+                    follow={follow}
+                    windowSec={10}
+                    className="h-full w-full"
+                    onCursorSelect={setCursorMeasure}
+                  />
+                </div>
+                {/* 游标测量结果 */}
+                {cursorMeasure && (
+                  <div className="mt-1 rounded border border-primary/30 bg-primary/5 p-2">
+                    <div className="mb-1 flex items-center justify-between">
+                      <span className="text-[10px] font-medium text-primary">
+                        游标测量 · Δt = {(cursorMeasure.t2 - cursorMeasure.t1).toFixed(3)}s
+                        ({cursorMeasure.t1.toFixed(3)}s → {cursorMeasure.t2.toFixed(3)}s)
+                      </span>
+                      <button
+                        className="text-muted-foreground hover:text-foreground"
+                        onClick={() => setCursorMeasure(null)}
+                      >
+                        <X className="size-3" />
+                      </button>
+                    </div>
+                    <div className="flex flex-wrap gap-x-4 gap-y-0.5">
+                      {cursorMeasure.values.map((v) => (
+                        <div key={v.varId} className="flex items-center gap-1 text-[10px] font-mono">
+                          <span className="text-muted-foreground">{v.name}:</span>
+                          <span>{v.v1?.toFixed(3) ?? '—'}</span>
+                          <span className="text-muted-foreground">→</span>
+                          <span>{v.v2?.toFixed(3) ?? '—'}</span>
+                          <span className="text-primary">Δ={v.delta?.toFixed(3) ?? '—'}</span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          {/* 底部 Watch 面板 */}
+          <div style={{ height: watchHeight }} className="flex flex-col border-t border-border">
+            <WatchPanel uid={uid} />
+          </div>
+          {/* Watch 拖拽手柄 */}
+          {watchHeight === 0 && (
+            <button
+              className="flex h-5 items-center justify-center border-t border-border text-[10px] text-muted-foreground hover:bg-muted/30"
+              onClick={() => setWatchHeight(WATCH_DEFAULT_HEIGHT)}
+            >
+              ▲ 显示 Watch 面板
+            </button>
+          )}
+        </div>
+
+        {/* 右侧边栏拖拽手柄 */}
+        {sidebarWidth > 0 && (
+          <div
+            className="w-1 cursor-col-resize bg-border hover:bg-primary/40"
+            onMouseDown={(e) => {
+              e.preventDefault()
+              const startX = e.clientX
+              const startW = sidebarWidth
+              const move = (ev: MouseEvent) => handleSidebarResize(startX - ev.clientX)
+              const up = () => {
+                window.removeEventListener('mousemove', move)
+                window.removeEventListener('mouseup', up)
+              }
+              window.addEventListener('mousemove', move)
+              window.addEventListener('mouseup', up)
+            }}
+          />
+        )}
+
+        {/* 右：通道面板 */}
+        {sidebarWidth > 0 && (
+          <div style={{ width: sidebarWidth }} className="flex flex-col border-l border-border bg-background overflow-hidden">
+            <ChannelPanel
+              uid={uid}
+              onAddVariable={() => setShowBrowser(true)}
+            />
+          </div>
+        )}
       </div>
+
+      {/* 侧边栏隐藏时的展开按钮 */}
+      {sidebarWidth === 0 && (
+        <button
+          className="absolute right-0 top-1/2 -translate-y-1/2 rounded-l border border-r-0 border-border bg-background px-1 py-3 text-[10px] text-muted-foreground hover:bg-muted/30"
+          onClick={handleToggleSidebar}
+        >
+          ◀
+        </button>
+      )}
+
+      {/* ── 变量浏览器弹窗 ── */}
+      <VariableBrowserDialog
+        open={showBrowser}
+        onClose={() => setShowBrowser(false)}
+        uid={uid}
+      />
     </div>
   )
 }

@@ -7,6 +7,7 @@ import asyncio
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from core.commander_backend import commander_backend
+from core.monitor_backend import monitor_backend
 
 router = APIRouter()
 
@@ -21,7 +22,8 @@ async def exec_command(uid: str, req: ExecRequest):
 
     同步执行，返回完整输出。命令在独立线程中执行以免阻塞事件循环。
     """
-    result = await asyncio.to_thread(commander_backend.execute, uid, req.command)
+    with monitor_backend.pause_during(uid):
+        result = await asyncio.to_thread(commander_backend.execute, uid, req.command)
     return result
 
 

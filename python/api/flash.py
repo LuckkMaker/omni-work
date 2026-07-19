@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from core.pyocd_backend import backend
 from core.events import event_manager
+from core.monitor_backend import monitor_backend
 
 router = APIRouter()
 
@@ -49,16 +50,18 @@ class ReadBackRequest(BaseModel):
 @router.post("/probes/{uid}/flash/erase")
 async def erase_flash(uid: str, req: EraseRequest):
     """擦除 Flash"""
-    result = await asyncio.to_thread(backend.erase, uid, req.type, req.address, req.size)
+    with monitor_backend.pause_during(uid):
+        result = await asyncio.to_thread(backend.erase, uid, req.type, req.address, req.size)
     return result.__dict__
 
 
 @router.post("/probes/{uid}/flash/program")
 async def program_flash(uid: str, req: ProgramRequest):
     """烧录固件（支持文件路径或 base64 数据）"""
-    result = await asyncio.to_thread(
-        backend.program, uid, req.file_path, req.verify, req.reset, req.base_address, req.data
-    )
+    with monitor_backend.pause_during(uid):
+        result = await asyncio.to_thread(
+            backend.program, uid, req.file_path, req.verify, req.reset, req.base_address, req.data
+        )
     event_manager.emit("flash.complete", result.__dict__)
     return result.__dict__
 
@@ -66,30 +69,34 @@ async def program_flash(uid: str, req: ProgramRequest):
 @router.post("/probes/{uid}/flash/verify")
 async def verify_flash(uid: str, req: VerifyRequest):
     """校验 Flash 内容（支持文件路径或 base64 数据）"""
-    result = await asyncio.to_thread(backend.verify, uid, req.file_path, req.data, req.base_address)
+    with monitor_backend.pause_during(uid):
+        result = await asyncio.to_thread(backend.verify, uid, req.file_path, req.data, req.base_address)
     return result.__dict__
 
 
 @router.post("/probes/{uid}/flash/blank-check")
 async def blank_check(uid: str, req: BlankCheckRequest):
     """检查 Flash 是否为空白"""
-    result = await asyncio.to_thread(backend.check_blank, uid, req.address, req.size)
+    with monitor_backend.pause_during(uid):
+        result = await asyncio.to_thread(backend.check_blank, uid, req.address, req.size)
     return result
 
 
 @router.post("/probes/{uid}/flash/read")
 async def read_flash(uid: str, req: ReadBackRequest):
     """读取 Flash 内容，返回 base64 数据"""
-    result = await asyncio.to_thread(
-        backend.read_back, uid, req.type, req.address, req.size, req.output_path
-    )
+    with monitor_backend.pause_during(uid):
+        result = await asyncio.to_thread(
+            backend.read_back, uid, req.type, req.address, req.size, req.output_path
+        )
     return result
 
 
 @router.post("/probes/{uid}/reset")
 async def reset_target(uid: str, req: ResetRequest):
     """复位目标"""
-    success = await asyncio.to_thread(backend.reset, uid, req.type, req.run)
+    with monitor_backend.pause_during(uid):
+        success = await asyncio.to_thread(backend.reset, uid, req.type, req.run)
     return {"success": success}
 
 

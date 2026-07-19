@@ -1,0 +1,152 @@
+import { api } from './api'
+
+/** Monitor 支持的数据类型 */
+export type MonitorVarType =
+  | 'int8' | 'uint8'
+  | 'int16' | 'uint16'
+  | 'int32' | 'uint32'
+  | 'float'
+
+/** 被监视的变量 */
+export interface MonitorVariable {
+  id: string
+  name: string
+  address: number
+  type: MonitorVarType
+  size: number
+  remark: string
+  refresh_sec: number
+}
+
+/** ELF 符号（变量/函数） */
+export interface MonitorSymbol {
+  name: string
+  address: number
+  size: number
+  type: MonitorVarType
+}
+
+/** 符号查询结果（分页） */
+export interface SymbolQueryResult {
+  success: boolean
+  symbols: MonitorSymbol[]
+  total: number
+  page: number
+  page_size: number
+}
+
+/** Monitor 运行状态 */
+export interface MonitorStatus {
+  running: boolean
+  paused: boolean
+  connected: boolean
+  rate_hz: number
+  variable_count: number
+  elf_loaded: boolean
+  buffer_size: number
+}
+
+/** 单个采样点 */
+export interface SamplePoint {
+  t_ms: number
+  values: { id: string; value: number | null }[]
+}
+
+/** 启动采样参数 */
+export interface StartSamplingOptions {
+  rate_hz?: number
+  max_points?: number
+  transport?: 'swd' | 'rtt'
+}
+
+/** Monitor API 服务 */
+export const monitorService = {
+  /** 查询 Monitor 状态 */
+  async status(uid: string): Promise<MonitorStatus> {
+    const client = await api()
+    const { data } = await client.get(`/api/probes/${uid}/monitor/status`)
+    return data
+  },
+
+  /** 加载 ELF/AXF 文件，解析符号表 */
+  async loadElf(uid: string, path: string): Promise<{ success: boolean; symbol_count: number; path: string }> {
+    const client = await api()
+    const { data } = await client.post(`/api/probes/${uid}/monitor/elf/load`, { path })
+    return data
+  },
+
+  /** 查询符号列表（分页） */
+  async getSymbols(
+    uid: string,
+    opts: { filter?: string; type?: 'object' | 'func' | 'all'; page?: number; page_size?: number } = {}
+  ): Promise<SymbolQueryResult> {
+    const client = await api()
+    const { data } = await client.get(`/api/probes/${uid}/monitor/symbols`, {
+      params: {
+        filter: opts.filter ?? '',
+        type: opts.type ?? 'object',
+        page: opts.page ?? 1,
+        page_size: opts.page_size ?? 200,
+      },
+    })
+    return data
+  },
+
+  /** 获取监视变量列表 */
+  async getVariables(uid: string): Promise<{ variables: MonitorVariable[] }> {
+    const client = await api()
+    const { data } = await client.get(`/api/probes/${uid}/monitor/variables`)
+    return data
+  },
+
+  /** 添加监视变量 */
+  async addVariable(
+    uid: string,
+    params: { name: string; address: number; type: MonitorVarType; remark?: string; refresh_sec?: number }
+  ): Promise<{ success: boolean; variable: MonitorVariable }> {
+    const client = await api()
+    const { data } = await client.post(`/api/probes/${uid}/monitor/variables`, params)
+    return data
+  },
+
+  /** 移除监视变量 */
+  async removeVariable(uid: string, varId: string): Promise<{ success: boolean }> {
+    const client = await api()
+    const { data } = await client.delete(`/api/probes/${uid}/monitor/variables/${varId}`)
+    return data
+  },
+
+  /** 写入变量值到下位机 */
+  async writeVariable(uid: string, varId: string, value: number): Promise<{ success: boolean }> {
+    const client = await api()
+    const { data } = await client.put(`/api/probes/${uid}/monitor/variables/${varId}/value`, { value })
+    return data
+  },
+
+  /** 启动采样 */
+  async start(uid: string, opts: StartSamplingOptions = {}): Promise<{ success: boolean; rate_hz: number; transport: string }> {
+    const client = await api()
+    const { data } = await client.post(`/api/probes/${uid}/monitor/start`, {
+      rate_hz: opts.rate_hz ?? 1000,
+      max_points: opts.max_points ?? 100000,
+      transport: opts.transport ?? 'swd',
+    })
+    return data
+  },
+
+  /** 停止采样 */
+  async stop(uid: string): Promise<{ success: boolean }> {
+    const client = await api()
+    const { data } = await client.post(`/api/probes/${uid}/monitor/stop`)
+    return data
+  },
+
+  /** 导出录制数据为 CSV */
+  async exportCsv(uid: string): Promise<{ success: boolean; csv: string; count: number }> {
+    const client = await api()
+    const { data } = await client.get(`/api/probes/${uid}/monitor/record/export`, {
+      params: { format: 'csv' },
+    })
+    return data
+  },
+}

@@ -77,6 +77,12 @@ class ProbeMonitor:
                             rtt_backend.stop(uid)
                     except Exception:
                         pass
+                    # 清理 Monitor 会话（采样线程、ELF、变量列表）
+                    try:
+                        from core.monitor_backend import monitor_backend
+                        monitor_backend.on_probe_disconnected(uid)
+                    except Exception:
+                        pass
                     # 清理 Commander 会话
                     try:
                         from core.commander_backend import commander_backend
