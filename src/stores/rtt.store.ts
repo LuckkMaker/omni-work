@@ -36,6 +36,8 @@ export interface RttTab {
   mode: TabMode
   /** 通道索引（single 模式有效） */
   channel?: number
+  /** 通道名称（single 模式有效，来自固件 SEGGER_RTT_ConfigUpBuffer 的 name） */
+  channelName?: string
   /** 接收数据缓冲（Uint8Array 数组，用于保存到文件） */
   dataBuffer: Uint8Array[]
   /** 缓冲总大小（字节） */
@@ -457,13 +459,16 @@ export const useRttStore = create<RttState>((set, get) => ({
 
   addTab: (channel, channelName) => {
     const id = genTabId()
-    const title = `Ch${channel}${channelName ? ` - ${channelName}` : ''}`
+    // 标题统一为 Ch N，不附加通道名，避免不同通道显示风格不一致
+    const title = `Ch${channel}`
     set((s) => ({
       tabs: [...s.tabs, {
         id,
         title,
         mode: 'single' as const,
         channel,
+        // 通道名存入 channelName 字段，供 Tab tooltip 显示
+        channelName: channelName,
         dataBuffer: [],
         bufferSize: 0,
         bytesReceived: 0,

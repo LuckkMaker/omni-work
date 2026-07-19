@@ -7,12 +7,19 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
+import { useMemo } from 'react'
 import { useUiStore, TERMINAL_THEMES } from '@/stores/ui.store'
 
 export default function SettingsPage() {
   const terminalThemeId = useUiStore((s) => s.terminalThemeId)
   const setTerminalTheme = useUiStore((s) => s.setTerminalTheme)
   const currentTheme = TERMINAL_THEMES.find((t) => t.id === terminalThemeId)
+
+  // 主题下拉选项按字母顺序排列
+  const sortedThemes = useMemo(
+    () => [...TERMINAL_THEMES].sort((a, b) => a.name.localeCompare(b.name, 'en')),
+    [],
+  )
 
   return (
     <div className="p-6">
@@ -38,7 +45,7 @@ export default function SettingsPage() {
                 <SelectValue />
               </SelectTrigger>
               <SelectContent>
-                {TERMINAL_THEMES.map((t) => (
+                {sortedThemes.map((t) => (
                   <SelectItem key={t.id} value={t.id}>
                     {t.name}
                   </SelectItem>

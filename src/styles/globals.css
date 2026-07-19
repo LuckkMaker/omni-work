@@ -61,6 +61,13 @@
   padding: 4px 8px;
 }
 
+/* 选中区域完全不透明，避免半透明背景遮挡文字。
+ * xterm.js v5 默认给 selectionBackground 加 alpha 导致选中文字模糊，
+ * 强制不透明后，选中文字由 selectionForeground 重新着色，清晰可读。 */
+.xterm .xterm-selection div {
+  opacity: 1 !important;
+}
+
 /* 终端辅助文本框定位 */
 .xterm .xterm-helper-textarea {
   position: absolute;

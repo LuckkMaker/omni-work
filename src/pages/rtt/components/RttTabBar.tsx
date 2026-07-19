@@ -60,6 +60,9 @@ export function RttTabBar({ running }: RttTabBarProps) {
                 : 'border-transparent text-muted-foreground hover:bg-muted/60 hover:text-foreground'
             )}
             onClick={() => setActiveTab(tab.id)}
+            title={tab.mode === 'single' && tab.channelName
+              ? `${tab.title} - ${tab.channelName}`
+              : tab.title}
           >
             <span className="font-medium">{tab.title}</span>
             {tab.bytesReceived > 0 && (

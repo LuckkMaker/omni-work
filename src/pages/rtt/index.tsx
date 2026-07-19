@@ -161,6 +161,7 @@ export default function RttPage() {
             uid={uid}
             connected={isConnected}
             terminalRef={terminalRef}
+            onOpenMultiString={() => setShowMultiString(true)}
           />
         </div>
       </div>

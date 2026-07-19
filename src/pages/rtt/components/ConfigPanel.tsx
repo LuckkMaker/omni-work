@@ -1,11 +1,20 @@
 import { useCallback, useState } from 'react'
-import { Play, Square, Eraser, Trash2, Download, Keyboard, MessageSquare, Eye, Hexagon, FileDown, Circle } from 'lucide-react'
+import { Play, Square, Eraser, Trash2, Download, Keyboard, MessageSquare, Eye, Hexagon, FileDown, ListChecks, CornerDownLeft, Timer, ShieldCheck } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Separator } from '@/components/ui/separator'
+import { Switch } from '@/components/ui/switch'
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@/components/ui/select'
 import { useRttStore } from '@/stores/rtt.store'
 import { rttService } from '@/services/rtt.service'
+import { CHECKSUM_OPTIONS, type ChecksumType } from '@/utils/checksum'
 import { cn } from '@/lib/utils'
 import { SaveFormatDialog } from './SaveFormatDialog'
 import { SendFileButton } from './SendFileButton'
@@ -14,9 +23,43 @@ interface ConfigPanelProps {
   uid: string | null
   connected: boolean
   terminalRef: React.RefObject<{ clear: () => void; getData: () => Uint8Array; clearData: () => void } | null>
+  /** 打开多字符串对话框 */
+  onOpenMultiString: () => void
 }
 
-export function ConfigPanel({ uid, connected, terminalRef }: ConfigPanelProps) {
+/** 紧凑配置行：左侧标签，右侧 Switch */
+function SwitchRow({
+  label,
+  icon: Icon,
+  checked,
+  onCheckedChange,
+  disabled,
+  title,
+}: {
+  label: string
+  icon: React.ComponentType<{ className?: string }>
+  checked: boolean
+  onCheckedChange: (v: boolean) => void
+  disabled?: boolean
+  title?: string
+}) {
+  return (
+    <div className="flex h-7 items-center justify-between">
+      <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground" title={title}>
+        <Icon className="size-3" />
+        {label}
+      </span>
+      <Switch
+        checked={checked}
+        onCheckedChange={onCheckedChange}
+        disabled={disabled}
+        title={title}
+      />
+    </div>
+  )
+}
+
+export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: ConfigPanelProps) {
   const [showSaveDialog, setShowSaveDialog] = useState(false)
 
   const {
@@ -32,6 +75,15 @@ export function ConfigPanel({ uid, connected, terminalRef }: ConfigPanelProps) {
     recordFileName,
     searchAddress,
     searchSize,
+    // 发送配置
+    sendHex,
+    sendNewline,
+    sendTiming,
+    sendTimingInterval,
+    sendChecksum,
+    sendChecksumType,
+    sendChecksumStart,
+    sendChecksumEnd,
     setRunning,
     setStarting,
     setChannels,
@@ -45,9 +97,16 @@ export function ConfigPanel({ uid, connected, terminalRef }: ConfigPanelProps) {
     setSearchAddress,
     setSearchSize,
     reset,
+    setSendHex,
+    setSendNewline,
+    setSendTiming,
+    setSendTimingInterval,
+    setSendChecksum,
+    setSendChecksumType,
+    setSendChecksumStart,
+    setSendChecksumEnd,
   } = useRttStore()
 
-  // 当前 Tab 的数据大小（用于保存提示）
   const activeTabId = useRttStore((s) => s.activeTabId)
   const activeTab = useRttStore((s) => s.tabs.find((t) => t.id === s.activeTabId))
 
@@ -149,12 +208,10 @@ export function ConfigPanel({ uid, connected, terminalRef }: ConfigPanelProps) {
     URL.revokeObjectURL(url)
   }, [terminalRef])
 
-  /** 开启/关闭接收数据到文件 */
   const handleToggleRecord = useCallback(() => {
     if (recordToFile) {
       setRecordToFile(false, null)
     } else {
-      // 开启：由 useRecordToFile hook 处理文件选择
       setRecordToFile(true, null)
     }
   }, [recordToFile, setRecordToFile])
@@ -170,10 +227,10 @@ export function ConfigPanel({ uid, connected, terminalRef }: ConfigPanelProps) {
   const dataSize = activeTab?.bufferSize ?? 0
 
   return (
-    <div className="flex h-full flex-col gap-3 p-3 overflow-y-auto">
+    <div className="flex flex-col gap-2.5 p-2.5 overflow-y-auto text-xs">
       {/* ① 会话控制 */}
-      <section className="space-y-2">
-        <Label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+      <section className="space-y-1.5">
+        <Label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
           会话控制
         </Label>
         <div className="flex gap-2">
@@ -183,7 +240,7 @@ export function ConfigPanel({ uid, connected, terminalRef }: ConfigPanelProps) {
             className="flex-1"
             size="sm"
           >
-            <Play className="mr-1 h-4 w-4" />
+            <Play className="mr-1 h-3.5 w-3.5" />
             {starting ? '启动中...' : '启动'}
           </Button>
           <Button
@@ -193,36 +250,31 @@ export function ConfigPanel({ uid, connected, terminalRef }: ConfigPanelProps) {
             className="flex-1"
             size="sm"
           >
-            <Square className="mr-1 h-4 w-4" />
+            <Square className="mr-1 h-3.5 w-3.5" />
             停止
           </Button>
         </div>
         {!running && (
-          <div className="space-y-1.5">
-            <div className="grid grid-cols-2 gap-1.5">
-              <Input
-                placeholder="地址 (hex)"
-                value={searchAddress}
-                onChange={(e) => setSearchAddress(e.target.value)}
-                className="h-7 text-[11px] font-mono"
-              />
-              <Input
-                placeholder="范围 (hex)"
-                value={searchSize}
-                onChange={(e) => setSearchSize(e.target.value)}
-                className="h-7 text-[11px] font-mono"
-              />
-            </div>
-            <p className="text-[10px] text-muted-foreground">
-              留空则自动扫描 RAM 查找 RTT 控制块
-            </p>
+          <div className="grid grid-cols-2 gap-1.5">
+            <Input
+              placeholder="地址 (hex)"
+              value={searchAddress}
+              onChange={(e) => setSearchAddress(e.target.value)}
+              className="h-7 text-[11px] font-mono"
+            />
+            <Input
+              placeholder="范围 (hex)"
+              value={searchSize}
+              onChange={(e) => setSearchSize(e.target.value)}
+              className="h-7 text-[11px] font-mono"
+            />
           </div>
         )}
         {recordToFile && (
-          <div className="flex items-center gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-600">
-            <Circle className="size-2 fill-current animate-pulse" />
+          <div className="flex items-center gap-1.5 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-600">
+            <span className="size-1.5 rounded-full bg-amber-500 animate-pulse" />
             <span className="truncate" title={recordFileName ?? ''}>
-              录制中：{recordFileName ?? '选择文件中...'}
+              {recordFileName ?? '选择文件中...'}
             </span>
           </div>
         )}
@@ -231,12 +283,12 @@ export function ConfigPanel({ uid, connected, terminalRef }: ConfigPanelProps) {
       <Separator />
 
       {/* ② 接收配置 */}
-      <section className="space-y-2">
-        <Label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+      <section className="space-y-1">
+        <Label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
           接收配置
         </Label>
 
-        {/* 输入模式切换 */}
+        {/* 输入模式切换（segmented） */}
         <div className="flex items-center rounded-md border border-border p-0.5">
           <button
             onClick={() => setInputMode('bar')}
@@ -244,7 +296,7 @@ export function ConfigPanel({ uid, connected, terminalRef }: ConfigPanelProps) {
               'flex h-6 flex-1 items-center justify-center gap-1 rounded text-[11px] font-medium transition-colors',
               inputMode === 'bar' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
             )}
-            title="输入栏模式：文本/HEX 发送"
+            title="输入栏模式"
           >
             <MessageSquare className="size-3" />
             输入栏
@@ -255,58 +307,42 @@ export function ConfigPanel({ uid, connected, terminalRef }: ConfigPanelProps) {
               'flex h-6 flex-1 items-center justify-center gap-1 rounded text-[11px] font-medium transition-colors',
               inputMode === 'terminal' ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground'
             )}
-            title="终端模式：直接输入，支持 Tab/方向键/Ctrl 组合键"
+            title="终端模式"
           >
             <Keyboard className="size-3" />
             终端
           </button>
         </div>
 
-        {/* 本地回显（仅终端模式） */}
         {inputMode === 'terminal' && (
-          <button
-            onClick={() => setLocalEcho(!localEcho)}
-            className={cn(
-              'flex h-7 w-full items-center gap-1.5 rounded-md border px-2 text-[11px] font-medium transition-colors',
-              localEcho
-                ? 'border-green-500 bg-green-500/10 text-green-600'
-                : 'border-border text-muted-foreground hover:text-foreground'
-            )}
-            title={localEcho ? '本地回显已开启' : '本地回显已关闭'}
-          >
-            <Eye className="size-3" />
-            本地回显：{localEcho ? '开' : '关'}
-          </button>
+          <SwitchRow
+            label="本地回显"
+            icon={Eye}
+            checked={localEcho}
+            onCheckedChange={setLocalEcho}
+            title="本地回显：输入会显示在终端"
+          />
         )}
 
-        {/* hex 显示 */}
-        <button
-          onClick={() => setDisplayMode(displayMode === 'text' ? 'hex' : 'text')}
-          className={cn(
-            'flex h-7 w-full items-center gap-1.5 rounded-md border px-2 text-[11px] font-medium transition-colors',
-            displayMode === 'hex'
-              ? 'border-blue-500 bg-blue-500/10 text-blue-500'
-              : 'border-border text-muted-foreground hover:text-foreground'
-          )}
+        <SwitchRow
+          label="HEX 显示"
+          icon={Hexagon}
+          checked={displayMode === 'hex'}
+          onCheckedChange={(v) => setDisplayMode(v ? 'hex' : 'text')}
           title="切换 hex/文本显示"
-        >
-          <Hexagon className="size-3" />
-          HEX 显示：{displayMode === 'hex' ? '开' : '关'}
-        </button>
+        />
 
-        {/* 清屏 / 清空 */}
-        <div className="grid grid-cols-2 gap-1.5">
-          <Button variant="outline" size="sm" onClick={handleClear} className="h-7 text-[11px]" title="清屏：保留数据缓冲，可保存">
+        <div className="grid grid-cols-2 gap-1.5 pt-0.5">
+          <Button variant="outline" size="sm" onClick={handleClear} className="h-7 text-[11px]" title="清屏：保留数据缓冲">
             <Eraser className="mr-1 h-3 w-3" />
             清屏
           </Button>
-          <Button variant="outline" size="sm" onClick={handleClearData} className="h-7 text-[11px]" title="清空：清除数据缓冲与字节计数">
+          <Button variant="outline" size="sm" onClick={handleClearData} className="h-7 text-[11px]" title="清空：清除数据缓冲">
             <Trash2 className="mr-1 h-3 w-3" />
             清空
           </Button>
         </div>
 
-        {/* 保存数据（弹窗选格式） */}
         <Button
           variant="outline"
           size="sm"
@@ -319,7 +355,6 @@ export function ConfigPanel({ uid, connected, terminalRef }: ConfigPanelProps) {
           保存数据{dataSize > 0 ? ` (${dataSize < 1024 ? `${dataSize}B` : `${(dataSize / 1024).toFixed(1)}K`})` : ''}
         </Button>
 
-        {/* 接收数据到文件（持续录制 .dat） */}
         <Button
           variant={recordToFile ? 'default' : 'outline'}
           size="sm"
@@ -336,26 +371,124 @@ export function ConfigPanel({ uid, connected, terminalRef }: ConfigPanelProps) {
       <Separator />
 
       {/* ③ 发送配置 */}
-      <section className="space-y-2">
-        <Label className="text-[11px] font-semibold uppercase tracking-wide text-muted-foreground">
+      <section className="space-y-1">
+        <Label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
           发送配置
         </Label>
-        <p className="text-[10px] text-muted-foreground">
-          hex 发送 / 换行 / 定时 / 校验 等选项在输入栏上方
-        </p>
+
+        <SwitchRow
+          label="HEX 发送"
+          icon={Hexagon}
+          checked={sendHex}
+          onCheckedChange={setSendHex}
+          disabled={!running}
+          title="以十六进制格式发送"
+        />
+
+        <SwitchRow
+          label="加回车换行"
+          icon={CornerDownLeft}
+          checked={sendNewline}
+          onCheckedChange={setSendNewline}
+          disabled={!running || sendHex}
+          title="发送时追加换行符"
+        />
+
+        <SwitchRow
+          label="定时发送"
+          icon={Timer}
+          checked={sendTiming}
+          onCheckedChange={setSendTiming}
+          disabled={!running}
+          title="按间隔自动发送输入栏内容"
+        />
+        {sendTiming && (
+          <div className="flex items-center gap-1.5 pl-1">
+            <Input
+              type="number"
+              min={10}
+              max={60000}
+              value={sendTimingInterval}
+              onChange={(e) => setSendTimingInterval(Number(e.target.value))}
+              className="h-6 w-16 text-[11px] font-mono"
+              title="定时发送间隔（ms）"
+            />
+            <span className="text-[10px] text-muted-foreground">ms</span>
+          </div>
+        )}
+
+        <SwitchRow
+          label="加校验"
+          icon={ShieldCheck}
+          checked={sendChecksum}
+          onCheckedChange={setSendChecksum}
+          disabled={!running}
+          title="附加校验值到数据末尾"
+        />
+        {sendChecksum && (
+          <div className="space-y-1 pl-1">
+            <Select
+              value={sendChecksumType}
+              onValueChange={(v) => setSendChecksumType(v as ChecksumType)}
+            >
+              <SelectTrigger className="h-6 w-full text-[11px] px-1.5" title="校验类型">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                {CHECKSUM_OPTIONS.map((opt) => (
+                  <SelectItem key={opt.value} value={opt.value} className="text-xs">
+                    {opt.label}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <div className="flex items-center gap-1">
+              <span className="text-[10px] text-muted-foreground">字节</span>
+              <Input
+                type="number"
+                min={0}
+                value={sendChecksumStart}
+                onChange={(e) => setSendChecksumStart(Number(e.target.value))}
+                className="h-6 w-12 text-[11px] font-mono"
+                title="校验起始字节索引（0-based，含）"
+              />
+              <span className="text-[10px] text-muted-foreground">至</span>
+              <Input
+                type="number"
+                min={-1}
+                value={sendChecksumEnd}
+                onChange={(e) => setSendChecksumEnd(Number(e.target.value))}
+                className="h-6 w-12 text-[11px] font-mono"
+                title="校验结束字节索引（-1=末尾）"
+              />
+            </div>
+          </div>
+        )}
 
         {/* 发送文件 */}
         <SendFileButton uid={uid} running={running} getSendChannel={getSendChannel} />
+
+        {/* 多字符串 */}
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onOpenMultiString}
+          disabled={!running}
+          className="w-full justify-start text-[11px] h-7"
+          title="多字符串管理"
+        >
+          <ListChecks className="mr-1.5 h-3 w-3" />
+          多字符串
+        </Button>
       </section>
 
       {/* 错误信息 */}
       {error && (
-        <div className="rounded-md border border-red-500/30 bg-red-500/10 p-2 text-[11px] text-red-500">
+        <div className="rounded border border-red-500/30 bg-red-500/10 p-1.5 text-[10px] text-red-500">
           {error}
         </div>
       )}
 
-      {/* 保存格式对话框 */}
       <SaveFormatDialog
         open={showSaveDialog}
         onOpenChange={setShowSaveDialog}
