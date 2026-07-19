@@ -1,16 +1,20 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
 import { Terminal, type TerminalApi } from './components/Terminal'
 import { CommandSidebar } from './components/CommandSidebar'
+import { ResizeHandle } from '@/components/LogConsole'
 import { useProbeStore } from '@/stores/probe.store'
 import { useCommanderStore } from '@/stores/commander.store'
 import { resetContext } from '@/services/commander.service'
-import { cn } from '@/lib/utils'
+
+const SIDEBAR_MIN_WIDTH = 200
+const SIDEBAR_DEFAULT_WIDTH = 288 // w-72
 
 export default function CommanderPage() {
   const terminalApiRef = useRef<TerminalApi | null>(null)
 
-  // 侧边栏折叠状态（默认折叠）
-  const [collapsed, setCollapsed] = useState(true)
+  // 侧边栏宽度状态（默认展开，宽度可拖拽调整）
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH)
+  const lastExpandedWidth = useRef(SIDEBAR_DEFAULT_WIDTH)
 
   const selectedProbe = useProbeStore((s) => {
     const uid = s.selectedUid
@@ -68,13 +72,31 @@ export default function CommanderPage() {
     }
   }, [uid, fetchCommands])
 
-  /** 折叠/展开时触发 resize，让 xterm.js FitAddon 重新计算尺寸 */
+  /** 拖拽调整侧边栏宽度 */
+  const handleSidebarResize = useCallback((delta: number) => {
+    // 右侧边栏：鼠标向右拖（delta > 0）应增加宽度
+    setSidebarWidth((w) => {
+      const next = Math.max(SIDEBAR_MIN_WIDTH, Math.min(window.innerWidth / 2, w + delta))
+      if (next > SIDEBAR_MIN_WIDTH) lastExpandedWidth.current = next
+      return next
+    })
+  }, [])
+
+  /** 双击折叠/展开侧边栏 */
+  const handleToggleSidebar = useCallback(() => {
+    setSidebarWidth((w) => {
+      if (w > SIDEBAR_MIN_WIDTH) return SIDEBAR_MIN_WIDTH
+      return lastExpandedWidth.current
+    })
+  }, [])
+
+  /** 侧边栏宽度变化后触发 resize，让 xterm.js FitAddon 重新计算尺寸 */
   useEffect(() => {
     const timer = setTimeout(() => {
       window.dispatchEvent(new Event('resize'))
     }, 50)
     return () => clearTimeout(timer)
-  }, [collapsed])
+  }, [sidebarWidth])
 
   return (
     <div className="flex h-full min-h-0">
@@ -88,40 +110,27 @@ export default function CommanderPage() {
         />
       </div>
 
-      {/* 折叠/展开竖条按钮（只做折叠/展开，无拖拽调整宽度） */}
-      <button
-        onClick={() => setCollapsed((v) => !v)}
-        title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        className={cn(
-          'group flex w-3 shrink-0 cursor-pointer items-center justify-center transition-colors',
-          collapsed
-            ? 'bg-primary/40 hover:bg-primary/60'
-            : 'bg-border hover:bg-primary/30'
-        )}
-      >
-        {/* 中间装饰性竖条指示器（纯视觉，提示可点击） */}
-        <div
-          className={cn(
-            'h-8 w-0.5 rounded-full transition-colors',
-            collapsed
-              ? 'bg-primary-foreground/60'
-              : 'bg-muted-foreground/30 group-hover:bg-primary'
-          )}
-        />
-      </button>
+      {/* 水平拖拽分隔条（双击折叠/展开） */}
+      <ResizeHandle
+        direction="horizontal"
+        onResize={handleSidebarResize}
+        onToggle={handleToggleSidebar}
+        expanded={sidebarWidth > SIDEBAR_MIN_WIDTH}
+      />
 
-      {/* 侧边命令面板（固定宽度 w-72，折叠时隐藏） */}
-      {!collapsed && (
-        <div className="w-72 shrink-0">
-          <CommandSidebar
-            onRunCommand={handleSidebarCommand}
-            commands={commands}
-            connected={isConnected}
-            onClear={handleClear}
-            onResetContext={handleResetContext}
-          />
-        </div>
-      )}
+      {/* 侧边命令面板（可变宽度） */}
+      <div
+        className="shrink-0 overflow-hidden border-l border-border bg-card"
+        style={{ width: sidebarWidth }}
+      >
+        <CommandSidebar
+          onRunCommand={handleSidebarCommand}
+          commands={commands}
+          connected={isConnected}
+          onClear={handleClear}
+          onResetContext={handleResetContext}
+        />
+      </div>
     </div>
   )
 }

@@ -4,6 +4,7 @@ import { Zap, Terminal, Radio, Settings, Cpu, Wrench, ChevronDown, AlertOctagon,
 import { cn } from '@/lib/utils'
 import { useBackendStatus } from '@/hooks/useBackendStatus'
 import { useProbeWs } from '@/hooks/useProbeWs'
+import { useRttSession } from '@/hooks/useRttSession'
 import { useProbeStore } from '@/stores/probe.store'
 import { resetApiClient } from '@/services/api'
 import { DeviceSwitcher } from '@/components/layout/DeviceSwitcher'
@@ -29,6 +30,7 @@ const toolsSubItems = [
 export default function MainLayout() {
   const { status, port } = useBackendStatus()
   useProbeWs(port)
+  useRttSession()  // 全局 RTT 会话管理（切换页面不停止）
 
   const { fetchProbes, fetchTargets, error, clearError } = useProbeStore()
   const location = useLocation()

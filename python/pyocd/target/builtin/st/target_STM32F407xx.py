@@ -1,5 +1,5 @@
 # pyOCD debugger
-# Copyright (c) 2026 Luckk Work
+# Copyright (c) 2026 OMNI Work
 # SPDX-License-Identifier: Apache-2.0
 #
 # Flash algorithm generated from STM32F4xx_1024.FLM using generate_flash_algo.py.

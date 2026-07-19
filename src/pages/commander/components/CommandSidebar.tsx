@@ -155,18 +155,18 @@ function extractExampleGroups(extraHelp: string): ExampleGroup[] {
   return groups
 }
 
-/** 获取命令的所有示例
+/** 获取命令的所有示例（带中文说明）
  * 优先使用后端返回的 examples 字段（准确的数据库示例）
- * 如果没有，再从 extra_help 中提取
+ * 如果没有，再从 extra_help 中提取（无说明）
  */
-function getCommandExamples(cmd: CommandInfo): string[] {
-  // 优先使用后端数据库中的示例
+function getCommandExamples(cmd: CommandInfo): { cmd: string; desc?: string }[] {
+  // 优先使用后端数据库中的示例（新结构：{cmd, desc}）
   if (cmd.examples && cmd.examples.length > 0) {
     return cmd.examples
   }
-  // 回退：从 extra_help 提取
+  // 回退：从 extra_help 提取（无说明）
   const groups = extractExampleGroups(cmd.extra_help)
-  return groups.flatMap((g) => g.lines)
+  return groups.flatMap((g) => g.lines.map((line) => ({ cmd: line })))
 }
 
 /** 流程步骤（单个命令） */
@@ -673,55 +673,56 @@ export function CommandSidebar({
                   </div>
                 </div>
               )}
-              {/* 示例分组（用代码块渲染，便于复制） */}
-              {extractExampleGroups(exampleCmd.extra_help).map((group, gIdx) => {
-                const codeText = group.lines.join('\n')
+              {/* 示例列表（单条示例 + 中文说明 + 复制按钮） */}
+              {(() => {
+                const examples = getCommandExamples(exampleCmd)
+                const groups = extractExampleGroups(exampleCmd.extra_help)
+                if (examples.length === 0 && groups.length === 0) return null
+
                 return (
-                  <div key={gIdx}>
-                    <div className="mb-1 flex items-center justify-between">
+                  <div className="space-y-2">
+                    <div className="flex items-center justify-between">
                       <span className="text-xs font-medium text-muted-foreground">
-                        {group.title}:
+                        示例（{examples.length}）
                       </span>
-                      <button
-                        onClick={() => copyToClipboard(codeText)}
-                        className="flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-primary transition-colors"
-                        title="复制全部"
-                      >
-                        <Copy className="size-2.5" />
-                        <span>复制全部</span>
-                      </button>
+                      {examples.length > 0 && (
+                        <button
+                          onClick={() => copyToClipboard(examples.map((e) => e.cmd).join('\n'))}
+                          className="flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-primary transition-colors"
+                          title="复制全部示例"
+                        >
+                          <Copy className="size-2.5" />
+                          <span>复制全部</span>
+                        </button>
+                      )}
                     </div>
-                    <pre className="group/code relative rounded bg-muted/60 p-2 overflow-x-auto">
-                      <code className="font-mono text-xs text-foreground/90 whitespace-pre">
-                        {codeText}
-                      </code>
-                    </pre>
+                    {examples.map((ex, idx) => (
+                      <div
+                        key={idx}
+                        className="group rounded border border-border/60 bg-muted/40 p-2 hover:border-primary/40 transition-colors"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <code className="flex-1 font-mono text-xs text-foreground/90 break-all">
+                            {ex.cmd}
+                          </code>
+                          <button
+                            onClick={() => copyToClipboard(ex.cmd)}
+                            className="shrink-0 opacity-0 group-hover:opacity-100 transition-opacity text-muted-foreground hover:text-primary"
+                            title="复制此示例"
+                          >
+                            <Copy className="size-3" />
+                          </button>
+                        </div>
+                        {ex.desc && (
+                          <p className="mt-1 text-[11px] leading-relaxed text-muted-foreground">
+                            {ex.desc}
+                          </p>
+                        )}
+                      </div>
+                    ))}
                   </div>
                 )
-              })}
-              {/* 后端数据库示例（当 extra_help 无示例分组时，使用 cmd.examples） */}
-              {extractExampleGroups(exampleCmd.extra_help).length === 0 && getCommandExamples(exampleCmd).length > 0 && (
-                <div>
-                  <div className="mb-1 flex items-center justify-between">
-                    <span className="text-xs font-medium text-muted-foreground">
-                      Examples:
-                    </span>
-                    <button
-                      onClick={() => copyToClipboard(getCommandExamples(exampleCmd).join('\n'))}
-                      className="flex items-center gap-0.5 text-[10px] text-muted-foreground hover:text-primary transition-colors"
-                      title="复制全部"
-                    >
-                      <Copy className="size-2.5" />
-                      <span>复制全部</span>
-                    </button>
-                  </div>
-                  <pre className="rounded bg-muted/60 p-2 overflow-x-auto">
-                    <code className="font-mono text-xs text-foreground/90 whitespace-pre">
-                      {getCommandExamples(exampleCmd).join('\n')}
-                    </code>
-                  </pre>
-                </div>
-              )}
+              })()}
             </div>
           )}
         </DialogContent>

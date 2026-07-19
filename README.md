@@ -1,10 +1,10 @@
-# Luckk Work
+# OMNI Work
 
 基于 DAPLink 仿真器的嵌入式开发工具集，提供类似 SEGGER J-Link 工具链的完整体验，以开源 DAPLink 硬件为基础，降低嵌入式开发者的工具成本。
 
 ## 功能概览
 
-Luckk Work 对标 SEGGER J-Link 工具链，分阶段实现以下模块：
+OMNI Work 对标 SEGGER J-Link 工具链，分阶段实现以下模块：
 
 | 模块 | 对标产品 | 状态 | 说明 |
 |------|----------|------|------|
@@ -67,7 +67,7 @@ Electron 主进程启动时 spawn Python 子进程运行 FastAPI 服务，通过
 ## 项目结构
 
 ```
-luckk-work/
+omni-work/
 ├── electron/                    # Electron 主进程
 │   ├── main.ts                  # 窗口创建、生命周期、IPC 路由
 │   ├── preload.ts               # contextBridge 安全暴露 API

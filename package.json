@@ -1,5 +1,5 @@
 {
-  "name": "luckk-work",
+  "name": "omni-work",
   "version": "0.1.0",
   "description": "DAPLink 嵌入式开发工具集",
   "main": "./out/main/index.js",
@@ -16,8 +16,8 @@
     "package:clean": "powershell -ExecutionPolicy Bypass -File build.ps1 -Clean"
   },
   "build": {
-    "appId": "com.geehy.luckk-work",
-    "productName": "Luckk Work",
+    "appId": "com.geehy.omni-work",
+    "productName": "OMNI Work",
     "directories": {
       "output": "release"
     },
@@ -28,7 +28,7 @@
     ],
     "extraResources": [
       {
-        "from": "python/dist/luckk-backend",
+        "from": "python/dist/omni-backend",
         "to": "python",
         "filter": [
           "**/*"
@@ -52,7 +52,7 @@
       "perMachine": false,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "Luckk Work"
+      "shortcutName": "OMNI Work"
     }
   },
   "dependencies": {

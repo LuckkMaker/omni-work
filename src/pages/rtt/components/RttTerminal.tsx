@@ -5,14 +5,15 @@ import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
 import { wsClient } from '@/services/ws'
 import { useRttStore } from '@/stores/rtt.store'
+import { useUiStore } from '@/stores/ui.store'
 
 /** 终端对外暴露的 API */
 export interface RttTerminalApi {
   /** 清屏 */
   clear: () => void
-  /** 获取所有接收到的原始数据（用于保存到文件） */
+  /** 获取当前 Tab 所有接收到的原始数据（用于保存到文件） */
   getData: () => Uint8Array
-  /** 清空数据缓冲 */
+  /** 清空当前 Tab 的数据缓冲 */
   clearData: () => void
   /** 聚焦终端 */
   focus: () => void
@@ -25,6 +26,8 @@ interface RttTerminalProps {
   uid: string | null
   /** 是否正在运行 */
   running: boolean
+  /** Tab ID（用于从 store 读取对应 Tab 的数据） */
+  tabId: string
 }
 
 const COLOR = {
@@ -57,52 +60,40 @@ function formatHexDump(data: Uint8Array, offset = 0): string {
 }
 
 export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
-  function RttTerminal({ uid, running }, ref) {
+  function RttTerminal({ uid, running, tabId }, ref) {
     const containerRef = useRef<HTMLDivElement>(null)
     const termRef = useRef<XTerm | null>(null)
     const fitRef = useRef<FitAddon | null>(null)
     const fontSize = useRef(13)
 
-    // 接收数据缓冲（用于保存到文件）
-    const dataBufferRef = useRef<Uint8Array[]>([])
-    const totalBufferSizeRef = useRef(0)
-    // 字节统计节流缓冲
-    const pendingBytesRef = useRef(0)
+    // 已写入终端的数据缓冲长度（用于增量写入）
+    const writtenBufferCountRef = useRef(0)
+    const writtenBytesRef = useRef(0)
 
-    // 同步 store 状态到 ref（供 WebSocket 回调访问最新值）
-    const selectedUpChannelRef = useRef(0)
-    const displayModeRef = useRef<'text' | 'hex'>('text')
+    // 同步 store 状态
+    const displayMode = useRttStore((s) => s.displayMode)
+    const displayModeRef = useRef(displayMode)
+    displayModeRef.current = displayMode
+
+    // 当前 Tab 的数据缓冲（订阅更新）
+    const tabDataBuffer = useRttStore((s) => {
+      const tab = s.tabs.find((t) => t.id === tabId)
+      return tab ? tab.dataBuffer : []
+    })
     const uidRef = useRef<string | null>(uid)
     uidRef.current = uid
-
-    const selectedUpChannel = useRttStore((s) => s.selectedUpChannel)
-    selectedUpChannelRef.current = selectedUpChannel
-    const displayMode = useRttStore((s) => s.displayMode)
-    displayModeRef.current = displayMode
-    const addBytesReceived = useRttStore((s) => s.addBytesReceived)
 
     // 暴露 API
     useImperativeHandle(ref, () => ({
       clear: () => {
-        const term = termRef.current
-        if (term) {
-          term.clear()
-        }
+        termRef.current?.clear()
       },
-      getData: () => {
-        const buffers = dataBufferRef.current
-        const total = buffers.reduce((sum, b) => sum + b.length, 0)
-        const result = new Uint8Array(total)
-        let offset = 0
-        for (const buf of buffers) {
-          result.set(buf, offset)
-          offset += buf.length
-        }
-        return result
-      },
+      getData: () => useRttStore.getState().getTabData(tabId),
       clearData: () => {
-        dataBufferRef.current = []
-        totalBufferSizeRef.current = 0
+        useRttStore.getState().clearTabData(tabId)
+        writtenBufferCountRef.current = 0
+        writtenBytesRef.current = 0
+        termRef.current?.clear()
       },
       focus: () => termRef.current?.focus(),
       zoom: (delta: number) => {
@@ -115,7 +106,7 @@ export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
           try { fit.fit() } catch { /* ignore */ }
         })
       },
-    }), [])
+    }), [tabId])
 
     // 初始化终端
     useEffect(() => {
@@ -129,28 +120,7 @@ export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
         scrollback: 10000,
         disableStdin: true,
         allowProposedApi: true,
-        theme: {
-          background: '#0f172a',
-          foreground: '#e2e8f0',
-          cursor: '#2563eb',
-          selectionBackground: '#33415580',
-          black: '#0f172a',
-          red: '#ef4444',
-          green: '#22c55e',
-          yellow: '#eab308',
-          blue: '#3b82f6',
-          magenta: '#a855f7',
-          cyan: '#06b6d4',
-          white: '#f8fafc',
-          brightBlack: '#64748b',
-          brightRed: '#f87171',
-          brightGreen: '#4ade80',
-          brightYellow: '#facc15',
-          brightBlue: '#60a5fa',
-          brightMagenta: '#c084fc',
-          brightCyan: '#22d3ee',
-          brightWhite: '#ffffff',
-        },
+        theme: useUiStore.getState().terminalTheme.theme,
       })
 
       const fit = new FitAddon()
@@ -195,6 +165,14 @@ export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
       }
     }, [])
 
+    // 响应终端主题切换
+    const terminalTheme = useUiStore((s) => s.terminalTheme)
+    useEffect(() => {
+      if (termRef.current) {
+        termRef.current.options.theme = terminalTheme.theme
+      }
+    }, [terminalTheme])
+
     // 运行状态变化时显示提示
     const isFirstMount = useRef(true)
     useEffect(() => {
@@ -211,47 +189,27 @@ export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
       }
     }, [running])
 
-    // 订阅 WebSocket 事件
+    // 增量写入：当 tabDataBuffer 增加新数据时，写入终端
     useEffect(() => {
-      // rtt.data: 接收数据
-      const unsubData = wsClient.on('rtt.data', (data: unknown) => {
-        const payload = data as { uid: string; channel: number; data: string; size: number }
-        if (payload.uid !== uidRef.current) return
-        if (payload.channel !== selectedUpChannelRef.current) return
+      const term = termRef.current
+      if (!term) return
 
-        const term = termRef.current
-        if (!term) return
-
-        // 解码 base64
-        const binary = atob(payload.data)
-        const bytes = new Uint8Array(binary.length)
-        for (let i = 0; i < binary.length; i++) {
-          bytes[i] = binary.charCodeAt(i)
-        }
-
-        // 保存到缓冲
-        dataBufferRef.current.push(bytes)
-        totalBufferSizeRef.current += bytes.length
-        // 限制缓冲大小（~10MB）
-        if (totalBufferSizeRef.current > 10 * 1024 * 1024) {
-          const removed = dataBufferRef.current.shift()
-          if (removed) totalBufferSizeRef.current -= removed.length
-        }
-
-        // 节流更新字节统计（累积后批量提交，避免高频 set 导致 re-render）
-        pendingBytesRef.current += bytes.length
-
-        // 写入终端
+      // 从上次写入位置开始，写入新增的缓冲块
+      while (writtenBufferCountRef.current < tabDataBuffer.length) {
+        const buf = tabDataBuffer[writtenBufferCountRef.current]
         if (displayModeRef.current === 'hex') {
-          term.write(formatHexDump(bytes))
+          term.write(formatHexDump(buf, writtenBytesRef.current))
         } else {
-          // 文本模式：直接写入 UTF-8 文本
-          const text = new TextDecoder('utf-8', { fatal: false }).decode(bytes)
+          const text = new TextDecoder('utf-8', { fatal: false }).decode(buf)
           term.write(text)
         }
-      })
+        writtenBytesRef.current += buf.length
+        writtenBufferCountRef.current++
+      }
+    }, [tabDataBuffer])
 
-      // rtt.error: 错误
+    // rtt.error 错误提示（全局错误仍显示）
+    useEffect(() => {
       const unsubError = wsClient.on('rtt.error', (data: unknown) => {
         const payload = data as { uid: string; error: string }
         if (payload.uid !== uidRef.current) return
@@ -259,23 +217,8 @@ export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
         if (!term) return
         term.write(`\r\n${COLOR.red}[RTT 错误] ${payload.error}${COLOR.reset}\r\n`)
       })
-
-      return () => {
-        unsubData()
-        unsubError()
-      }
-    }, [addBytesReceived])
-
-    // 节流刷新字节统计（每 200ms 批量提交）
-    useEffect(() => {
-      const timer = setInterval(() => {
-        if (pendingBytesRef.current > 0) {
-          addBytesReceived(pendingBytesRef.current)
-          pendingBytesRef.current = 0
-        }
-      }, 200)
-      return () => clearInterval(timer)
-    }, [addBytesReceived])
+      return unsubError
+    }, [])
 
     // 显示模式切换时显示提示
     const prevMode = useRef(displayMode)
@@ -288,6 +231,13 @@ export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
         }
       }
     }, [displayMode])
+
+    // Tab 切换或清空时重置写入位置
+    useEffect(() => {
+      writtenBufferCountRef.current = 0
+      writtenBytesRef.current = 0
+      termRef.current?.clear()
+    }, [tabId])
 
     return <div ref={containerRef} className="h-full w-full overflow-hidden" />
   }

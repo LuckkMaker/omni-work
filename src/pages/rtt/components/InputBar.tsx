@@ -2,6 +2,13 @@ import { useState, useCallback, useRef, useEffect } from 'react'
 import { Send, CornerDownLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { useRttStore } from '@/stores/rtt.store'
 import { rttService } from '@/services/rtt.service'
@@ -19,9 +26,19 @@ export function InputBar({ uid, running }: InputBarProps) {
   const inputRef = useRef<HTMLInputElement>(null)
 
   const selectedDownChannel = useRttStore((s) => s.selectedDownChannel)
+  const setSelectedDownChannel = useRttStore((s) => s.setSelectedDownChannel)
   const downChannels = useRttStore((s) => s.downChannels)
   const addBytesSent = useRttStore((s) => s.addBytesSent)
   const setError = useRttStore((s) => s.setError)
+
+  // 当前激活的 Tab（决定发送目标通道）
+  const activeTabId = useRttStore((s) => s.activeTabId)
+  const activeTab = useRttStore((s) => s.tabs.find((t) => t.id === s.activeTabId))
+
+  // 发送通道：单通道 Tab 用 tab.channel，All Channel Tab 用 selectedDownChannel
+  const sendChannel = activeTab?.mode === 'single' && activeTab.channel !== undefined
+    ? activeTab.channel
+    : selectedDownChannel
 
   const hasDownChannel = downChannels.length > 0
   const canSend = uid && running && hasDownChannel && !sending && text.length > 0
@@ -46,7 +63,7 @@ export function InputBar({ uid, running }: InputBarProps) {
         for (let i = 0; i < hexStr.length; i += 2) {
           bytes[i / 2] = parseInt(hexStr.substring(i, i + 2), 16)
         }
-        const result = await rttService.send(uid, bytes, selectedDownChannel)
+        const result = await rttService.send(uid, bytes, sendChannel)
         if (result.success) {
           addBytesSent(result.bytes_written)
           setText('')
@@ -58,7 +75,7 @@ export function InputBar({ uid, running }: InputBarProps) {
         const result = await rttService.sendText(
           uid,
           text,
-          selectedDownChannel,
+          sendChannel,
           appendNewline
         )
         if (result.success) {
@@ -73,7 +90,7 @@ export function InputBar({ uid, running }: InputBarProps) {
     } finally {
       setSending(false)
     }
-  }, [uid, canSend, hexMode, text, selectedDownChannel, appendNewline, addBytesSent, setError])
+  }, [uid, canSend, hexMode, text, sendChannel, appendNewline, addBytesSent, setError])
 
   // Enter 发送
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -89,6 +106,9 @@ export function InputBar({ uid, running }: InputBarProps) {
       inputRef.current?.focus()
     }
   }, [running])
+
+  // 是否显示 down channel 选择器（All Channel Tab 时显示）
+  const showChannelSelector = activeTab?.mode === 'all'
 
   return (
     <div className="flex items-center gap-2 border-t border-border bg-background px-3 py-2">
@@ -107,6 +127,33 @@ export function InputBar({ uid, running }: InputBarProps) {
       >
         {hexMode ? 'HEX' : 'TXT'}
       </button>
+
+      {/* Down Channel 选择器（仅 All Channel Tab 显示） */}
+      {showChannelSelector && hasDownChannel && (
+        <Select
+          value={String(selectedDownChannel)}
+          onValueChange={(v) => setSelectedDownChannel(Number(v))}
+          disabled={!running}
+        >
+          <SelectTrigger className="h-8 w-[130px] text-xs" title="选择发送目标 Down Channel">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {downChannels.map((ch) => (
+              <SelectItem key={ch.index} value={String(ch.index)} className="text-xs">
+                Ch{ch.index}{ch.name ? ` - ${ch.name}` : ''}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
+      )}
+
+      {/* 单通道 Tab 显示发送目标（只读） */}
+      {!showChannelSelector && activeTab?.mode === 'single' && (
+        <div className="flex h-8 items-center rounded-md border border-border px-2 text-xs text-muted-foreground" title="发送目标通道（由当前 Tab 决定）">
+          → Ch{sendChannel}
+        </div>
+      )}
 
       {/* 输入框 */}
       <Input

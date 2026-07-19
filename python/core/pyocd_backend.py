@@ -154,34 +154,80 @@ class PyOCDBackend(BackendInterface):
             # 对 CMSIS-DAP v2 (WinUSB bulk) 提升尤为显著，读取速度可提升 5-10 倍
             'cmsis_dap.deferred_transfers': True,
         }
-        # 默认 4MHz SWD 时钟（ST-LINK V2 最高 4.6MHz，V3 最高 9MHz+）。
-        # 用户未指定频率时使用 4MHz，比 pyOCD 默认 1.8MHz 快 ~2.5x，
-        # 对 blank check / flash read 等大块读取操作提升明显。
+        # 默认 1MHz SWD 时钟（与前端默认值一致）。
         # 若探针不支持该频率，pyOCD 会自动选择最接近的支持值。
-        options['frequency'] = speed if speed else 4000000
+        actual_speed = speed if speed else 1000000
+        options['frequency'] = actual_speed
         # 接口协议通过 dap_protocol 选项设置
         if interface == 'jtag':
             options['dap_protocol'] = 'jtag'
         else:
             options['dap_protocol'] = 'swd'
 
-        try:
-            session = ConnectHelper.session_with_chosen_probe(
+        # 连接超时（秒）。目标未 reset 或无响应时，pyOCD 内部 DP 连接会重试 4 次 SWJ 序列，
+        # 可能阻塞数秒到数十秒。用线程池 + future.result(timeout) 强制中断。
+        CONNECT_TIMEOUT = 5.0
+        # JTAG 连接失败时的降速重试频率（Hz）
+        JTAG_FALLBACK_SPEED = 1000000
+
+        def _do_connect(freq: int, proto: str):
+            """实际的连接逻辑，在线程池中执行"""
+            opts = dict(options)
+            opts['frequency'] = freq
+            opts['dap_protocol'] = proto
+            sess = ConnectHelper.session_with_chosen_probe(
                 blocking=False,
                 unique_id=probe_uid,
                 target_override=target_override,
                 init_board=False,
-                options=options,
+                options=opts,
             )
+            if sess is None:
+                return None
+            sess.open()
+            return sess
+
+        session = None
+        last_error = None
+        try:
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_do_connect, actual_speed, interface)
+                try:
+                    session = future.result(timeout=CONNECT_TIMEOUT)
+                except concurrent.futures.TimeoutError:
+                    future.cancel()
+                    last_error = f"连接超时（{int(CONNECT_TIMEOUT)}秒），目标可能未上电或未复位"
+                    event_manager.log("error", f"Connection timeout: {last_error}")
+                except Exception as e:
+                    last_error = str(e)
+                    # JTAG 模式下通信失败，降速到 1MHz 重试一次
+                    if interface == 'jtag' and actual_speed > JTAG_FALLBACK_SPEED:
+                        event_manager.log("warning",
+                                          f"JTAG connect failed at {actual_speed}Hz: {e}; "
+                                          f"retrying at {JTAG_FALLBACK_SPEED}Hz...")
+                        try:
+                            future2 = executor.submit(_do_connect, JTAG_FALLBACK_SPEED, interface)
+                            session = future2.result(timeout=CONNECT_TIMEOUT)
+                            if session is not None:
+                                last_error = None
+                                event_manager.log("info",
+                                                  f"JTAG connected at fallback {JTAG_FALLBACK_SPEED}Hz")
+                        except Exception as e2:
+                            last_error = str(e2)
+
             if session is None:
+                # _do_connect 返回 None 表示探针未找到
+                if last_error is None:
+                    last_error = f"Probe {probe_uid[:16]} not found"
+                    event_manager.log("error", last_error)
+                    event_manager.emit("probe.disconnected", {"uid": probe_uid, "reason": "not_found"})
+                else:
+                    event_manager.emit("probe.disconnected", {"uid": probe_uid, "reason": "error"})
                 with self._lock:
                     session_info.state = ProbeState.ERROR
-                    session_info.error = "Probe not found"
-                event_manager.log("error", f"Probe {probe_uid[:16]} not found")
-                event_manager.emit("probe.disconnected", {"uid": probe_uid, "reason": "not_found"})
+                    session_info.error = last_error
                 return False
-
-            session.open()
 
             with self._lock:
                 session_info.session = session

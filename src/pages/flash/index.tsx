@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import {
   Eraser,
   Upload,
@@ -26,8 +26,13 @@ import { LogConsole, ResizeHandle } from '@/components/LogConsole'
 import { useFlashStore } from '@/stores/flash.store'
 import { useProbeStore } from '@/stores/probe.store'
 
+const LOG_MIN_HEIGHT = 120
+const LOG_DEFAULT_EXPANDED = 280
+
 export default function FlashPage() {
-  const [bottomHeight, setBottomHeight] = useState(200)
+  // 默认收缩到最小值；lastExpandedHeight 保存上次展开值用于双击恢复
+  const [bottomHeight, setBottomHeight] = useState(LOG_MIN_HEIGHT)
+  const lastExpandedHeight = useRef(LOG_DEFAULT_EXPANDED)
 
   const {
     busy,
@@ -56,7 +61,23 @@ export default function FlashPage() {
   const canReadBack = !!activeTab
 
   const handleResize = (delta: number) => {
-    setBottomHeight((h) => Math.max(120, Math.min(window.innerHeight / 2, h - delta)))
+    setBottomHeight((h) => {
+      const next = Math.max(LOG_MIN_HEIGHT, Math.min(window.innerHeight / 2, h - delta))
+      // 记录非最小值作为"上次展开值"
+      if (next > LOG_MIN_HEIGHT) lastExpandedHeight.current = next
+      return next
+    })
+  }
+
+  const handleToggleLog = () => {
+    setBottomHeight((h) => {
+      if (h > LOG_MIN_HEIGHT) {
+        // 当前展开 → 折叠到最小
+        return LOG_MIN_HEIGHT
+      }
+      // 当前折叠 → 恢复上次展开值
+      return lastExpandedHeight.current
+    })
   }
 
   return (
@@ -148,7 +169,11 @@ export default function FlashPage() {
       </div>
 
       {/* 可拖拽分隔 */}
-      <ResizeHandle onResize={handleResize} />
+      <ResizeHandle
+        onResize={handleResize}
+        onToggle={handleToggleLog}
+        expanded={bottomHeight > LOG_MIN_HEIGHT}
+      />
 
       {/* 底部：日志（全宽） */}
       <div className="shrink-0 border-t border-border" style={{ height: bottomHeight }}>

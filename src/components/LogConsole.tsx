@@ -151,31 +151,36 @@ export function LogConsole({ logs, onClear, title = '日志' }: LogConsoleProps)
   )
 }
 
-/** 拖拽分隔条组件 */
+/** 拖拽分隔条组件，支持垂直/水平方向 + 双击折叠/展开 */
 export function ResizeHandle({
   onResize,
+  onToggle,
   expanded,
+  direction = 'vertical',
 }: {
-  onResize: (deltaY: number) => void
+  onResize: (delta: number) => void
+  onToggle?: () => void
   expanded?: boolean
+  direction?: 'vertical' | 'horizontal'
 }) {
   const dragging = useRef(false)
-  const lastY = useRef(0)
+  const lastPos = useRef(0)
 
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault()
     dragging.current = true
-    lastY.current = e.clientY
-    document.body.style.cursor = 'row-resize'
+    lastPos.current = direction === 'vertical' ? e.clientY : e.clientX
+    document.body.style.cursor = direction === 'vertical' ? 'row-resize' : 'col-resize'
     document.body.style.userSelect = 'none'
-  }, [])
+  }, [direction])
 
   useEffect(() => {
     const handleMouseMove = (e: MouseEvent) => {
       if (!dragging.current) return
-      const deltaY = e.clientY - lastY.current
-      lastY.current = e.clientY
-      onResize(deltaY)
+      const currentPos = direction === 'vertical' ? e.clientY : e.clientX
+      const delta = currentPos - lastPos.current
+      lastPos.current = currentPos
+      onResize(delta)
     }
     const handleMouseUp = () => {
       if (dragging.current) {
@@ -190,15 +195,23 @@ export function ResizeHandle({
       window.removeEventListener('mousemove', handleMouseMove)
       window.removeEventListener('mouseup', handleMouseUp)
     }
-  }, [onResize])
+  }, [onResize, direction])
+
+  const isVertical = direction === 'vertical'
 
   return (
     <div
       onMouseDown={handleMouseDown}
-      className="group flex h-1.5 cursor-row-resize items-center justify-center transition-colors hover:bg-primary/20"
+      onDoubleClick={onToggle}
+      title={onToggle ? (expanded ? '双击折叠' : '双击展开') : undefined}
+      className={cn(
+        'group flex shrink-0 items-center justify-center transition-colors hover:bg-primary/20',
+        isVertical ? 'h-1.5 w-full cursor-row-resize' : 'h-full w-1.5 cursor-col-resize'
+      )}
     >
       <div className={cn(
-        'h-0.5 w-8 rounded-full transition-colors',
+        'rounded-full transition-colors',
+        isVertical ? 'h-0.5 w-8' : 'w-0.5 h-8',
         expanded ? 'bg-primary/40' : 'bg-border group-hover:bg-primary/40'
       )} />
     </div>

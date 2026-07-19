@@ -4,6 +4,35 @@ import type { LogEvent } from '@shared/types'
 
 export type DisplayMode = 'text' | 'hex'
 
+/** Tab 模式 */
+export type TabMode = 'all' | 'single'
+
+/** RTT 终端 Tab */
+export interface RttTab {
+  /** Tab 唯一 ID */
+  id: string
+  /** Tab 标题 */
+  title: string
+  /** 模式：all=所有通道，single=单通道 */
+  mode: TabMode
+  /** 通道索引（single 模式有效） */
+  channel?: number
+  /** 接收数据缓冲（Uint8Array 数组，用于保存到文件） */
+  dataBuffer: Uint8Array[]
+  /** 缓冲总大小（字节） */
+  bufferSize: number
+  /** 累计接收字节数 */
+  bytesReceived: number
+}
+
+/** 生成唯一 Tab ID */
+function genTabId(): string {
+  return `tab_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+/** 缓冲大小上限（10MB） */
+const MAX_BUFFER_SIZE = 10 * 1024 * 1024
+
 interface RttState {
   /** RTT 是否正在运行 */
   running: boolean
@@ -13,11 +42,11 @@ interface RttState {
   upChannels: RttChannel[]
   /** down channels（host -> target） */
   downChannels: RttChannel[]
-  /** 选中的 up channel */
+  /** 选中的 up channel（兼容旧逻辑，用于启动时指定） */
   selectedUpChannel: number
-  /** 选中的 down channel */
+  /** 选中的 down channel（用于发送） */
   selectedDownChannel: number
-  /** 接收到的字节数 */
+  /** 接收到的字节数（总计） */
   bytesReceived: number
   /** 发送的字节数 */
   bytesSent: number
@@ -34,6 +63,11 @@ interface RttState {
   /** RTT 日志 */
   logs: LogEvent[]
 
+  /** 多终端 Tab 列表 */
+  tabs: RttTab[]
+  /** 当前激活的 Tab ID */
+  activeTabId: string
+
   setRunning: (running: boolean) => void
   setStarting: (starting: boolean) => void
   setChannels: (up: RttChannel[], down: RttChannel[]) => void
@@ -49,9 +83,36 @@ interface RttState {
   addLog: (log: LogEvent) => void
   clearLogs: () => void
   reset: () => void
+
+  /** 向指定 Tab 追加数据 */
+  appendTabData: (tabId: string, data: Uint8Array) => void
+  /** 清空指定 Tab 的数据缓冲 */
+  clearTabData: (tabId: string) => void
+  /** 获取指定 Tab 的数据缓冲（拼接为单个 Uint8Array） */
+  getTabData: (tabId: string) => Uint8Array
+  /** 添加新 Tab（单通道模式） */
+  addTab: (channel: number, channelName?: string) => string
+  /** 关闭 Tab */
+  removeTab: (tabId: string) => void
+  /** 设置激活 Tab */
+  setActiveTab: (tabId: string) => void
+  /** 重置 Tab（启动新会话时） */
+  resetTabs: () => void
 }
 
-export const useRttStore = create<RttState>((set) => ({
+/** 创建初始 All Channel Tab */
+function createAllChannelTab(): RttTab {
+  return {
+    id: 'all',
+    title: 'All Channel',
+    mode: 'all',
+    dataBuffer: [],
+    bufferSize: 0,
+    bytesReceived: 0,
+  }
+}
+
+export const useRttStore = create<RttState>((set, get) => ({
   running: false,
   starting: false,
   upChannels: [],
@@ -66,6 +127,9 @@ export const useRttStore = create<RttState>((set) => ({
   searchAddress: '',
   searchSize: '',
   logs: [],
+
+  tabs: [createAllChannelTab()],
+  activeTabId: 'all',
 
   setRunning: (running) => set({ running }),
   setStarting: (starting) => set({ starting }),
@@ -92,5 +156,80 @@ export const useRttStore = create<RttState>((set) => ({
       bytesReceived: 0,
       bytesSent: 0,
       error: null,
+      tabs: [createAllChannelTab()],
+      activeTabId: 'all',
     }),
+
+  appendTabData: (tabId, data) =>
+    set((s) => ({
+      tabs: s.tabs.map((tab) => {
+        if (tab.id !== tabId) return tab
+        const newBuffer = [...tab.dataBuffer, data]
+        let newSize = tab.bufferSize + data.length
+        // 超限时移除旧数据
+        while (newSize > MAX_BUFFER_SIZE && newBuffer.length > 1) {
+          const removed = newBuffer.shift()!
+          newSize -= removed.length
+        }
+        return {
+          ...tab,
+          dataBuffer: newBuffer,
+          bufferSize: newSize,
+          bytesReceived: tab.bytesReceived + data.length,
+        }
+      }),
+    })),
+
+  clearTabData: (tabId) =>
+    set((s) => ({
+      tabs: s.tabs.map((tab) =>
+        tab.id === tabId
+          ? { ...tab, dataBuffer: [], bufferSize: 0, bytesReceived: 0 }
+          : tab
+      ),
+    })),
+
+  getTabData: (tabId) => {
+    const tab = get().tabs.find((t) => t.id === tabId)
+    if (!tab) return new Uint8Array(0)
+    const total = tab.dataBuffer.reduce((sum, b) => sum + b.length, 0)
+    const result = new Uint8Array(total)
+    let offset = 0
+    for (const buf of tab.dataBuffer) {
+      result.set(buf, offset)
+      offset += buf.length
+    }
+    return result
+  },
+
+  addTab: (channel, channelName) => {
+    const id = genTabId()
+    const title = `Ch${channel}${channelName ? ` - ${channelName}` : ''}`
+    set((s) => ({
+      tabs: [...s.tabs, {
+        id,
+        title,
+        mode: 'single' as const,
+        channel,
+        dataBuffer: [],
+        bufferSize: 0,
+        bytesReceived: 0,
+      }],
+      activeTabId: id,
+    }))
+    return id
+  },
+
+  removeTab: (tabId) =>
+    set((s) => {
+      // 不允许关闭 All Channel tab
+      if (tabId === 'all') return s
+      const newTabs = s.tabs.filter((t) => t.id !== tabId)
+      const newActive = s.activeTabId === tabId ? 'all' : s.activeTabId
+      return { tabs: newTabs, activeTabId: newActive }
+    }),
+
+  setActiveTab: (tabId) => set({ activeTabId: tabId }),
+
+  resetTabs: () => set({ tabs: [createAllChannelTab()], activeTabId: 'all' }),
 }))

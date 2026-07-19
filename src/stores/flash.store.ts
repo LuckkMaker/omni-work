@@ -650,7 +650,7 @@ async function wrapOperation(
   get: () => FlashStore,
   title: string,
   startMsg: string,
-  fn: () => Promise<{ success: boolean; error?: string; duration_ms?: number; bytes_written?: number }>,
+  fn: () => Promise<{ success: boolean; error?: string | null; duration_ms?: number; bytes_written?: number }>,
   successMsg?: (result: any) => string,
 ) {
   const uid = useProbeStore.getState().selectedUid
@@ -670,7 +670,7 @@ async function wrapOperation(
 
   const notif = useNotificationStore.getState()
   const notifId = notif.push({ type: 'progress', title, message: startMsg, progress: 0 })
-  set({ busy: true, progress: 0, progressCurrent: 0, progressTotal: 0, result: null, logs: [{ level: 'info', message: `── ${title} ──`, timestamp: Date.now() }], activeNotifId: notifId })
+  set({ busy: true, progress: 0, progressCurrent: 0, progressTotal: 0, result: null, logs: [{ level: 'info', message: `── ${title} ──`, timestamp: new Date().toISOString() }], activeNotifId: notifId })
   try {
     const result = await fn()
     set({ phase: result.success ? 'done' : 'error', busy: false, result: result as FlashResult, activeNotifId: null })

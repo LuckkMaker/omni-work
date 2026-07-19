@@ -4,6 +4,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import { WebLinksAddon } from '@xterm/addon-web-links'
 import '@xterm/xterm/css/xterm.css'
 import { useCommanderStore } from '@/stores/commander.store'
+import { useUiStore } from '@/stores/ui.store'
 import type { CommandInfo } from '@/services/commander.service'
 
 /** 终端对外暴露的命令 API（供父组件通过 ref 调用） */
@@ -385,28 +386,7 @@ export function Terminal({ uid, connected, commands, apiRef }: TerminalProps) {
       convertEol: true,
       scrollback: 10000,
       allowProposedApi: true,
-      theme: {
-        background: '#0f172a',
-        foreground: '#e2e8f0',
-        cursor: '#2563eb',
-        selectionBackground: '#33415580',
-        black: '#0f172a',
-        red: '#ef4444',
-        green: '#22c55e',
-        yellow: '#eab308',
-        blue: '#3b82f6',
-        magenta: '#a855f7',
-        cyan: '#06b6d4',
-        white: '#f8fafc',
-        brightBlack: '#64748b',
-        brightRed: '#f87171',
-        brightGreen: '#4ade80',
-        brightYellow: '#facc15',
-        brightBlue: '#60a5fa',
-        brightMagenta: '#c084fc',
-        brightCyan: '#22d3ee',
-        brightWhite: '#ffffff',
-      },
+      theme: useUiStore.getState().terminalTheme.theme,
     })
 
     const fit = new FitAddon()
@@ -457,7 +437,7 @@ export function Terminal({ uid, connected, commands, apiRef }: TerminalProps) {
     })
 
     // 欢迎信息
-    term.write(`${COLOR.bold}${COLOR.cyan}Luckk Work Commander${COLOR.reset}\r\n`)
+    term.write(`${COLOR.bold}${COLOR.cyan}OMNI Work Commander${COLOR.reset}\r\n`)
     term.write(
       `${COLOR.dim}Type 'help' for commands, Tab to complete, Ctrl+R to search history${COLOR.reset}\r\n`
     )
@@ -805,6 +785,14 @@ export function Terminal({ uid, connected, commands, apiRef }: TerminalProps) {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // 响应终端主题切换
+  const terminalTheme = useUiStore((s) => s.terminalTheme)
+  useEffect(() => {
+    if (termRef.current) {
+      termRef.current.options.theme = terminalTheme.theme
+    }
+  }, [terminalTheme])
 
   // 连接状态变化时显示提示（跳过首次挂载）
   const isFirstMount = useRef(true)

@@ -8,6 +8,12 @@ export interface CommandResult {
   command: string
 }
 
+/** 命令示例（带中文说明） */
+export interface CommandExample {
+  cmd: string
+  desc: string
+}
+
 /** Commander 命令帮助信息 */
 export interface CommandInfo {
   name: string
@@ -17,7 +23,7 @@ export interface CommandInfo {
   help: string
   extra_help: string
   requires_connection: boolean
-  examples: string[]
+  examples: CommandExample[]
 }
 
 /** 执行一条 Commander 命令 */

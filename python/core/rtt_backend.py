@@ -293,7 +293,11 @@ class RTTBackend:
         }
 
     def _poll_loop(self, uid: str):
-        """轮询线程：持续读取 up channel 数据并推送到前端"""
+        """轮询线程：持续读取所有 up channel 数据并推送到前端
+
+        改造说明：遍历所有 up_channels 分别读取，事件 payload 带 channel 索引。
+        前端根据 tab 模式（All Channel 或单通道）过滤显示。
+        """
         poll_interval = POLL_INTERVAL
         consecutive_errors = 0
 
@@ -313,12 +317,15 @@ class RTTBackend:
                 break
 
             try:
-                up_idx = self._up_channel.get(uid, 0)
                 with lock:
-                    if up_idx < len(cb.up_channels):
-                        data = cb.up_channels[up_idx].read()
+                    # 遍历所有 up channels，分别读取并推送
+                    for up_idx, up_ch in enumerate(cb.up_channels):
+                        try:
+                            data = up_ch.read()
+                        except Exception:
+                            # 单个通道读取失败不影响其他通道
+                            data = None
                         if data:
-                            # 推送到前端
                             event_manager.emit("rtt.data", {
                                 "uid": uid,
                                 "channel": up_idx,

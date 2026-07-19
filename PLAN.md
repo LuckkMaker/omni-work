@@ -1,4 +1,4 @@
-# Luckk Work - 项目详细计划
+# OMNI Work - 项目详细计划
 
 > 基于 DAPLink 仿真器的嵌入式开发工具集，对标 SEGGER J-Link 工具链
 
@@ -8,11 +8,11 @@
 
 ### 1.1 项目定位
 
-Luckk Work 是一套基于 DAPLink 仿真下载器的桌面端嵌入式开发工具集，目标是提供类似 SEGGER J-Link 工具链的完整体验，但以开源的 DAPLink 硬件为基础，降低嵌入式开发者的工具成本。
+OMNI Work 是一套基于 DAPLink 仿真下载器的桌面端嵌入式开发工具集，目标是提供类似 SEGGER J-Link 工具链的完整体验，但以开源的 DAPLink 硬件为基础，降低嵌入式开发者的工具成本。
 
 ### 1.2 对标产品映射
 
-| J-Link 工具 | Luckk Work 对应模块 | 核心功能 |
+| J-Link 工具 | OMNI Work 对应模块 | 核心功能 |
 |---|---|---|
 | J-Flash | **Flash 工具** (Phase 1) | 固件烧录、擦除、校验 |
 | J-Link Commander | Commander (Phase 2) | 交互式命令行，内存/寄存器读写 |
@@ -196,7 +196,7 @@ pyOCD 是 ARM 官方生态中的开源 Python 调试工具，专为 Cortex-M 微
 ### 3.4 项目目录结构
 
 ```
-luckk-work/
+omni-work/
 ├── electron/                       # Electron 主进程
 │   ├── main.ts                     # 入口：窗口创建、生命周期
 │   ├── preload.ts                  # preload：contextBridge 安全暴露 API
@@ -472,7 +472,7 @@ class BackendInterface(ABC):
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  Luckk Work          [Flash] [Commander] [RTT] [Scope]    │  ← 顶部导航栏
+│  OMNI Work           [Flash] [Commander] [RTT] [Scope]    │  ← 顶部导航栏
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
 │  ┌─ 探针选择 ──────────┐  ┌─ 目标信息 ───────────────────┐  │
