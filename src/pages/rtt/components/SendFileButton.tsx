@@ -98,10 +98,10 @@ export function SendFileButton({ uid, running, getSendChannel }: SendFileButtonP
       size="sm"
       onClick={handleSendFile}
       disabled={!uid || !running || sending}
-      className="w-full justify-start text-xs"
+      className="h-7 w-full justify-start text-[11px]"
       title="选择文件并发送到下位机（分块 1024B）"
     >
-      {sending ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <FileText className="mr-1.5 h-3.5 w-3.5" />}
+      {sending ? <Loader2 className="mr-1.5 h-3 w-3 animate-spin" /> : <FileText className="mr-1.5 h-3 w-3" />}
       {sending ? '发送中...' : '发送文件'}
     </Button>
   )

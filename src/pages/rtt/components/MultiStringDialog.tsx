@@ -183,14 +183,14 @@ export function MultiStringDialog({ open, onOpenChange, uid, running, getSendCha
               <table className="w-full text-xs">
                 <thead className="sticky top-0 bg-muted/50">
                   <tr className="text-left text-muted-foreground">
-                    <th className="w-8 px-2 py-1.5 font-medium text-center" title="启用发送">发</th>
-                    <th className="w-8 px-2 py-1.5 font-medium text-center" title="以 hex 格式发送">HEX</th>
-                    <th className="px-2 py-1.5 font-medium">内容</th>
-                    <th className="w-28 px-2 py-1.5 font-medium">注释</th>
-                    <th className="w-12 px-2 py-1.5 font-medium text-center" title="发送顺序">序</th>
+                    <th className="w-16 px-2 py-1.5 font-medium text-center" title="启用发送">发送</th>
+                    <th className="w-16 px-2 py-1.5 font-medium text-center" title="以 hex 格式发送">HEX</th>
+                    <th className="px-2 py-1.5 font-medium text-center">内容</th>
+                    <th className="w-16 px-2 py-1.5 font-medium text-center">注释</th>
+                    <th className="w-16 px-2 py-1.5 font-medium text-center" title="发送顺序">顺序</th>
                     <th className="w-16 px-2 py-1.5 font-medium text-center" title="发送后延时（ms）">延时</th>
-                    <th className="w-10 px-2 py-1.5 font-medium text-center" title="字节数">字节</th>
-                    <th className="w-20 px-2 py-1.5 font-medium text-center">操作</th>
+                    <th className="w-16 px-2 py-1.5 font-medium text-center" title="字节数">字节</th>
+                    <th className="w-16 px-2 py-1.5 font-medium text-center">操作</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -211,7 +211,7 @@ export function MultiStringDialog({ open, onOpenChange, uid, running, getSendCha
                             onCheckedChange={(v) => updateMultiString(item.id, { isHex: v === true })}
                           />
                         </td>
-                        <td className="px-2 py-1">
+                        <td className="px-2 py-1 text-center">
                           <input
                             type="text"
                             value={item.content}
@@ -219,7 +219,7 @@ export function MultiStringDialog({ open, onOpenChange, uid, running, getSendCha
                             className="w-full bg-transparent font-mono text-xs outline-none focus:bg-background focus:px-1"
                           />
                         </td>
-                        <td className="px-2 py-1">
+                        <td className="px-2 py-1 text-center">
                           <input
                             type="text"
                             value={item.comment}
@@ -240,7 +240,7 @@ export function MultiStringDialog({ open, onOpenChange, uid, running, getSendCha
                             title="发送后延时（ms）"
                           />
                         </td>
-                        <td className="px-2 py-1 text-right font-mono text-muted-foreground">
+                        <td className="px-2 py-1 text-center font-mono text-muted-foreground">
                           {bytes?.length ?? '?'}
                         </td>
                         <td className="px-2 py-1">

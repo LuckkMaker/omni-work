@@ -27,7 +27,8 @@ interface ConfigPanelProps {
   onOpenMultiString: () => void
 }
 
-/** 统一配置行：复选框 + 文字 + 配置项（配置项常驻，未勾选时禁用） */
+/** 统一配置行：复选框 + 文字（+ 可选右侧配置项）。
+ *  间距统一 gap-2，行高 h-7，保证整个侧边栏复选框行视觉一致。 */
 function CheckRow({
   label,
   checked,
@@ -44,7 +45,7 @@ function CheckRow({
   children?: React.ReactNode
 }) {
   return (
-    <div className="flex h-7 items-center gap-1.5">
+    <div className="flex h-7 items-center gap-2">
       <Checkbox
         checked={checked}
         onCheckedChange={onCheckedChange}
@@ -57,6 +58,28 @@ function CheckRow({
           {children}
         </div>
       )}
+    </div>
+  )
+}
+
+/** 配置项的次行容器：常驻显示，未勾选时禁用并降低视觉权重。
+ *  用于"定时发送"、"加校验"等需要展开额外配置的复选项。 */
+function ConfigSubRow({
+  disabled,
+  children,
+  className,
+}: {
+  disabled?: boolean
+  children: React.ReactNode
+  className?: string
+}) {
+  return (
+    <div className={cn(
+      'flex h-7 items-center gap-1.5 pl-6',
+      disabled && 'opacity-50 pointer-events-none',
+      className,
+    )}>
+      {children}
     </div>
   )
 }
@@ -230,7 +253,7 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
             <Play className="mr-1 h-3.5 w-3.5" />
             {starting ? '启动中...' : '启动'}
           </Button>
-          <Button onClick={handleStop} disabled={!canStop} variant="destructive" className="flex-1" size="sm">
+          <Button onClick={handleStop} disabled={!canStop} variant="outline" className="flex-1" size="sm">
             <Square className="mr-1 h-3.5 w-3.5" />
             停止
           </Button>
@@ -319,7 +342,7 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
 
         <Button variant={recordToFile ? 'default' : 'outline'} size="sm" onClick={handleToggleRecord} disabled={!running} className="h-7 w-full text-[11px]" title="开启后持续把接收到的数据存入 .dat 文件">
           <FileDown className="mr-1 h-3 w-3" />
-          {recordToFile ? '停止录制' : '接收数据到文件'}
+          {recordToFile ? '停止接收' : '接收数据到文件'}
         </Button>
       </section>
 
@@ -331,22 +354,34 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
           发送配置
         </Label>
 
-        {/* HEX 发送 + 回车换行：同行并列两个复选框 */}
-        <div className="flex h-7 items-center gap-4">
-          <Checkbox checked={sendHex} onCheckedChange={setSendHex} disabled={!running} title="以十六进制格式发送" />
-          <span className="text-[11px]" title="以十六进制格式发送">HEX 发送</span>
-          <Checkbox checked={sendNewline} onCheckedChange={setSendNewline} disabled={!running || sendHex} title="发送时追加换行符" />
-          <span className="text-[11px]" title="发送时追加换行符">回车换行</span>
+        {/* HEX 发送 + 回车换行：两个独立 CheckRow 并列保持视觉一致 */}
+        <div className="grid grid-cols-2 gap-x-2">
+          <CheckRow
+            label="HEX 发送"
+            checked={sendHex}
+            onCheckedChange={setSendHex}
+            disabled={!running}
+            title="以十六进制格式发送"
+          />
+          <CheckRow
+            label="回车换行"
+            checked={sendNewline}
+            onCheckedChange={setSendNewline}
+            disabled={!running || sendHex}
+            title="发送时追加换行符"
+          />
         </div>
 
-        {/* 定时发送：复选框 + 间隔配置（常驻，未勾选时禁用） */}
+        {/* 定时发送：第 1 行复选框 + 文字；第 2 行常驻间隔配置 */}
         <CheckRow
           label="定时发送"
           checked={sendTiming}
           onCheckedChange={setSendTiming}
           disabled={!running}
           title="按间隔自动发送输入栏内容"
-        >
+        />
+        <ConfigSubRow disabled={!sendTiming || !running}>
+          <span className="text-[10px] text-muted-foreground">间隔</span>
           <Input
             type="number"
             min={10}
@@ -354,22 +389,24 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
             value={sendTimingInterval}
             onChange={(e) => setSendTimingInterval(Number(e.target.value))}
             disabled={!sendTiming || !running}
-            className="h-5 w-14 text-[11px] font-mono"
+            className="h-5 w-16 text-[11px] font-mono"
             title="定时发送间隔（ms）"
           />
           <span className="text-[10px] text-muted-foreground">ms</span>
-        </CheckRow>
+        </ConfigSubRow>
 
-        {/* 校验：复选框 + 配置项（常驻，未勾选时禁用） */}
+        {/* 校验：第 1 行复选框 + 文字；第 2 行类型选择；第 3 行字节范围 */}
         <CheckRow
-          label="校验"
+          label="加校验"
           checked={sendChecksum}
           onCheckedChange={setSendChecksum}
           disabled={!running}
           title="附加校验值到数据末尾"
-        >
+        />
+        <ConfigSubRow disabled={!sendChecksum || !running}>
+          <span className="text-[10px] text-muted-foreground">类型</span>
           <Select value={sendChecksumType} onValueChange={(v) => setSendChecksumType(v as ChecksumType)}>
-            <SelectTrigger className="h-5 w-[110px] text-[11px] px-1.5" title="校验类型">
+            <SelectTrigger className="h-5 flex-1 text-[11px] px-1.5" title="校验类型">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -380,10 +417,8 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
               ))}
             </SelectContent>
           </Select>
-        </CheckRow>
-
-        {/* 校验范围：第二行，常驻显示，未勾选时禁用 */}
-        <div className={cn('flex h-6 items-center gap-1 pl-1', !sendChecksum && 'opacity-50')}>
+        </ConfigSubRow>
+        <ConfigSubRow disabled={!sendChecksum || !running}>
           <span className="text-[10px] text-muted-foreground">字节</span>
           <Input
             type="number"
@@ -404,12 +439,12 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
             className="h-5 w-12 text-[11px] font-mono"
             title="校验结束字节索引（-1=末尾）"
           />
-        </div>
+        </ConfigSubRow>
 
-        {/* 发送文件 */}
+        {/* 发送文件：高度统一 h-7 */}
         <SendFileButton uid={uid} running={running} getSendChannel={getSendChannel} />
 
-        {/* 多字符串 */}
+        {/* 多字符串：高度统一 h-7 */}
         <Button variant="outline" size="sm" onClick={onOpenMultiString} disabled={!running} className="w-full justify-start text-[11px] h-7" title="多字符串管理">
           <ListChecks className="mr-1.5 h-3 w-3" />
           多字符串

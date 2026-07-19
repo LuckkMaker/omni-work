@@ -56,12 +56,13 @@
   height: 100%;
 }
 
-/* 文字行四周留间距（滚动条仍贴边框）
- * 注意：xterm-rows 的 padding 会导致选中区域与字符单元错位，
- * 选中框向左右延伸覆盖相邻字符。改用容器层 padding（在组件中实现）。
- * 但为兼容现有布局，保留 xterm-rows 的垂直 padding，移除水平 padding。 */
+/* 文字行容器：不设置 padding。
+ * 之前 `.xterm-rows { padding: 4px 0 }` 的垂直 padding 会导致选中区域与字符 cell
+ * 位置错位——selection 矩形按 N*lineHeight 定位，但字符 cell 实际位置因 padding
+ * 向下偏移，使 selection 顶部覆盖上一行字符的下半截。
+ * 修复后：selection 与字符 cell 严格对齐；垂直留白改由终端容器层处理。 */
 .xterm .xterm-rows {
-  padding: 4px 0;
+  padding: 0;
 }
 
 /* 选中区域完全不透明，避免半透明背景遮挡文字。

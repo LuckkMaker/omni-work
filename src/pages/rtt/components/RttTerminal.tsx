@@ -6,6 +6,7 @@ import '@xterm/xterm/css/xterm.css'
 import { wsClient } from '@/services/ws'
 import { useRttStore } from '@/stores/rtt.store'
 import { useUiStore } from '@/stores/ui.store'
+import { useNotificationStore } from '@/stores/notification.store'
 import { rttService } from '@/services/rtt.service'
 
 /** 终端对外暴露的 API */
@@ -255,19 +256,23 @@ export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
       }
     }, [inputMode])
 
-    // 运行状态变化时显示提示
+    // 运行状态变化：通过全局通知提示（不再写入终端，避免污染接收数据）
     const isFirstMount = useRef(true)
     useEffect(() => {
-      const term = termRef.current
-      if (!term) return
       if (isFirstMount.current) {
         isFirstMount.current = false
         return
       }
       if (running) {
-        term.write(`\r\n${COLOR.green}[RTT 已启动]${COLOR.reset}\r\n`)
+        useNotificationStore.getState().push({
+          type: 'success',
+          title: 'RTT 会话已启动',
+        })
       } else {
-        term.write(`\r\n${COLOR.yellow}[RTT 已停止]${COLOR.reset}\r\n`)
+        useNotificationStore.getState().push({
+          type: 'info',
+          title: 'RTT 会话已停止',
+        })
       }
     }, [running])
 
@@ -302,15 +307,16 @@ export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
       return unsubError
     }, [])
 
-    // 显示模式切换时显示提示
+    // 显示模式切换：通过全局通知提示
     const prevMode = useRef(displayMode)
     useEffect(() => {
       if (prevMode.current !== displayMode) {
         prevMode.current = displayMode
-        const term = termRef.current
-        if (term) {
-          term.write(`\r\n${COLOR.dim}[显示模式: ${displayMode === 'text' ? '文本' : '十六进制'}]${COLOR.reset}\r\n`)
-        }
+        useNotificationStore.getState().push({
+          type: 'info',
+          title: '显示模式已切换',
+          message: displayMode === 'text' ? '文本' : '十六进制',
+        })
       }
     }, [displayMode])
 
@@ -321,6 +327,6 @@ export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
       termRef.current?.clear()
     }, [tabId])
 
-    return <div ref={containerRef} className="h-full w-full overflow-hidden px-2" />
+    return <div ref={containerRef} className="h-full w-full overflow-hidden pl-2 py-1" />
   }
 )

@@ -1,5 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react'
-import { Send, ListChecks } from 'lucide-react'
+import { Send } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import {
@@ -17,8 +17,6 @@ import { computeChecksumWithRange, type ChecksumType } from '@/utils/checksum'
 interface InputBarProps {
   uid: string | null
   running: boolean
-  /** 打开多字符串对话框 */
-  onOpenMultiString: () => void
 }
 
 /**
@@ -66,7 +64,7 @@ function preprocessSend(
   return data
 }
 
-export function InputBar({ uid, running, onOpenMultiString }: InputBarProps) {
+export function InputBar({ uid, running }: InputBarProps) {
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
@@ -158,14 +156,14 @@ export function InputBar({ uid, running, onOpenMultiString }: InputBarProps) {
 
   return (
     <div className="flex items-center gap-2 border-t border-border bg-background px-3 py-2">
-      {/* Down Channel 选择器（仅 All Channel Tab 显示） */}
+      {/* Down Channel 选择器（仅 All Channel Tab 显示）：缩小尺寸 */}
       {showChannelSelector && hasDownChannel && (
         <Select
           value={String(selectedDownChannel)}
           onValueChange={(v) => setSelectedDownChannel(Number(v))}
           disabled={!running}
         >
-          <SelectTrigger className="h-8 w-[110px] text-xs" title="选择发送目标 Down Channel">
+          <SelectTrigger className="h-8 w-[90px] text-[11px]" title="选择发送目标 Down Channel">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
@@ -180,7 +178,7 @@ export function InputBar({ uid, running, onOpenMultiString }: InputBarProps) {
 
       {/* 单通道 Tab 显示发送目标（只读） */}
       {!showChannelSelector && activeTab?.mode === 'single' && (
-        <div className="flex h-8 items-center rounded-md border border-border px-2 text-xs text-muted-foreground" title="发送目标通道（由当前 Tab 决定）">
+        <div className="flex h-8 items-center rounded-md border border-border px-2 text-[11px] text-muted-foreground" title="发送目标通道（由当前 Tab 决定）">
           → Ch{sendChannel}
         </div>
       )}
@@ -207,18 +205,6 @@ export function InputBar({ uid, running, onOpenMultiString }: InputBarProps) {
           sendHex && 'tracking-wider'
         )}
       />
-
-      {/* 多字符串按钮 */}
-      <Button
-        variant="outline"
-        size="sm"
-        onClick={onOpenMultiString}
-        disabled={!running}
-        className="h-9 px-2.5"
-        title="多字符串管理：批量发送预设字符串"
-      >
-        <ListChecks className="size-4" />
-      </Button>
 
       {/* 发送按钮 */}
       <Button

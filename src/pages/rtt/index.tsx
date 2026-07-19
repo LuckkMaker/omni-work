@@ -123,7 +123,6 @@ export default function RttPage() {
           <InputBar
             uid={uid}
             running={running}
-            onOpenMultiString={() => setShowMultiString(true)}
           />
         )}
 
