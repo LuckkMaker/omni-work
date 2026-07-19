@@ -89,25 +89,34 @@ class RTTBackend:
             # 然后在 halt 状态下搜索控制块（RAM 内容保留），找到后再 resume。
             # 我们复用已有 session，目标可能正在运行，
             # 需要先 halt 再搜索，确保内存读取可靠。
+            #
+            # 关键修复：必须遍历所有 RAM region 搜索控制块。
+            # STM32F407 等芯片有多个 RAM region（CCMRAM 0x10000000 + SRAM 0x20000000），
+            # pyOCD 的 get_default_region_of_type(RAM) 只返回一个默认 region（可能是 CCMRAM），
+            # 而 RTT 控制块通常在主 SRAM 中。J-Link RTT Viewer 也是扫描所有已知 RAM 区域。
 
-            # 诊断：目标状态 + RAM 区域信息
+            # 诊断：目标状态
             try:
                 state = target.get_state()
                 event_manager.log("info", f"RTT: target state before search: {state}")
             except Exception:
                 pass
 
-            ram_region = None
+            # 获取所有 RAM region（不能只搜索默认 RAM region）
+            ram_regions = []
             try:
                 mem_map = target.get_memory_map()
-                ram_region = mem_map.get_default_region_of_type(MemoryType.RAM)
-                if ram_region:
-                    event_manager.log("info", f"RTT: search region: 0x{ram_region.start:08X} "
-                                      f"size=0x{ram_region.length:X} ({ram_region.length} bytes)")
+                ram_regions = list(mem_map.iter_matching_regions(type=MemoryType.RAM))
+                if ram_regions:
+                    event_manager.log("info", f"RTT: found {len(ram_regions)} RAM region(s):")
+                    for i, r in enumerate(ram_regions):
+                        event_manager.log("info", f"RTT:   [{i}] 0x{r.start:08X} "
+                                          f"size=0x{r.length:X} ({r.length} bytes)"
+                                          f"{f' (default)' if getattr(r, 'is_default', False) else ''}")
                 else:
-                    event_manager.log("warning", "RTT: no default RAM region found in memory map")
+                    event_manager.log("warning", "RTT: no RAM region found in memory map")
             except Exception as e:
-                event_manager.log("warning", f"RTT: failed to get RAM region: {e}")
+                event_manager.log("warning", f"RTT: failed to get RAM regions: {e}")
 
             # halt 目标，确保内存读取可靠（对标 CLI 的 connect_mode='halt'）
             try:
@@ -116,45 +125,67 @@ class RTTBackend:
             except Exception as e:
                 event_manager.log("warning", f"RTT: halt failed (will try anyway): {e}")
 
-            # 诊断：读取 RAM 起始处的 32 字节，检查 "SEGGER RTT" 签名是否存在
-            if ram_region:
+            # 诊断：读取每个 RAM region 起始处的 32 字节
+            sig = b'SEGGER RTT'
+            for r in ram_regions:
                 try:
-                    probe_bytes = target.read_memory_block8(ram_region.start, 32)
+                    probe_bytes = target.read_memory_block8(r.start, 32)
                     hex_str = ' '.join(f'{b:02X}' for b in probe_bytes)
-                    event_manager.log("info", f"RTT: first 32 bytes of RAM @0x{ram_region.start:08X}: {hex_str}")
-                    # 检查 SEGGER RTT 签名
-                    sig = b'SEGGER RTT'
+                    event_manager.log("info", f"RTT: first 32 bytes @0x{r.start:08X}: {hex_str}")
                     if sig in bytes(probe_bytes):
                         offset = bytes(probe_bytes).find(sig)
                         event_manager.log("info", f"RTT: signature found at offset {offset} "
-                                          f"(addr 0x{ram_region.start + offset:08X})")
-                    else:
-                        event_manager.log("warning", "RTT: SEGGER RTT signature NOT in first 32 bytes, "
-                                          "will scan full RAM region")
+                                          f"(addr 0x{r.start + offset:08X})")
                 except Exception as e:
-                    event_manager.log("warning", f"RTT: diagnostic memory read failed: {e}")
+                    event_manager.log("warning", f"RTT: diagnostic read @0x{r.start:08X} failed: {e}")
 
             cb = None
             last_error = None
 
+            def _search_control_block():
+                """在所有 RAM region 中搜索 RTT 控制块
+
+                如果用户指定了 address，只搜索指定范围；
+                否则遍历所有 RAM region（对标 J-Link RTT Viewer 的行为）。
+                """
+                nonlocal last_error
+
+                # 用户指定了地址，只搜索指定范围
+                if address is not None:
+                    event_manager.log("info", f"RTT: searching at specified address 0x{address:08X}"
+                                      f"{f' size=0x{size:X}' if size else ''}...")
+                    try:
+                        cb_obj = RTTControlBlock.from_target(target, address=address, size=size)
+                        cb_obj.start()
+                        if len(cb_obj.up_channels) > 0:
+                            return cb_obj
+                        last_error = "No up channels found"
+                    except Exception as e:
+                        last_error = str(e)
+                        event_manager.log("warning", f"RTT: search at 0x{address:08X} failed: {e}")
+                    return None
+
+                # 自动模式：遍历所有 RAM region
+                for r in ram_regions:
+                    event_manager.log("info", f"RTT: searching in RAM region 0x{r.start:08X} "
+                                      f"(size=0x{r.length:X})...")
+                    try:
+                        cb_obj = RTTControlBlock.from_target(target, address=r.start, size=r.length)
+                        cb_obj.start()
+                        if len(cb_obj.up_channels) > 0:
+                            event_manager.log("info", f"RTT: control block found in region 0x{r.start:08X}")
+                            return cb_obj
+                        event_manager.log("info", f"RTT: no up channels in region 0x{r.start:08X}")
+                    except Exception as e:
+                        event_manager.log("info", f"RTT: not found in region 0x{r.start:08X}: {e}")
+                last_error = "Control block not found in any RAM region"
+                return None
+
             # 第一轮：直接搜索（对标 CLI 的行为，此时目标已 halt）
             event_manager.log("info", f"RTT: searching for control block" +
-                              (f" at 0x{address:08X}" if address is not None else " (auto-detect)") +
+                              (f" at 0x{address:08X}" if address is not None else " (auto-detect, all RAM regions)") +
                               "...")
-            try:
-                cb = RTTControlBlock.from_target(
-                    target,
-                    address=address,
-                    size=size,
-                )
-                cb.start()
-                if len(cb.up_channels) == 0:
-                    last_error = "No up channels found"
-                    cb = None
-            except Exception as search_err:
-                last_error = str(search_err)
-                event_manager.log("warning", f"RTT: initial search failed: {search_err}")
-                cb = None
+            cb = _search_control_block()
 
             # 第二轮：如果首次失败，resume 目标让固件初始化 RTT，再重试
             if cb is None:
@@ -174,21 +205,10 @@ class RTTBackend:
                         pass
 
                     event_manager.log("info", f"RTT: retry search (attempt {attempt + 1}/{max_retries})...")
-                    try:
-                        cb = RTTControlBlock.from_target(
-                            target,
-                            address=address,
-                            size=size,
-                        )
-                        cb.start()
-                        if len(cb.up_channels) > 0:
-                            last_error = None
-                            break
-                        last_error = "No up channels found"
-                        cb = None
-                    except Exception as search_err:
-                        last_error = str(search_err)
-                        event_manager.log("warning", f"RTT: retry {attempt + 1} failed: {search_err}")
+                    cb = _search_control_block()
+                    if cb is not None:
+                        last_error = None
+                        break
 
                     if attempt < max_retries - 1:
                         try:

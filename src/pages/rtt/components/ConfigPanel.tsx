@@ -137,6 +137,11 @@ export function ConfigPanel({ uid, connected, terminalRef }: ConfigPanelProps) {
             停止
           </Button>
         </div>
+        {!connected && (
+          <p className="text-[10px] text-amber-500">
+            请先连接仿真器与目标设备，再启动 RTT 会话
+          </p>
+        )}
       </div>
 
       {/* 控制块搜索配置 */}

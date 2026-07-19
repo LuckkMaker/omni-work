@@ -12,6 +12,9 @@ COMMAND_EXAMPLES = {
         'read32 0x20000000',
         'read32 0x20000000 16',
         'read32 0x08000000 32',
+        'read32 0xE0042000',
+        'read32 0xE000ED00',
+        'read32 0x1FFF7A10 3',
     ],
     'read16': [
         'read16 0x20000000',
@@ -63,6 +66,41 @@ COMMAND_EXAMPLES = {
     ],
     'unlock': [
         'unlock',
+    ],
+
+    # ── DAP (Debug Access Port) 命令 ──────────────────────────
+    'readdp': [
+        'readdp 0x0',
+        'readdp 0x4',
+        'readdp 0x8',
+    ],
+    'writedp': [
+        'writedp 0x4 0x1F',
+        'writedp 0x8 0x0',
+    ],
+    'readap': [
+        'readap 0 0xFC',
+        'readap 0 0x0',
+        'readap 0 0x4',
+        'readap 0xFC',
+    ],
+    'writeap': [
+        'writeap 0 0x0 0xA2000042',
+        'writeap 0 0x4 0xE0042000',
+        'writeap 0 0xC 0x0',
+    ],
+    'initdp': [
+        'initdp',
+    ],
+    'makeap': [
+        'makeap 0',
+        'makeap 1',
+    ],
+    'flushprobe': [
+        'flushprobe',
+    ],
+    'reinit': [
+        'reinit',
     ],
 
     # ── Register 命令 ──────────────────────────
