@@ -1,5 +1,5 @@
 import { useEffect, useRef, useCallback } from 'react'
-import { Terminal, Trash2, Download } from 'lucide-react'
+import { Terminal, Trash2, Download, ChevronUp, ChevronLeft } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useNotificationStore } from '@/stores/notification.store'
 import { cn } from '@/lib/utils'
@@ -151,7 +151,15 @@ export function LogConsole({ logs, onClear, title = '日志' }: LogConsoleProps)
   )
 }
 
-/** 拖拽分隔条组件，支持垂直/水平方向 + 双击折叠/展开 */
+/** 拖拽分隔条组件，支持垂直/水平方向 + 双击折叠/展开
+ *
+ *  折叠态（onToggle 存在且 expanded===false）升级为可见把手：
+ *  - 尺寸加粗（8px）+ 浅色背景，在页面中可见
+ *  - 中间把手条加宽，颜色更明显
+ *  - 叠加方向箭头图标，提示展开方向
+ *  - tooltip 提示"双击展开"
+ *  展开态保持原 1.5px 细条样式，低视觉干扰。
+ */
 export function ResizeHandle({
   onResize,
   onToggle,
@@ -198,22 +206,47 @@ export function ResizeHandle({
   }, [onResize, direction])
 
   const isVertical = direction === 'vertical'
+  // 折叠态判定：有 onToggle 且明确 expanded===false 才算折叠（无 onToggle 时按展开态样式）
+  const isCollapsed = onToggle !== undefined && expanded === false
+  const toggleTitle = onToggle
+    ? (isCollapsed
+        ? (isVertical ? '双击展开日志区' : '双击展开侧栏')
+        : (isVertical ? '双击隐藏日志区' : '双击隐藏侧栏'))
+    : undefined
 
   return (
     <div
       onMouseDown={handleMouseDown}
       onDoubleClick={onToggle}
-      title={onToggle ? (expanded ? '双击折叠' : '双击展开') : undefined}
+      title={toggleTitle}
       className={cn(
-        'group flex shrink-0 items-center justify-center transition-colors hover:bg-primary/20',
-        isVertical ? 'h-1.5 w-full cursor-row-resize' : 'h-full w-1.5 cursor-col-resize'
+        'group relative flex shrink-0 items-center justify-center transition-colors',
+        isVertical
+          ? (isCollapsed
+              ? 'h-2 w-full cursor-row-resize bg-muted/60 hover:bg-primary/15'
+              : 'h-1.5 w-full cursor-row-resize hover:bg-primary/20')
+          : (isCollapsed
+              ? 'h-full w-2 cursor-col-resize bg-muted/60 hover:bg-primary/15'
+              : 'h-full w-1.5 cursor-col-resize hover:bg-primary/20')
       )}
     >
+      {/* 把手条 */}
       <div className={cn(
         'rounded-full transition-colors',
-        isVertical ? 'h-0.5 w-8' : 'w-0.5 h-8',
-        expanded ? 'bg-primary/40' : 'bg-border group-hover:bg-primary/40'
+        isVertical
+          ? (isCollapsed
+              ? 'h-1 w-12 bg-primary/50 group-hover:bg-primary/70'
+              : 'h-0.5 w-8 bg-border group-hover:bg-primary/40')
+          : (isCollapsed
+              ? 'w-1 h-12 bg-primary/50 group-hover:bg-primary/70'
+              : 'w-0.5 h-8 bg-border group-hover:bg-primary/40')
       )} />
+      {/* 折叠态叠加方向箭头图标 */}
+      {isCollapsed && (
+        isVertical
+          ? <ChevronUp className="absolute size-3 text-muted-foreground group-hover:text-primary" />
+          : <ChevronLeft className="absolute size-3 text-muted-foreground group-hover:text-primary" />
+      )}
     </div>
   )
 }

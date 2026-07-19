@@ -11,6 +11,7 @@ import { DeviceSwitcher } from '@/components/layout/DeviceSwitcher'
 import { InfoPanel } from '@/pages/flash/components/InfoPanel'
 import { StatusBar } from '@/components/layout/StatusBar'
 import { NotificationContainer } from '@/components/NotificationContainer'
+import CommanderPage from '@/pages/commander'
 
 const navItems = [
   { to: '/flash', label: 'Flash', icon: Zap },
@@ -36,6 +37,20 @@ export default function MainLayout() {
   const location = useLocation()
   const isToolsActive = location.pathname.startsWith('/tools')
   const [toolsExpanded, setToolsExpanded] = useState(isToolsActive)
+
+  // Commander keep-alive：首次进入 /commander 才挂载，之后切走仅隐藏（display:none），
+  // 保留 xterm 实例与命令历史，切回时触发 resize 让 FitAddon 重算尺寸。
+  const isOnCommander = location.pathname === '/commander'
+  const [commanderMounted, setCommanderMounted] = useState(false)
+  useEffect(() => {
+    if (isOnCommander) setCommanderMounted(true)
+  }, [isOnCommander])
+  useEffect(() => {
+    if (isOnCommander) {
+      const timer = setTimeout(() => window.dispatchEvent(new Event('resize')), 50)
+      return () => clearTimeout(timer)
+    }
+  }, [isOnCommander])
 
   // 路由变化到 tools 时自动展开
   useEffect(() => {
@@ -156,8 +171,15 @@ export default function MainLayout() {
             </div>
           )}
         </aside>
-        <main className="flex-1 overflow-auto">
-          <Outlet />
+        <main className="relative flex-1 overflow-auto">
+          {/* 非 Commander 页面：正常路由渲染 */}
+          {!isOnCommander && <Outlet />}
+          {/* Commander 页面：keep-alive 常驻，切走仅隐藏 */}
+          {commanderMounted && (
+            <div className={cn('absolute inset-0', isOnCommander ? 'block' : 'hidden')}>
+              <CommanderPage />
+            </div>
+          )}
         </main>
       </div>
 

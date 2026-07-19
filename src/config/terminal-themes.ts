@@ -44,7 +44,7 @@ export interface TerminalTheme {
 export const TERMINAL_THEMES: TerminalTheme[] = [
   {
     id: 'slate-dark',
-    name: 'Slate Dark（默认）',
+    name: 'Slate Dark',
     isDark: true,
     theme: {
       background: '#0f172a',
@@ -184,7 +184,7 @@ export const TERMINAL_THEMES: TerminalTheme[] = [
   },
   {
     id: 'slate-light',
-    name: 'Slate Light',
+    name: 'Slate Light（默认）',
     isDark: false,
     theme: {
       background: '#f1f5f9',
@@ -266,10 +266,39 @@ export const TERMINAL_THEMES: TerminalTheme[] = [
       brightWhite: '#383a42',
     },
   },
+  {
+    id: 'campbell',
+    name: 'Windows Terminal (Campbell)',
+    isDark: true,
+    theme: {
+      // 配色源自微软 Windows Terminal 官方 defaults.json 的 Campbell scheme
+      background: '#0C0C0C',
+      foreground: '#CCCCCC',
+      cursor: '#FFFFFF',
+      selectionBackground: '#264F78',
+      selectionForeground: '#FFFFFF',
+      black: '#0C0C0C',
+      red: '#C50F1F',
+      green: '#13A10E',
+      yellow: '#C19C00',
+      blue: '#0037DA',
+      magenta: '#881798',
+      cyan: '#3A96DD',
+      white: '#CCCCCC',
+      brightBlack: '#767676',
+      brightRed: '#E74856',
+      brightGreen: '#16C60C',
+      brightYellow: '#F9F1A5',
+      brightBlue: '#3B78FF',
+      brightMagenta: '#B4009E',
+      brightCyan: '#61D6D6',
+      brightWhite: '#F2F2F2',
+    },
+  },
 ]
 
 /** 默认主题 ID */
-export const DEFAULT_TERMINAL_THEME_ID = 'slate-dark'
+export const DEFAULT_TERMINAL_THEME_ID = 'slate-light'
 
 /** localStorage 存储 key */
 const STORAGE_KEY = 'trae.terminalThemeId'

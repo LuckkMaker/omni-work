@@ -26,7 +26,7 @@ import { LogConsole, ResizeHandle } from '@/components/LogConsole'
 import { useFlashStore } from '@/stores/flash.store'
 import { useProbeStore } from '@/stores/probe.store'
 
-const LOG_MIN_HEIGHT = 120
+const LOG_MIN_HEIGHT = 0 // 0 = 完全隐藏
 const LOG_DEFAULT_EXPANDED = 280
 
 export default function FlashPage() {
@@ -168,15 +168,18 @@ export default function FlashPage() {
         <FilePanel />
       </div>
 
-      {/* 可拖拽分隔 */}
+      {/* 可拖拽分隔（双击完全隐藏/恢复） */}
       <ResizeHandle
         onResize={handleResize}
         onToggle={handleToggleLog}
         expanded={bottomHeight > LOG_MIN_HEIGHT}
       />
 
-      {/* 底部：日志（全宽） */}
-      <div className="shrink-0 border-t border-border" style={{ height: bottomHeight }}>
+      {/* 底部：日志（高度为 0 时完全隐藏，避免残留 border） */}
+      <div
+        className={bottomHeight > LOG_MIN_HEIGHT ? 'shrink-0 border-t border-border' : 'hidden'}
+        style={bottomHeight > LOG_MIN_HEIGHT ? { height: bottomHeight } : undefined}
+      >
         <FlashLogConsole />
       </div>
 

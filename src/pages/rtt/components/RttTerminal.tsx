@@ -6,6 +6,7 @@ import '@xterm/xterm/css/xterm.css'
 import { wsClient } from '@/services/ws'
 import { useRttStore } from '@/stores/rtt.store'
 import { useUiStore } from '@/stores/ui.store'
+import { rttService } from '@/services/rtt.service'
 
 /** 终端对外暴露的 API */
 export interface RttTerminalApi {
@@ -28,6 +29,10 @@ interface RttTerminalProps {
   running: boolean
   /** Tab ID（用于从 store 读取对应 Tab 的数据） */
   tabId: string
+  /** 输入模式：bar=InputBar 发送，terminal=终端直接输入（支持 Tab/方向键/Ctrl 组合键等） */
+  inputMode: 'bar' | 'terminal'
+  /** 本地回显开关（仅 terminal 输入模式生效；下位机不回显时开启） */
+  localEcho: boolean
 }
 
 const COLOR = {
@@ -60,7 +65,7 @@ function formatHexDump(data: Uint8Array, offset = 0): string {
 }
 
 export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
-  function RttTerminal({ uid, running, tabId }, ref) {
+  function RttTerminal({ uid, running, tabId, inputMode, localEcho }, ref) {
     const containerRef = useRef<HTMLDivElement>(null)
     const termRef = useRef<XTerm | null>(null)
     const fitRef = useRef<FitAddon | null>(null)
@@ -82,6 +87,26 @@ export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
     })
     const uidRef = useRef<string | null>(uid)
     uidRef.current = uid
+
+    // 输入模式与本地回显同步到 ref（供 onData 闭包访问最新值）
+    const inputModeRef = useRef(inputMode)
+    inputModeRef.current = inputMode
+    const localEchoRef = useRef(localEcho)
+    localEchoRef.current = localEcho
+    const runningRef = useRef(running)
+    runningRef.current = running
+
+    // 发送通道：单通道 Tab 用 tab.channel，All Channel Tab 用 selectedDownChannel
+    const selectedDownChannel = useRttStore((s) => s.selectedDownChannel)
+    const activeTab = useRttStore((s) => s.tabs.find((t) => t.id === tabId))
+    const sendChannelRef = useRef<number>(
+      activeTab?.mode === 'single' && activeTab.channel !== undefined
+        ? activeTab.channel
+        : selectedDownChannel
+    )
+    sendChannelRef.current = activeTab?.mode === 'single' && activeTab.channel !== undefined
+      ? activeTab.channel
+      : selectedDownChannel
 
     // 暴露 API
     useImperativeHandle(ref, () => ({
@@ -113,12 +138,13 @@ export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
       if (!containerRef.current) return
 
       const term = new XTerm({
-        cursorBlink: false,
+        cursorBlink: inputModeRef.current === 'terminal',
         fontSize: fontSize.current,
         fontFamily: '"Cascadia Code", "Fira Code", "Consolas", monospace',
         convertEol: true,
         scrollback: 10000,
-        disableStdin: true,
+        // terminal 模式启用输入，bar 模式禁用（由 InputBar 处理）
+        disableStdin: inputModeRef.current !== 'terminal',
         allowProposedApi: true,
         theme: useUiStore.getState().terminalTheme.theme,
       })
@@ -148,6 +174,35 @@ export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
         return true
       })
 
+      // 终端输入处理（仅 terminal 输入模式生效）
+      // onData 收到的 data 是原始输入序列：可见字符、Tab(\t)、Enter(\r)、
+      // 方向键转义序列(\x1b[A 等)、Ctrl 组合键(\x03 等) 等。
+      // UTF-8 编码后发送到下位机 down channel，下位机 shell 可识别。
+      const onDataDisposable = term.onData((data: string) => {
+        // bar 模式不处理（由 InputBar 发送）
+        if (inputModeRef.current !== 'terminal') return
+        // 未启动会话不处理
+        if (!runningRef.current) return
+        const uid = uidRef.current
+        if (!uid) return
+
+        // 本地回显：把输入写回终端（下位机不回显时使用；hex 显示模式强制关闭避免破坏 dump）
+        if (localEchoRef.current && displayModeRef.current !== 'hex') {
+          term.write(data)
+        }
+
+        // 发送原始字节到 down channel
+        const bytes = new TextEncoder().encode(data)
+        // 不 await：onData 同步触发，发送异步进行
+        rttService.send(uid, bytes, sendChannelRef.current)
+          .then((result) => {
+            if (result.success) {
+              useRttStore.getState().addBytesSent(result.bytes_written)
+            }
+          })
+          .catch(() => { /* 忽略发送错误，避免阻塞后续输入 */ })
+      })
+
       // 响应式调整
       const fitNow = () => { try { fit.fit() } catch { /* ignore */ } }
       requestAnimationFrame(() => { fitNow(); setTimeout(fitNow, 100) })
@@ -159,6 +214,7 @@ export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
       return () => {
         ro.disconnect()
         window.removeEventListener('resize', fitNow)
+        onDataDisposable.dispose()
         term.dispose()
         termRef.current = null
         fitRef.current = null
@@ -172,6 +228,21 @@ export const RttTerminal = forwardRef<RttTerminalApi, RttTerminalProps>(
         termRef.current.options.theme = terminalTheme.theme
       }
     }, [terminalTheme])
+
+    // 响应输入模式切换：动态更新 disableStdin/cursorBlink 并 focus
+    // bar → terminal：启用输入、光标闪烁、聚焦终端
+    // terminal → bar：禁用输入、光标不闪烁
+    useEffect(() => {
+      const term = termRef.current
+      if (!term) return
+      const isTerminal = inputMode === 'terminal'
+      term.options.disableStdin = !isTerminal
+      term.options.cursorBlink = isTerminal
+      if (isTerminal) {
+        // 切到终端模式后聚焦，便于直接输入
+        try { term.focus() } catch { /* ignore */ }
+      }
+    }, [inputMode])
 
     // 运行状态变化时显示提示
     const isFirstMount = useRef(true)

@@ -1,7 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom'
 import MainLayout from './layouts/MainLayout'
 import FlashPage from './pages/flash'
-import CommanderPage from './pages/commander'
 import RttPage from './pages/rtt'
 import MonitorPage from './pages/monitor'
 import SettingsPage from './pages/settings'
@@ -17,7 +16,10 @@ export default function App() {
       <Route element={<MainLayout />}>
         <Route path="/" element={<Navigate to="/flash" replace />} />
         <Route path="/flash" element={<FlashPage />} />
-        <Route path="/commander" element={<CommanderPage />} />
+        {/* Commander 页面由 MainLayout 通过 keep-alive 常驻渲染。
+            此占位路由让父布局能匹配 /commander 路径（element 为 null，Outlet 渲染空），
+            实际内容由 MainLayout 内的 CommanderPage 承载。 */}
+        <Route path="/commander" element={null} />
         <Route path="/rtt" element={<RttPage />} />
         <Route path="/monitor" element={<MonitorPage />} />
         <Route path="/tools" element={<ToolsLayout />}>

@@ -4,6 +4,9 @@ import type { LogEvent } from '@shared/types'
 
 export type DisplayMode = 'text' | 'hex'
 
+/** RTT 输入模式：bar=InputBar 发送，terminal=终端直接输入（支持 Tab/方向键/Ctrl 组合键等） */
+export type InputMode = 'bar' | 'terminal'
+
 /** Tab 模式 */
 export type TabMode = 'all' | 'single'
 
@@ -33,6 +36,26 @@ function genTabId(): string {
 /** 缓冲大小上限（10MB） */
 const MAX_BUFFER_SIZE = 10 * 1024 * 1024
 
+// ── 输入模式偏好持久化 ──────────────────────────
+const INPUT_MODE_KEY = 'rtt:inputMode'
+const LOCAL_ECHO_KEY = 'rtt:localEcho'
+
+function loadInputMode(): InputMode {
+  try {
+    const v = localStorage.getItem(INPUT_MODE_KEY)
+    if (v === 'terminal' || v === 'bar') return v
+  } catch { /* ignore */ }
+  return 'bar'
+}
+
+function loadLocalEcho(): boolean {
+  try {
+    const v = localStorage.getItem(LOCAL_ECHO_KEY)
+    if (v !== null) return v === '1'
+  } catch { /* ignore */ }
+  return true
+}
+
 interface RttState {
   /** RTT 是否正在运行 */
   running: boolean
@@ -54,6 +77,10 @@ interface RttState {
   error: string | null
   /** 显示模式 */
   displayMode: DisplayMode
+  /** 输入模式：bar=InputBar 发送，terminal=终端直接输入 */
+  inputMode: InputMode
+  /** 本地回显（仅 terminal 输入模式生效；下位机不回显时使用） */
+  localEcho: boolean
   /** 是否自动换行 */
   autoWrap: boolean
   /** 控制块搜索地址（hex 字符串，空则自动检测） */
@@ -77,6 +104,8 @@ interface RttState {
   addBytesSent: (n: number) => void
   setError: (error: string | null) => void
   setDisplayMode: (mode: DisplayMode) => void
+  setInputMode: (mode: InputMode) => void
+  setLocalEcho: (on: boolean) => void
   setAutoWrap: (autoWrap: boolean) => void
   setSearchAddress: (addr: string) => void
   setSearchSize: (size: string) => void
@@ -123,6 +152,8 @@ export const useRttStore = create<RttState>((set, get) => ({
   bytesSent: 0,
   error: null,
   displayMode: 'text',
+  inputMode: loadInputMode(),
+  localEcho: loadLocalEcho(),
   autoWrap: true,
   searchAddress: '',
   searchSize: '',
@@ -140,6 +171,14 @@ export const useRttStore = create<RttState>((set, get) => ({
   addBytesSent: (n) => set((s) => ({ bytesSent: s.bytesSent + n })),
   setError: (error) => set({ error }),
   setDisplayMode: (mode) => set({ displayMode: mode }),
+  setInputMode: (mode) => {
+    try { localStorage.setItem(INPUT_MODE_KEY, mode) } catch { /* ignore */ }
+    set({ inputMode: mode })
+  },
+  setLocalEcho: (on) => {
+    try { localStorage.setItem(LOCAL_ECHO_KEY, on ? '1' : '0') } catch { /* ignore */ }
+    set({ localEcho: on })
+  },
   setAutoWrap: (autoWrap) => set({ autoWrap }),
   setSearchAddress: (addr) => set({ searchAddress: addr }),
   setSearchSize: (size) => set({ searchSize: size }),

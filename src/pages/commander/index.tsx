@@ -4,17 +4,24 @@ import { CommandSidebar } from './components/CommandSidebar'
 import { ResizeHandle } from '@/components/LogConsole'
 import { useProbeStore } from '@/stores/probe.store'
 import { useCommanderStore } from '@/stores/commander.store'
+import { useUiStore } from '@/stores/ui.store'
 import { resetContext } from '@/services/commander.service'
 
-const SIDEBAR_MIN_WIDTH = 200
+const SIDEBAR_MAX_RATIO = 0.25 // 最大尺寸 = 窗口宽度 1/4
 const SIDEBAR_DEFAULT_WIDTH = 288 // w-72
+
+function getSidebarMaxWidth(): number {
+  return Math.floor((window.innerWidth ?? 1280) * SIDEBAR_MAX_RATIO)
+}
 
 export default function CommanderPage() {
   const terminalApiRef = useRef<TerminalApi | null>(null)
 
-  // 侧边栏宽度状态（默认展开，宽度可拖拽调整）
+  // 侧边栏宽度状态：0 = 完全隐藏；>0 = 展开宽度（上限 = 窗口 1/4）
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH)
-  const lastExpandedWidth = useRef(SIDEBAR_DEFAULT_WIDTH)
+
+  // 终端主题：用于让终端容器背景跟随主题即时切换
+  const terminalTheme = useUiStore((s) => s.terminalTheme)
 
   const selectedProbe = useProbeStore((s) => {
     const uid = s.selectedUid
@@ -72,22 +79,18 @@ export default function CommanderPage() {
     }
   }, [uid, fetchCommands])
 
-  /** 拖拽调整侧边栏宽度 */
+  /** 拖拽调整侧边栏宽度
+   *  右侧边栏：鼠标向左拖（delta<0）应扩大宽度，向右拖（delta>0）应缩小宽度 */
   const handleSidebarResize = useCallback((delta: number) => {
-    // 右侧边栏：鼠标向右拖（delta > 0）应增加宽度
     setSidebarWidth((w) => {
-      const next = Math.max(SIDEBAR_MIN_WIDTH, Math.min(window.innerWidth / 2, w + delta))
-      if (next > SIDEBAR_MIN_WIDTH) lastExpandedWidth.current = next
+      const next = Math.max(0, Math.min(getSidebarMaxWidth(), w - delta))
       return next
     })
   }, [])
 
-  /** 双击折叠/展开侧边栏 */
+  /** 双击在[完全隐藏(0)]和[最大尺寸(窗口1/4)]之间切换 */
   const handleToggleSidebar = useCallback(() => {
-    setSidebarWidth((w) => {
-      if (w > SIDEBAR_MIN_WIDTH) return SIDEBAR_MIN_WIDTH
-      return lastExpandedWidth.current
-    })
+    setSidebarWidth((w) => (w > 0 ? 0 : getSidebarMaxWidth()))
   }, [])
 
   /** 侧边栏宽度变化后触发 resize，让 xterm.js FitAddon 重新计算尺寸 */
@@ -100,8 +103,11 @@ export default function CommanderPage() {
 
   return (
     <div className="flex h-full min-h-0">
-      {/* 终端区 */}
-      <div className="relative min-w-0 flex-1 bg-[#0f172a]">
+      {/* 终端区：容器背景跟随当前终端主题 */}
+      <div
+        className="relative min-w-0 flex-1"
+        style={{ backgroundColor: terminalTheme.theme.background }}
+      >
         <Terminal
           uid={uid}
           connected={isConnected}
@@ -110,18 +116,18 @@ export default function CommanderPage() {
         />
       </div>
 
-      {/* 水平拖拽分隔条（双击折叠/展开） */}
+      {/* 水平拖拽分隔条（双击在[完全隐藏]与[最大尺寸]之间切换） */}
       <ResizeHandle
         direction="horizontal"
         onResize={handleSidebarResize}
         onToggle={handleToggleSidebar}
-        expanded={sidebarWidth > SIDEBAR_MIN_WIDTH}
+        expanded={sidebarWidth > 0}
       />
 
-      {/* 侧边命令面板（可变宽度） */}
+      {/* 侧边命令面板（宽度为 0 时完全隐藏，避免残留 border） */}
       <div
-        className="shrink-0 overflow-hidden border-l border-border bg-card"
-        style={{ width: sidebarWidth }}
+        className={sidebarWidth > 0 ? 'shrink-0 overflow-hidden border-l border-border bg-card' : 'hidden'}
+        style={sidebarWidth > 0 ? { width: sidebarWidth } : undefined}
       >
         <CommandSidebar
           onRunCommand={handleSidebarCommand}
