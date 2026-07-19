@@ -254,8 +254,13 @@ export function StatusBar() {
         )}
       </div>
 
-      {/* 右侧：铃铛 */}
+      {/* 右侧：版本号 + 铃铛 */}
       <div className="flex items-center">
+        {/* 应用版本号（构建期注入） */}
+        <span className="text-white/40 text-[10px] font-mono px-2 select-none" title={`OMNI Work v${__APP_VERSION__}`}>
+          v{__APP_VERSION__}
+        </span>
+
         {/* 通知计数 */}
         <div className="relative">
           <button

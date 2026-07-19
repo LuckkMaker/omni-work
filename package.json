@@ -1,7 +1,7 @@
 {
   "name": "omni-work",
-  "version": "0.1.0",
-  "description": "DAPLink 嵌入式开发工具集",
+  "version": "0.3.1",
+  "description": "嵌入式开发工具集",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",

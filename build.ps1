@@ -57,18 +57,29 @@ function Find-Python {
         "C:\Python311\python.exe"
     ) | Where-Object { $_ -and (Test-Path $_) }
 
-    $required = @("fastapi", "uvicorn", "pyocd", "pyusb", "libusb_package", "capstone", "intelhex", "hidapi", "jinja2", "yaml")
+    # 必需的运行时依赖。
+    # 注意：pyocd 是内置源码（python/pyocd/），必须在 python/ 目录下才能 import；
+    # pyusb / hidapi 是 pyOCD 可选 USB 后端，项目实际用 libusb_package，不强制检测。
+    $required = @("fastapi", "uvicorn", "pyocd", "libusb_package", "capstone", "intelhex", "jinja2", "yaml")
+    $pythonDir = (Join-Path $ProjectRoot "python").Replace('\', '\\')
 
     foreach ($py in $candidates) {
         $allOk = $true
+        $missing = @()
         foreach ($pkg in $required) {
-            $result = & $py -c "import $pkg" 2>&1
-            if ($LASTEXITCODE -ne 0) { $allOk = $false; break }
+            # 把 python/ 目录加入 sys.path，让内置的 pyocd 源码包可被 import
+            $result = & $py -c "import sys; sys.path.insert(0, r'$pythonDir'); import $pkg" 2>&1
+            if ($LASTEXITCODE -ne 0) {
+                $allOk = $false
+                $missing += $pkg
+            }
         }
         if ($allOk) {
             $ver = & $py --version 2>&1
             Write-Host "[build] Found Python: $py ($ver)" -ForegroundColor Green
             return $py
+        } else {
+            Write-Host "[build] $py missing: $($missing -join ', ')" -ForegroundColor DarkGray
         }
     }
 
