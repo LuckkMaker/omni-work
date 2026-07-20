@@ -185,14 +185,16 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
         })
       }
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
+      // 从 axios 错误响应中提取后端 HTTPException 的 detail 字段
+      const axiosErr = e as { response?: { data?: { detail?: string } }; message?: string }
+      const msg = axiosErr.response?.data?.detail ?? (e instanceof Error ? e.message : String(e))
       setError(msg)
       useNotificationStore.getState().update(notifId, {
         type: 'error',
         title: 'RTT 启动失败',
         message: msg,
         autoClose: true,
-        autoCloseDelay: 5000,
+        autoCloseDelay: 8000,
       })
     } finally {
       setStarting(false)
@@ -214,6 +216,8 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
   const handleClearData = useCallback(() => {
     terminalRef.current?.clear()
     terminalRef.current?.clearData()
+    // 重置全局收发字节统计（状态栏显示）
+    useRttStore.getState().resetStats()
   }, [terminalRef])
 
   const handleSave = useCallback((format: 'txt' | 'log' | 'csv' | 'bin') => {

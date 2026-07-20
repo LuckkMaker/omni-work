@@ -403,8 +403,15 @@ class RTTBackend:
         running = self._running.get(uid)
         return running is not None and running.is_set()
 
-    def stop(self, uid: str) -> dict:
-        """停止 RTT"""
+    def stop(self, uid: str, reason: str = "user") -> dict:
+        """停止 RTT
+
+        Args:
+            reason: 停止原因，传递给前端用于 UI 反馈
+                "user" - 用户手动停止
+                "flash" - Flash 操作前自动停止（固件下载后 RTT 控制块失效）
+                "disconnected" - 探针断开
+        """
         with self._global_lock:
             running = self._running.pop(uid, None)
             thread = self._poll_threads.pop(uid, None)
@@ -418,14 +425,14 @@ class RTTBackend:
         if thread:
             thread.join(timeout=2)
 
-        event_manager.log("info", f"RTT: stopped")
-        event_manager.emit("rtt.stopped", {"uid": uid, "reason": "user"})
+        event_manager.log("info", f"RTT: stopped (reason={reason})")
+        event_manager.emit("rtt.stopped", {"uid": uid, "reason": reason})
         return {"success": True}
 
     def on_probe_disconnected(self, uid: str):
         """探针断开时调用，清理 RTT 会话"""
         if uid in self._control_blocks:
-            self.stop(uid)
+            self.stop(uid, reason="disconnected")
 
     def cleanup_all(self):
         """清理所有 RTT 会话（应用退出时调用）"""

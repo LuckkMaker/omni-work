@@ -3,14 +3,22 @@
 对标 J-Link RTT Viewer，提供 RTT 会话的启动/停止、通道查询、数据发送接口。
 """
 
+import asyncio
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
 
 from core.rtt_backend import rtt_backend
 from core.pyocd_backend import backend
+from core.events import event_manager
 
 router = APIRouter()
+
+# RTT 启动超时（秒）。
+# 外部工具（如 Keil MDK）下载固件后，pyOCD session 的底层 SWD 通信可能
+# 处于异常状态，target.halt() 或内存读取会永久挂起。设此超时保护，
+# 确保前端不会一直卡在"RTT会话启动中"。
+RTT_START_TIMEOUT = 5.0
 
 
 class RttStartRequest(BaseModel):
@@ -44,20 +52,33 @@ def rtt_status(uid: str):
 
 
 @router.post("/probes/{uid}/rtt/start")
-def rtt_start(uid: str, req: RttStartRequest):
+async def rtt_start(uid: str, req: RttStartRequest):
     """启动 RTT 会话
 
     在目标 RAM 中搜索 SEGGER RTT 控制块，解析通道，恢复目标运行并开始轮询。
-    注意：使用同步函数（非 async），FastAPI 会自动放入线程池执行，
-    避免 time.sleep 和 SWD 操作阻塞事件循环。
+    使用 async + asyncio.wait_for 包装，防止 SWD 通信挂起导致请求永不返回。
     """
-    result = rtt_backend.start(
-        uid,
-        address=req.address,
-        size=req.size,
-        up_channel=req.up_channel,
-        down_channel=req.down_channel,
-    )
+    try:
+        result = await asyncio.wait_for(
+            asyncio.to_thread(
+                rtt_backend.start,
+                uid,
+                address=req.address,
+                size=req.size,
+                up_channel=req.up_channel,
+                down_channel=req.down_channel,
+            ),
+            timeout=RTT_START_TIMEOUT,
+        )
+    except asyncio.TimeoutError:
+        # SWD 通信挂起（常见于外部工具如 Keil 下载后 session 状态异常）
+        msg = (f"RTT 启动超时（{int(RTT_START_TIMEOUT)}秒）。"
+               "可能是外部工具占用调试接口或 session 状态异常，"
+               "请断开并重新连接仿真器后重试")
+        event_manager.log("error", f"RTT: {msg}")
+        event_manager.emit("rtt.error", {"uid": uid, "error": msg})
+        raise HTTPException(status_code=408, detail=msg)
+
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result.get("error", "RTT start failed"))
     return result

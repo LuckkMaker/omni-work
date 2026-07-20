@@ -205,6 +205,8 @@ interface RttState {
   setSelectedDownChannel: (ch: number) => void
   addBytesReceived: (n: number) => void
   addBytesSent: (n: number) => void
+  /** 重置全局收发字节统计（清空操作时调用） */
+  resetStats: () => void
   setError: (error: string | null) => void
   setDisplayMode: (mode: DisplayMode) => void
   setInputMode: (mode: InputMode) => void
@@ -306,6 +308,7 @@ export const useRttStore = create<RttState>((set, get) => ({
   setSelectedDownChannel: (ch) => set({ selectedDownChannel: ch }),
   addBytesReceived: (n) => set((s) => ({ bytesReceived: s.bytesReceived + n })),
   addBytesSent: (n) => set((s) => ({ bytesSent: s.bytesSent + n })),
+  resetStats: () => set({ bytesReceived: 0, bytesSent: 0 }),
   setError: (error) => set({ error }),
   setDisplayMode: (mode) => set({ displayMode: mode }),
   setInputMode: (mode) => {

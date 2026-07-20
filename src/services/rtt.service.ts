@@ -45,7 +45,11 @@ export const rttService = {
   /** 启动 RTT 会话 */
   async start(uid: string, opts: RttStartOptions): Promise<RttStartResult> {
     const client = await api()
-    const { data } = await client.post(`/api/probes/${uid}/rtt/start`, opts)
+    const { data } = await client.post(`/api/probes/${uid}/rtt/start`, opts, {
+      // 10 秒超时（后端 5 秒超时 + 5 秒余量），防止 SWD 通信挂起时
+      // 前端通知永久卡在"RTT会话启动中"
+      timeout: 10000,
+    })
     return data
   },
 
