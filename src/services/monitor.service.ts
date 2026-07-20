@@ -37,6 +37,8 @@ export interface MonitorSymbol {
   elem_count: number
   /** 元素字节数（非数组等于 size） */
   elem_size: number
+  /** 所属源文件（DWARF compile unit name，无 DWARF 时 "unknown"） */
+  source_file: string
 }
 
 /** 符号查询结果（分页） */

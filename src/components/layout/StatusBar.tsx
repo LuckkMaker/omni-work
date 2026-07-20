@@ -4,6 +4,7 @@ import { useProbeStore, SPEED_OPTIONS, type DebugInterface } from '@/stores/prob
 import { useNotificationStore } from '@/stores/notification.store'
 import { useBackendStatus } from '@/hooks/useBackendStatus'
 import { useRttStore } from '@/stores/rtt.store'
+import { useMonitorStore } from '@/stores/monitor.store'
 import { cn } from '@/lib/utils'
 
 const typeConfig = {
@@ -160,6 +161,13 @@ export function StatusBar() {
   const rttRecordToFile = useRttStore((s) => s.recordToFile)
   const rttSendTiming = useRttStore((s) => s.sendTiming)
 
+  // Monitor 统计信息（运行时显示）
+  const monRunning = useMonitorStore((s) => s.running)
+  const monRateHz = useMonitorStore((s) => s.rateHz)
+  const monVarCount = useMonitorStore((s) => s.variables.length)
+  const monSampleCount = useMonitorStore((s) => s.samples.length)
+  const monTransport = useMonitorStore((s) => s.transport)
+
   const probe = probes.find((p) => p.uid === selectedUid) ?? null
   const isConnected = probe?.state === 'connected'
   const isConnecting = probe?.state === 'connecting'
@@ -250,6 +258,29 @@ export function StatusBar() {
             {rttSendTiming && (
               <span className="text-amber-300 px-1" title="定时发送中">⏱</span>
             )}
+          </>
+        )}
+
+        {/* Monitor 统计：运行时紧凑内联显示 */}
+        {monRunning && (
+          <>
+            <div className="w-px h-3 bg-white/20" />
+            <div className="flex items-center gap-1 px-2" title="Monitor 采样运行中">
+              <Activity className="size-3 text-green-400 animate-pulse" />
+              <span className="text-white/80">Monitor</span>
+            </div>
+            <div className="flex items-center gap-1 px-2" title={`采样模式：${monTransport === 'rtt' ? 'RTT 同步' : 'HSS 异步'}`}>
+              <span className="text-white/60 text-[10px]">{monTransport === 'rtt' ? 'RTT' : 'HSS'}</span>
+            </div>
+            <div className="flex items-center gap-1 px-2" title={`采样率：${monRateHz} Hz`}>
+              <span className="text-white/60 text-[10px]">{monRateHz >= 1000 ? `${monRateHz / 1000}kHz` : `${monRateHz}Hz`}</span>
+            </div>
+            <div className="flex items-center gap-1 px-2" title={`监视变量：${monVarCount}`}>
+              <span className="text-white/60 text-[10px]">{monVarCount} vars</span>
+            </div>
+            <div className="flex items-center gap-1 px-2" title={`已采集：${monSampleCount} 个采样点`}>
+              <span className="text-white/60 text-[10px] font-mono">{monSampleCount} pts</span>
+            </div>
           </>
         )}
       </div>

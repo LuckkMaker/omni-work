@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react'
-import { Play, Square, Eraser, Trash2, Download, Keyboard, MessageSquare, FileDown, ListChecks, FileText } from 'lucide-react'
+import { Eraser, Trash2, Download, Keyboard, MessageSquare, FileDown, ListChecks, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -13,8 +13,6 @@ import {
   SelectItem,
 } from '@/components/ui/select'
 import { useRttStore } from '@/stores/rtt.store'
-import { useNotificationStore } from '@/stores/notification.store'
-import { rttService } from '@/services/rtt.service'
 import { CHECKSUM_OPTIONS, type ChecksumType } from '@/utils/checksum'
 import { cn } from '@/lib/utils'
 import { SaveFormatDialog } from './SaveFormatDialog'
@@ -100,20 +98,16 @@ function ConfigSubRow({
   )
 }
 
-export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: ConfigPanelProps) {
+export function ConfigPanel({ uid, terminalRef, onOpenMultiString }: ConfigPanelProps) {
   const [showSaveDialog, setShowSaveDialog] = useState(false)
 
   const {
     running,
-    starting,
-    selectedUpChannel,
-    selectedDownChannel,
     error,
     displayMode,
     inputMode,
     localEcho,
     recordToFile,
-    recordFileName,
     sendHex,
     sendNewline,
     sendTiming,
@@ -122,17 +116,10 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
     sendChecksumType,
     sendChecksumStart,
     sendChecksumEnd,
-    setRunning,
-    setStarting,
-    setChannels,
-    setSelectedUpChannel,
-    setSelectedDownChannel,
-    setError,
     setDisplayMode,
     setInputMode,
     setLocalEcho,
     setRecordToFile,
-    reset,
     setSendHex,
     setSendNewline,
     setSendTiming,
@@ -146,78 +133,12 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
   const activeTabId = useRttStore((s) => s.activeTabId)
   const activeTab = useRttStore((s) => s.tabs.find((t) => t.id === s.activeTabId))
 
-  const handleStart = useCallback(async () => {
-    if (!uid) return
-    setStarting(true)
-    setError(null)
-    // 整合"启动中"与"已完成"为同一条通知：先以 progress 显示，完成后 update 为 success/error
-    const notifId = useNotificationStore.getState().push({
-      type: 'progress',
-      title: 'RTT 会话启动中',
-      message: '正在与下位机建立 RTT 连接...',
-    })
-    try {
-      const result = await rttService.start(uid, {
-        up_channel: selectedUpChannel,
-        down_channel: selectedDownChannel,
-      })
-      if (result.success) {
-        setChannels(result.up_channels, result.down_channels)
-        setRunning(true)
-        setSelectedUpChannel(result.up_channel)
-        setSelectedDownChannel(result.down_channel)
-        useRttStore.getState().resetTabs()
-        useNotificationStore.getState().update(notifId, {
-          type: 'success',
-          title: 'RTT 会话已启动',
-          message: `Up: Channel ${result.up_channel}, Down: Channel ${result.down_channel}`,
-          autoClose: true,
-          autoCloseDelay: 3000,
-        })
-      } else {
-        setError(result.error || '启动失败')
-        useNotificationStore.getState().update(notifId, {
-          type: 'error',
-          title: 'RTT 启动失败',
-          message: result.error || '未知错误',
-          autoClose: true,
-          autoCloseDelay: 5000,
-        })
-      }
-    } catch (e) {
-      // 从 axios 错误响应中提取后端 HTTPException 的 detail 字段
-      const axiosErr = e as { response?: { data?: { detail?: string } }; message?: string }
-      const msg = axiosErr.response?.data?.detail ?? (e instanceof Error ? e.message : String(e))
-      setError(msg)
-      useNotificationStore.getState().update(notifId, {
-        type: 'error',
-        title: 'RTT 启动失败',
-        message: msg,
-        autoClose: true,
-        autoCloseDelay: 8000,
-      })
-    } finally {
-      setStarting(false)
-    }
-  }, [uid, selectedUpChannel, selectedDownChannel, setStarting, setError, setChannels, setRunning, setSelectedUpChannel, setSelectedDownChannel])
-
-  const handleStop = useCallback(async () => {
-    if (!uid) return
-    try { await rttService.stop(uid) } catch { /* 忽略 */ }
-    setRunning(false)
-    reset()
-    useNotificationStore.getState().push({
-      type: 'info',
-      title: 'RTT 会话已停止',
-    })
-  }, [uid, setRunning, reset])
-
   const handleClear = useCallback(() => { terminalRef.current?.clear() }, [terminalRef])
   const handleClearData = useCallback(() => {
     terminalRef.current?.clear()
     terminalRef.current?.clearData()
-    // 重置全局收发字节统计（状态栏显示）
-    useRttStore.getState().resetStats()
+    // 仅清空当前 Tab 的 xterm 视图与数据缓冲；
+    // 不再重置全局收发字节统计，保留 status bar 所有 tab 累计统计
   }, [terminalRef])
 
   const handleSave = useCallback((format: 'txt' | 'log' | 'csv' | 'bin') => {
@@ -281,38 +202,11 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
     return useRttStore.getState().selectedDownChannel
   }, [activeTabId])
 
-  const canStart = uid && connected && !running && !starting
-  const canStop = running
   const dataSize = activeTab?.bufferSize ?? 0
 
   return (
     <div className="flex flex-col gap-2.5 p-2.5 overflow-y-auto text-xs">
-      {/* ① 会话控制 */}
-      <section className="space-y-1.5">
-        <Label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
-          会话控制
-        </Label>
-        <div className="flex gap-2">
-          <Button onClick={handleStart} disabled={!canStart} className="flex-1" size="sm">
-            <Play className="mr-1 h-3.5 w-3.5" />
-            {starting ? '启动中...' : '启动'}
-          </Button>
-          <Button onClick={handleStop} disabled={!canStop} variant="outline" className="flex-1" size="sm">
-            <Square className="mr-1 h-3.5 w-3.5" />
-            停止
-          </Button>
-        </div>
-        {recordToFile && (
-          <div className="flex items-center gap-1.5 rounded border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-600">
-            <span className="size-1.5 rounded-full bg-amber-500 animate-pulse" />
-            <span className="truncate" title={recordFileName ?? ''}>{recordFileName ?? '选择文件中...'}</span>
-          </div>
-        )}
-      </section>
-
-      <Separator />
-
-      {/* ② 接收配置 */}
+      {/* ① 接收配置 */}
       <section className="space-y-1">
         <Label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
           接收配置
@@ -386,7 +280,7 @@ export function ConfigPanel({ uid, connected, terminalRef, onOpenMultiString }: 
 
       <Separator />
 
-      {/* ③ 发送配置 */}
+      {/* ② 发送配置 */}
       <section className="space-y-1">
         <Label className="text-[10px] font-semibold uppercase tracking-wide text-muted-foreground">
           发送配置

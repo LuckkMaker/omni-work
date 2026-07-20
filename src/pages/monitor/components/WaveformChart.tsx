@@ -141,8 +141,31 @@ export function WaveformChart({
     if (followRef.current && data[0].length > 0) {
       const lastT = data[0][data[0].length - 1] as number
       const win = windowRef.current
-      const xMin = lastT - win
-      const xMax = lastT
+
+      // 触发检测：找第一个启用触发的通道，以其最近触发点作为窗口右边界
+      // （示波器式触发：信号穿越/达到阈值时定格，便于观察边沿/电平）
+      let trigXMax: number | null = null
+      for (let si = 0; si < series.length; si++) {
+        const ch = series[si].channel
+        if (ch.triggerMode === 'none') continue
+        const arr = data[si + 1]
+        const level = ch.triggerLevel
+        // 从后往前找最近的触发点
+        for (let i = arr.length - 1; i >= 1; i--) {
+          const prev = arr[i - 1]
+          const curr = arr[i]
+          if (prev === null || curr === null || typeof prev !== 'number' || typeof curr !== 'number') continue
+          let hit = false
+          if (ch.triggerMode === 'rising' && prev < level && curr >= level) hit = true
+          else if (ch.triggerMode === 'falling' && prev > level && curr <= level) hit = true
+          else if (ch.triggerMode === 'level' && curr >= level) hit = true
+          if (hit) { trigXMax = data[0][i] as number; break }
+        }
+        if (trigXMax !== null) break
+      }
+
+      const xMax = trigXMax !== null ? trigXMax : lastT
+      const xMin = xMax - win
       plot.setScale('x', { min: xMin, max: xMax })
 
       // Y 轴自适应：计算窗口内数据的 min/max
@@ -211,7 +234,7 @@ export function WaveformChart({
       ],
       axes: [
         {
-          label: '时间 (s)',
+          label: windowSec < 0.001 ? '时间 (μs)' : windowSec < 1 ? '时间 (ms)' : '时间 (s)',
           space: 60,
         },
         {
@@ -297,6 +320,7 @@ export function WaveformChart({
     variables.map((v) => v.id).join(','),
     channels.filter((c) => c.visible).map((c) => c.varId).join(','),
     channels.map((c) => c.color).join(','),
+    windowSec,
   ])
 
   return <div ref={containerRef} className={className} style={{ width: '100%', height: '100%' }} />

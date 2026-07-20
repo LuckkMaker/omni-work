@@ -7,8 +7,10 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Label } from '@/components/ui/label'
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useUiStore, TERMINAL_THEMES } from '@/stores/ui.store'
+import { systemService, type SystemInfo } from '@/services/system.service'
+import { Loader2, AlertTriangle } from 'lucide-react'
 
 export default function SettingsPage() {
   const terminalThemeId = useUiStore((s) => s.terminalThemeId)
@@ -20,6 +22,34 @@ export default function SettingsPage() {
     () => [...TERMINAL_THEMES].sort((a, b) => a.name.localeCompare(b.name, 'en')),
     [],
   )
+
+  // ── 关于：系统信息加载 ──
+  const [sysInfo, setSysInfo] = useState<SystemInfo | null>(null)
+  const [sysLoading, setSysLoading] = useState(true)
+  const [sysError, setSysError] = useState<string | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    setSysLoading(true)
+    setSysError(null)
+    systemService
+      .getInfo()
+      .then((info) => {
+        if (!cancelled) setSysInfo(info)
+      })
+      .catch((e) => {
+        if (cancelled) return
+        const detail = (e as { response?: { data?: { detail?: string } } }).response?.data?.detail
+          ?? (e instanceof Error ? e.message : String(e))
+        setSysError(detail)
+      })
+      .finally(() => {
+        if (!cancelled) setSysLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   return (
     <div className="p-6">
@@ -83,6 +113,55 @@ export default function SettingsPage() {
         </CardHeader>
         <CardContent>
           <p className="text-sm text-muted-foreground">暂无可配置项</p>
+        </CardContent>
+      </Card>
+
+      {/* 关于：应用版本、后端版本、Python、SQLite、数据库、pyOCD 等 */}
+      <Card className="mt-4">
+        <CardHeader>
+          <CardTitle>关于</CardTitle>
+        </CardHeader>
+        <CardContent>
+          {sysLoading ? (
+            <div className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="size-4 animate-spin" />
+              正在加载系统信息...
+            </div>
+          ) : sysError ? (
+            <div className="flex items-start gap-2 text-sm text-red-500">
+              <AlertTriangle className="size-4 shrink-0 mt-0.5" />
+              <div>
+                <div className="font-medium">加载系统信息失败</div>
+                <div className="text-xs mt-0.5 break-all">{sysError}</div>
+              </div>
+            </div>
+          ) : sysInfo ? (
+            <dl className="grid grid-cols-[120px_1fr] gap-x-4 gap-y-2 text-sm">
+              <dt className="text-muted-foreground">应用版本</dt>
+              <dd className="font-mono">v{__APP_VERSION__}</dd>
+
+              <dt className="text-muted-foreground">后端版本</dt>
+              <dd className="font-mono break-all">{sysInfo.backend_version || '—'}</dd>
+
+              <dt className="text-muted-foreground">Python 版本</dt>
+              <dd className="font-mono break-all">{sysInfo.python_version || '—'}</dd>
+
+              <dt className="text-muted-foreground">运行平台</dt>
+              <dd className="font-mono break-all">{sysInfo.platform || '—'}</dd>
+
+              <dt className="text-muted-foreground">SQLite 版本</dt>
+              <dd className="font-mono break-all">{sysInfo.sqlite_version || '—'}</dd>
+
+              <dt className="text-muted-foreground">数据库版本</dt>
+              <dd className="font-mono break-all">{sysInfo.db_version || '—'}</dd>
+
+              <dt className="text-muted-foreground">pyOCD 版本</dt>
+              <dd className="font-mono break-all">{sysInfo.pyocd_version || '—'}</dd>
+
+              <dt className="text-muted-foreground">数据库路径</dt>
+              <dd className="font-mono text-xs break-all">{sysInfo.db_path || '—'}</dd>
+            </dl>
+          ) : null}
         </CardContent>
       </Card>
     </div>

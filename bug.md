@@ -1,15 +1,11 @@
 1.RTT Viewer 页
-- status bar 显示的是所有tab的统计数据，但是点击[清空]按钮时，整个status bar的统计数据会被清空
-- 会话控制的[启动]与[停止]按钮，结合为一个[启动/停止]按钮，点击后根据当前状态切换。放到terminal tab的最右侧
-2.在应用 index.html 窗口标题显示应用版本
-3.在设置页，增加一个后端、数据库版本
-4.Monitor 页
-- 顶部栏移除，顶部栏的采样率选择、Follow 模式移到右侧的工具栏
-- Monitor 页的状态也在 status bar 显示
-- Monitor 页的通知用全局通知
-- [加载ELF]按钮打开文件选择的对话框，改为只支持elf、axf 格式
-- 右侧边栏，变量列表，如图片所示。按文件分组显示变量，表格增加 size 列。
-- 右侧边栏，变量列表，数组类型的变量，按目前的ui显示，对于超长的数组，无法显示完整的内容。改为展开二级列表的方式，由用户点击各个数组元素选中。注意波形图要支持数组多个元素，以及索引不连续的数组元素
-- 右侧边栏，变量列表，点击[添加到监视]后，变量会显示在监视列表中，可以隐藏，但无法删除。而"偏移"和"缩放"功能是表达什么意思？
-- 波形图支持 1ms/div 这样的切换显示，从us到s分布
-- 波形图通道支持触发方式选择，阈值触发功能
+- 会话启动超时，怎么在右侧边栏，还有一个"timeout of 10000ms exceeded"的提示
+2.Monitor 页
+- [启动]和[Follow]按钮放到右侧边栏最上方，以[启动][Follow]的形式排列
+- 用来测试的D:\workspace\embedded\stm32-workspace\examples\dsp\dsp_wave下位机程序，sine_output变量的变化幅度很小，波形图看不出变化
+- 分辨率改为FPS，可选项有 1,2,5,10,15,20,25,30,40,50，默认为 30FPS
+- div 时间分辨率改为 1 us/Div，2 us/Div，5 us/Div，10 us/Div，20 us/Div，50 us/Div，100 us/Div，200 us/Div，500 us/Div，1 ms/Div，2 ms/Div，5 ms/Div，10 ms/Div，20 ms/Div，50 ms/Div，100 ms/Div，200 ms/Div，500 ms/Div，1 s/Div, 2 s/Div, 5 s/Div, 10 s/Div, 20 s/Div, 50 s/Div, 100 s/Div, 200 s/Div, 500 s/Div
+- AHBPrescTable 变量怎么没识别出来自boards/stm32f407ig/startup/system_stm32f4xx.c
+3.设置页
+- 移除[常规]section
+- [关于]section中，只保留应用版本、后端版本、数据库版本、数据库路径

@@ -785,8 +785,9 @@ class MonitorBackend:
 
         每个符号字段：
             name, address, size（整个符号大小）, type（数组时为元素类型，向后兼容），
-            is_array, elem_type, elem_count, elem_size。
-        DWARF 解析失败或未命中时回退到按 size 猜测，is_array=False。
+            is_array, elem_type, elem_count, elem_size, source_file（源文件名）。
+        DWARF 解析失败或未命中时回退到按 size 猜测，is_array=False，
+        source_file 为 "unknown"。
         """
         decoder = self._elf_decoders.get(uid)
         if not decoder:
@@ -811,6 +812,8 @@ class MonitorBackend:
                 elem_type = ti["elem_type"]
                 elem_count = int(ti["elem_count"])
                 elem_size = int(ti["elem_size"])
+                # source_file 取自 DWARF 缓存，缺失时回退 "unknown"
+                source_file = ti.get("source_file", "unknown")
                 # 数组时 type 设为 elem_type，size 仍为整个符号大小（向后兼容）
                 sym_type_str = elem_type
             else:
@@ -818,6 +821,8 @@ class MonitorBackend:
                 elem_type = self._type_from_symbol(info)
                 elem_count = 1
                 elem_size = info.size if info.size else TYPE_MAP[elem_type][1]
+                # 无 DWARF 信息时无法获知源文件
+                source_file = "unknown"
                 sym_type_str = elem_type
 
             symbols.append({
@@ -829,6 +834,7 @@ class MonitorBackend:
                 "elem_type": elem_type,
                 "elem_count": elem_count,
                 "elem_size": elem_size,
+                "source_file": source_file,
             })
 
         # 排序：按地址
@@ -870,8 +876,11 @@ class MonitorBackend:
         一次性遍历所有 CU 的 DIE，先建 {offset -> DIE} 索引以便解析 DW_AT_type
         引用，再收集全局变量（DW_TAG_variable，直接隶属于 CU）的类型信息。
 
+        每个变量额外存 source_file：取 CU 顶层 DIE 的 DW_AT_name（源文件名），
+        取不到则 "unknown"，供前端按文件分组展示。
+
         Returns:
-            {name: {is_array, elem_type, elem_count, elem_size}}
+            {name: {is_array, elem_type, elem_count, elem_size, source_file}}
         """
         # 第一遍：建立 offset -> DIE 索引（用于解析 DW_AT_type 引用）
         die_by_offset: dict[int, object] = {}
@@ -882,6 +891,19 @@ class MonitorBackend:
         # 第二遍：收集全局变量类型
         cache: dict[str, dict] = {}
         for cu in dwarfinfo.iter_CUs():
+            # 取 CU 对应的源文件名（顶层 DIE 的 DW_AT_name），失败回退 "unknown"
+            try:
+                top_die = cu.get_top_DIE()
+                cu_name_attr = top_die.attributes.get("DW_AT_name")
+                if cu_name_attr is not None:
+                    cu_name = cu_name_attr.value
+                    if isinstance(cu_name, bytes):
+                        cu_name = cu_name.decode("utf-8", errors="replace")
+                else:
+                    cu_name = "unknown"
+            except Exception:
+                cu_name = "unknown"
+
             for die in cu.iter_DIEs():
                 if die.tag != "DW_TAG_variable":
                     continue
@@ -899,7 +921,8 @@ class MonitorBackend:
                 try:
                     ti = self._resolve_var_type(die, die_by_offset, cu)
                     if ti is not None:
-                        cache[name] = ti
+                        # 在类型信息基础上追加 source_file，保留原有字段
+                        cache[name] = {**ti, "source_file": cu_name}
                 except Exception as e:
                     logger.debug(f"Monitor: DWARF 解析符号 {name} 失败: {e}")
         return cache

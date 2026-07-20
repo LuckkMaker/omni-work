@@ -13,7 +13,7 @@ function createWindow(): void {
     minHeight: 600,
     show: false,
     autoHideMenuBar: true,
-    title: 'OMNI Work',
+    title: `OMNI Work v${app.getVersion()}`,
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -62,13 +62,23 @@ app.whenReady().then(async () => {
   })
 
   // IPC: 打开文件选择对话框
-  ipcMain.handle('dialog:open-file', async () => {
+  //   opts.extensions：指定过滤后缀（如 ['elf','axf']），不传时默认 bin/hex/elf/axf + 所有文件（兼容 Flash 页）
+  //   opts.title：对话框标题
+  ipcMain.handle('dialog:open-file', async (_event, opts?: { extensions?: string[]; title?: string }) => {
+    // 根据是否指定 extensions 动态构造 filters，未指定时保留原有 bin/hex/elf/axf + 所有文件
+    const filters = opts?.extensions?.length
+      ? [
+          { name: `${opts.extensions.join('/').toUpperCase()} 文件`, extensions: opts.extensions },
+          { name: '所有文件', extensions: ['*'] },
+        ]
+      : [
+          { name: '固件文件', extensions: ['bin', 'hex', 'elf', 'axf'] },
+          { name: '所有文件', extensions: ['*'] },
+        ]
+    const title = opts?.title ?? (opts?.extensions?.length ? '选择文件' : '选择固件文件')
     const result = await dialog.showOpenDialog(mainWindow!, {
-      title: '选择固件文件',
-      filters: [
-        { name: '固件文件', extensions: ['bin', 'hex', 'elf', 'axf'] },
-        { name: '所有文件', extensions: ['*'] },
-      ],
+      title,
+      filters,
       properties: ['openFile'],
     })
     if (result.canceled || result.filePaths.length === 0) return null

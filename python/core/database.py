@@ -80,6 +80,17 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     # Schema 增量迁移：为旧数据库添加新列
     _migrate_add_column(conn, "devices", "device_id_address", "TEXT NOT NULL DEFAULT '0xE0042000'")
 
+    # 初始化数据库版本号（PRAGMA user_version）：旧库为 0 时升级到 1
+    # 用于 /api/system/info 展示当前 schema 版本，后续迁移可递增
+    try:
+        row = conn.execute("PRAGMA user_version").fetchone()
+        current_version = int(row[0]) if row else 0
+        if current_version == 0:
+            conn.execute("PRAGMA user_version = 1")
+            conn.commit()
+    except Exception:
+        pass
+
 
 def _migrate_add_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
     """安全地为表添加列（如果列不存在）"""
@@ -113,6 +124,21 @@ def _migrate_from_json(conn: sqlite3.Connection) -> None:
 def get_db_path() -> str:
     """返回数据库文件路径"""
     return _DB_PATH
+
+
+def get_db_version() -> int:
+    """返回数据库 schema 版本号（PRAGMA user_version）
+
+    首次初始化时 user_version 被设为 1，后续迁移可递增。
+    任何异常均回退到 0，确保不崩溃。
+    """
+    try:
+        with _lock:
+            conn = _get_conn()
+            row = conn.execute("PRAGMA user_version").fetchone()
+            return int(row[0]) if row else 0
+    except Exception:
+        return 0
 
 
 # ── CRUD 操作 ─────────────────────────────

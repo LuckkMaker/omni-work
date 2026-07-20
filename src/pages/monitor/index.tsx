@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { Activity, Play, Square, Gauge, Download, X } from 'lucide-react'
+import { Activity, Download, X } from 'lucide-react'
 import { useProbeStore } from '@/stores/probe.store'
 import { useMonitorStore } from '@/stores/monitor.store'
 import { useNotificationStore } from '@/stores/notification.store'
@@ -10,19 +10,6 @@ import { WatchPanel } from './components/WatchPanel'
 import { WaveformChart, type CursorMeasurement } from './components/WaveformChart'
 import { ResizeHandle } from '@/components/LogConsole'
 import { cn } from '@/lib/utils'
-
-/** 采样率档位（Hz） */
-const RATE_OPTIONS = [
-  { label: '1 Hz', value: 1 },
-  { label: '10 Hz', value: 10 },
-  { label: '100 Hz', value: 100 },
-  { label: '500 Hz', value: 500 },
-  { label: '1 kHz', value: 1000 },
-  { label: '5 kHz', value: 5000 },
-  { label: '10 kHz', value: 10000 },
-  { label: '50 kHz', value: 50000 },
-  { label: '100 kHz', value: 100000 },
-]
 
 const SIDEBAR_DEFAULT_WIDTH = 280
 const SIDEBAR_MAX_RATIO = 0.25
@@ -42,22 +29,19 @@ export default function MonitorPage() {
 
   const running = useMonitorStore((s) => s.running)
   const paused = useMonitorStore((s) => s.paused)
-  const starting = useMonitorStore((s) => s.starting)
   const error = useMonitorStore((s) => s.error)
   const rateHz = useMonitorStore((s) => s.rateHz)
-  const elfLoaded = useMonitorStore((s) => s.elfLoaded)
-  const elfPath = useMonitorStore((s) => s.elfPath)
   const variables = useMonitorStore((s) => s.variables)
   const samples = useMonitorStore((s) => s.samples)
   const channels = useMonitorStore((s) => s.channels)
   const follow = useMonitorStore((s) => s.follow)
+  const timebase = useMonitorStore((s) => s.timebase)
 
   const setRunning = useMonitorStore((s) => s.setRunning)
   const setPaused = useMonitorStore((s) => s.setPaused)
   const setStarting = useMonitorStore((s) => s.setStarting)
   const setError = useMonitorStore((s) => s.setError)
   const setRateHz = useMonitorStore((s) => s.setRateHz)
-  const setFollow = useMonitorStore((s) => s.setFollow)
   const appendSamples = useMonitorStore((s) => s.appendSamples)
   const clearSamples = useMonitorStore((s) => s.clearSamples)
 
@@ -245,75 +229,7 @@ export default function MonitorPage() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {/* ── 顶部工具栏 ── */}
-      <div className="flex items-center gap-2 border-b border-border bg-background px-3 py-2">
-        <div className="flex items-center gap-1.5">
-          <Activity className="size-4 text-primary" />
-          <span className="text-sm font-medium">Monitor</span>
-          {elfLoaded && (
-            <span className="ml-2 text-xs text-muted-foreground truncate max-w-[200px]" title={elfPath ?? undefined}>
-              {elfPath?.split(/[\\/]/).pop()}
-            </span>
-          )}
-        </div>
-
-        <div className="ml-auto flex items-center gap-2">
-          {/* 采样率选择 */}
-          <select
-            className="h-7 rounded border border-border bg-background px-2 text-xs"
-            value={rateHz}
-            onChange={(e) => setRateHz(Number(e.target.value))}
-            disabled={running}
-            title="采样率"
-          >
-            {RATE_OPTIONS.map((opt) => (
-              <option key={opt.value} value={opt.value}>{opt.label}</option>
-            ))}
-          </select>
-
-          {/* Follow 开关 */}
-          <button
-            className={cn(
-              'flex h-7 items-center gap-1 rounded border px-2 text-xs transition-colors',
-              follow
-                ? 'border-primary bg-primary/10 text-primary'
-                : 'border-border text-muted-foreground hover:bg-muted/30'
-            )}
-            onClick={() => setFollow(!follow)}
-            title="Follow 模式：跟随最新数据滚动"
-          >
-            <Gauge className="size-3.5" />
-            Follow
-          </button>
-
-          {/* 启动/停止 */}
-          <button
-            className={cn(
-              'flex h-7 items-center gap-1.5 rounded px-3 text-xs font-medium transition-colors',
-              running
-                ? 'bg-destructive/10 text-destructive hover:bg-destructive/20'
-                : 'bg-primary text-primary-foreground hover:bg-primary/90',
-              starting && 'opacity-60 cursor-wait'
-            )}
-            onClick={handleToggleSampling}
-            disabled={!isConnected || starting || (running && paused)}
-          >
-            {running ? (
-              <>
-                <Square className="size-3.5" />
-                停止
-              </>
-            ) : (
-              <>
-                <Play className="size-3.5" />
-                {starting ? '启动中...' : '启动'}
-              </>
-            )}
-          </button>
-        </div>
-      </div>
-
-      {/* ── 主区域 ── */}
+      {/* ── 主区域（顶部栏已移除，采样率/Follow/启停移至右侧 ChannelPanel 工具栏）── */}
       <div className="flex min-h-0 flex-1">
         {/* 左：波形/数据流区 */}
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
@@ -384,7 +300,7 @@ export default function MonitorPage() {
                     channels={channels}
                     samples={samples}
                     follow={follow}
-                    windowSec={10}
+                    windowSec={timebase}
                     className="h-full w-full"
                     onCursorSelect={setCursorMeasure}
                   />
@@ -449,7 +365,11 @@ export default function MonitorPage() {
           className={sidebarWidth > 0 ? 'flex shrink-0 flex-col overflow-hidden border-l border-border bg-background' : 'hidden'}
           style={sidebarWidth > 0 ? { width: sidebarWidth } : undefined}
         >
-          <ChannelPanel uid={uid} />
+          <ChannelPanel
+            uid={uid}
+            isConnected={isConnected}
+            onToggleSampling={handleToggleSampling}
+          />
         </div>
       </div>
     </div>

@@ -26,6 +26,10 @@ export interface ChannelConfig {
   movingAverage: boolean
   /** Y 轴分辨率（每格代表的数值，0 表示自动） */
   yResolution: number
+  /** 触发方式：none=无，rising=上升沿，falling=下降沿，level=电平触发 */
+  triggerMode: 'none' | 'rising' | 'falling' | 'level'
+  /** 触发阈值（信号穿越/达到此值时触发） */
+  triggerLevel: number
 }
 
 interface MonitorState {
@@ -51,6 +55,8 @@ interface MonitorState {
 
   // ── 显示配置 ──
   follow: boolean
+  /** 时基窗口（秒），Follow/触发模式下显示的窗口宽度，如 0.001=1ms, 1=1s */
+  timebase: number
   channels: ChannelConfig[]
 
   // ── actions ──
@@ -61,6 +67,7 @@ interface MonitorState {
   setRateHz: (hz: number) => void
   setTransport: (t: 'swd' | 'rtt') => void
   setFollow: (on: boolean) => void
+  setTimebase: (t: number) => void
 
   setElf: (path: string, count: number) => void
   setVariables: (vars: MonitorVariable[]) => void
@@ -94,6 +101,8 @@ function makeChannel(varId: string, index: number): ChannelConfig {
     max: null,
     movingAverage: false,
     yResolution: 0,
+    triggerMode: 'none',
+    triggerLevel: 0,
   }
 }
 
@@ -115,6 +124,7 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
   totalSamples: 0,
 
   follow: true,
+  timebase: 1,
   channels: [],
 
   setRunning: (running) => set({ running }),
@@ -124,6 +134,7 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
   setRateHz: (hz) => set({ rateHz: hz }),
   setTransport: (t) => set({ transport: t }),
   setFollow: (on) => set({ follow: on }),
+  setTimebase: (t) => set({ timebase: t }),
 
   setElf: (path, count) => set({ elfPath: path, elfLoaded: true, symbolCount: count }),
 

@@ -13,10 +13,13 @@ import uvicorn
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from api import probes, flash, targets, files, devices, commander, rtt, tools, monitor
+from api import probes, flash, targets, files, devices, commander, rtt, tools, monitor, system
 from core.events import event_manager
 from core.probe_monitor import probe_monitor
 from core.pyocd_backend import backend
+
+# 后端版本号（与前端 package.json 保持一致）
+BACKEND_VERSION = "0.3.1"
 
 logger = logging.getLogger("omni-work")
 
@@ -45,7 +48,7 @@ async def lifespan(app: FastAPI):
     logger.info("Application shutdown")
 
 
-app = FastAPI(title="OMNI Work Backend", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="OMNI Work Backend", version=BACKEND_VERSION, lifespan=lifespan)
 
 # CORS 配置：允许 Electron 渲染进程（开发模式 localhost:5173/5174）访问
 app.add_middleware(
@@ -65,6 +68,7 @@ app.include_router(files.router, prefix="/api/files", tags=["files"])
 app.include_router(commander.router, prefix="/api", tags=["commander"])
 app.include_router(rtt.router, prefix="/api", tags=["rtt"])
 app.include_router(monitor.router, prefix="/api", tags=["monitor"])
+app.include_router(system.router, prefix="/api", tags=["system"])
 app.include_router(tools.router, prefix="/api", tags=["tools"])
 
 
