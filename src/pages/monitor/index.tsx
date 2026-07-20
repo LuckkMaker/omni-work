@@ -11,8 +11,8 @@ import { WaveformChart, type CursorMeasurement } from './components/WaveformChar
 import { ResizeHandle } from '@/components/LogConsole'
 import { cn } from '@/lib/utils'
 
-const SIDEBAR_DEFAULT_WIDTH = 280
-const SIDEBAR_MAX_RATIO = 0.25
+const SIDEBAR_DEFAULT_WIDTH = 360
+const SIDEBAR_MAX_RATIO = 0.4
 const WATCH_DEFAULT_HEIGHT = 180
 
 function getSidebarMaxWidth(): number {
@@ -339,11 +339,11 @@ export default function MonitorPage() {
             )}
           </div>
 
-          {/* 底部 Watch 面板 */}
-          <div style={{ height: watchHeight }} className="flex flex-col border-t border-border">
-            <WatchPanel uid={uid} />
+          {/* 底部 Watch 面板（折叠时高度为 0，向下收起露出全部波形图） */}
+          <div style={{ height: watchHeight }} className="flex flex-col border-t border-border overflow-hidden">
+            {watchHeight > 0 && <WatchPanel uid={uid} onCollapse={() => setWatchHeight(0)} />}
           </div>
-          {/* Watch 拖拽手柄 */}
+          {/* Watch 面板收起后的展开按钮 */}
           {watchHeight === 0 && (
             <button
               className="flex h-5 items-center justify-center border-t border-border text-[10px] text-muted-foreground hover:bg-muted/30"

@@ -339,6 +339,43 @@ export function WaveformChart({
     const plot = new uPlot(opts, [[]], containerRef.current)
     plotRef.current = plot
 
+    // ── 鼠标滚轮缩放（以鼠标位置为中心）──
+    // 默认：缩放 X 轴（时间）；按 Shift：缩放 Y 轴（值）
+    const onWheel = (e: WheelEvent) => {
+      const p = plotRef.current
+      if (!p) return
+      e.preventDefault()
+      const zoomFactor = e.deltaY < 0 ? 0.8 : 1.25 // 向上滚缩小（放大视图），向下滚放大（缩小视图）
+
+      if (e.shiftKey) {
+        // 缩放 Y 轴，以鼠标 Y 位置为中心
+        const yScale = p.scales.y
+        if (yScale && yScale.min !== undefined && yScale.max !== undefined) {
+          const mouseVal = p.posToVal(e.offsetY, 'y')
+          const range = yScale.max - yScale.min
+          const newRange = range * zoomFactor
+          const ratio = (mouseVal - yScale.min) / range
+          const newMin = mouseVal - newRange * ratio
+          const newMax = mouseVal + newRange * (1 - ratio)
+          p.setScale('y', { min: newMin, max: newMax })
+        }
+      } else {
+        // 缩放 X 轴（时间），以鼠标 X 位置为中心
+        const xScale = p.scales.x
+        if (xScale && xScale.min !== undefined && xScale.max !== undefined) {
+          const mouseVal = p.posToVal(e.offsetX, 'x')
+          const range = xScale.max - xScale.min
+          const newRange = range * zoomFactor
+          const ratio = (mouseVal - xScale.min) / range
+          const newMin = mouseVal - newRange * ratio
+          const newMax = mouseVal + newRange * (1 - ratio)
+          p.setScale('x', { min: newMin, max: newMax })
+        }
+      }
+    }
+    const wheelTarget = containerRef.current
+    if (wheelTarget) wheelTarget.addEventListener('wheel', onWheel, { passive: false })
+
     // ResizeObserver 监听容器大小变化
     const resizeObserver = new ResizeObserver(() => {
       if (containerRef.current && plotRef.current) {
@@ -351,6 +388,7 @@ export function WaveformChart({
     resizeObserver.observe(containerRef.current)
 
     return () => {
+      if (wheelTarget) wheelTarget.removeEventListener('wheel', onWheel)
       resizeObserver.disconnect()
       plot.destroy()
       plotRef.current = null

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Trash2, ChevronDown, ChevronUp } from 'lucide-react'
+import { Trash2 } from 'lucide-react'
 import { useMonitorStore } from '@/stores/monitor.store'
 import { useNotificationStore } from '@/stores/notification.store'
 import { monitorService } from '@/services/monitor.service'
@@ -7,6 +7,8 @@ import { cn } from '@/lib/utils'
 
 interface Props {
   uid: string | null
+  /** 收起 Watch 面板（高度置 0，露出全部波形图） */
+  onCollapse?: () => void
 }
 
 /**
@@ -16,7 +18,7 @@ interface Props {
  * 其中 Min/Max/Moving Average/Y Resolution/Y Offset 属通道显示配置（ChannelConfig），
  * 可随变量配置一起持久化（JSON），与波形采样数据解耦。
  */
-export function WatchPanel({ uid }: Props) {
+export function WatchPanel({ uid, onCollapse }: Props) {
   const variables = useMonitorStore((s) => s.variables)
   const channels = useMonitorStore((s) => s.channels)
   const samples = useMonitorStore((s) => s.samples)
@@ -25,7 +27,6 @@ export function WatchPanel({ uid }: Props) {
   const setChannel = useMonitorStore((s) => s.setChannel)
   const pushNotification = useNotificationStore((s) => s.push)
 
-  const [collapsed, setCollapsed] = useState(false)
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
 
@@ -77,26 +78,20 @@ export function WatchPanel({ uid }: Props) {
     }
   }
 
-  if (collapsed) {
-    return (
-      <button
-        className="flex h-5 items-center justify-center border-t border-border text-[10px] text-muted-foreground hover:bg-muted/30"
-        onClick={() => setCollapsed(false)}
-      >
-        <ChevronUp className="size-3" /> Watch
-      </button>
-    )
-  }
-
   return (
     <div className="flex h-full flex-col">
-      {/* 标题栏 + 折叠 */}
-      <div
-        className="flex items-center justify-between border-b border-border bg-muted/30 px-2 py-1 cursor-pointer"
-        onClick={() => setCollapsed(true)}
-      >
+      {/* 标题栏 + 收起按钮 */}
+      <div className="flex items-center justify-between border-b border-border bg-muted/30 px-2 py-1">
         <span className="text-xs font-medium">Watch 监视面板</span>
-        <ChevronDown className="size-3 text-muted-foreground" />
+        {onCollapse && (
+          <button
+            className="text-muted-foreground hover:text-foreground text-[10px]"
+            onClick={onCollapse}
+            title="收起 Watch 面板（向下隐藏，露出波形图）"
+          >
+            ▼ 收起
+          </button>
+        )}
       </div>
 
       {/* 表格（列多，横向滚动） */}

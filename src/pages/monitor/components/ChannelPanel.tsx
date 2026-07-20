@@ -385,11 +385,11 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
     <div className="flex h-full flex-col">
       {/* ── 工具栏 ── */}
       <div className="border-b border-border p-2 space-y-2">
-        {/* 启动 + Follow（最上方）*/}
+        {/* 启动 + Follow（最上方，平均分布）*/}
         <div className="flex gap-1.5">
           <button
             className={cn(
-              'flex h-7 flex-[2] items-center justify-center gap-1 rounded text-[11px] font-medium transition-colors',
+              'flex h-7 flex-1 items-center justify-center gap-1 rounded text-[11px] font-medium transition-colors',
               running
                 ? 'bg-destructive/10 text-destructive hover:bg-destructive/20'
                 : 'bg-primary text-primary-foreground hover:bg-primary/90',
