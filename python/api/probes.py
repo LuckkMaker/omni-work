@@ -45,7 +45,13 @@ async def connect_probe(uid: str, req: ConnectRequest | None = None):
     speed = req.speed if req else None
     success = backend.connect(uid, target=target, interface=interface, speed=speed)
     if not success:
-        raise HTTPException(status_code=500, detail="Connection failed")
+        # 获取后端存储的具体错误信息，避免丢失诊断细节
+        error_detail = "Connection failed"
+        with backend._lock:
+            session = backend._sessions.get(uid)
+            if session and session.error:
+                error_detail = session.error
+        raise HTTPException(status_code=500, detail=error_detail)
 
     target = backend.get_target_info(uid)
     return {

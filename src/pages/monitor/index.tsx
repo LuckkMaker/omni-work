@@ -43,6 +43,7 @@ export default function MonitorPage() {
   const setStarting = useMonitorStore((s) => s.setStarting)
   const setError = useMonitorStore((s) => s.setError)
   const setRateHz = useMonitorStore((s) => s.setRateHz)
+  const setActualRateHz = useMonitorStore((s) => s.setActualRateHz)
   const appendSamples = useMonitorStore((s) => s.appendSamples)
   const clearSamples = useMonitorStore((s) => s.clearSamples)
 
@@ -61,11 +62,23 @@ export default function MonitorPage() {
       setRunning(st.running)
       setPaused(st.paused)
       if (st.rate_hz > 0) setRateHz(st.rate_hz)
+      if (st.actual_rate_hz !== undefined) setActualRateHz(st.actual_rate_hz)
     }).catch(() => { /* ignore */ })
     monitorService.getVariables(uid).then((res) => {
       useMonitorStore.getState().setVariables(res.variables)
     }).catch(() => { /* ignore */ })
-  }, [uid, setRunning, setPaused, setRateHz])
+  }, [uid, setRunning, setPaused, setRateHz, setActualRateHz])
+
+  // ── 运行中定期刷新实际采样率 ──
+  useEffect(() => {
+    if (!uid || !running) return
+    const timer = setInterval(() => {
+      monitorService.status(uid).then((st) => {
+        if (st.actual_rate_hz !== undefined) setActualRateHz(st.actual_rate_hz)
+      }).catch(() => { /* ignore */ })
+    }, 2000)
+    return () => clearInterval(timer)
+  }, [uid, running, setActualRateHz])
 
   // ── WebSocket 事件订阅 ──
   useEffect(() => {
@@ -295,7 +308,7 @@ export default function MonitorPage() {
                   </div>
                 </div>
                 {/* uPlot 波形图 */}
-                <div className="min-h-0 flex-1 rounded border border-border bg-background">
+                <div className="min-h-0 flex-1 overflow-hidden rounded border border-border bg-background">
                   <WaveformChart
                     variables={variables}
                     channels={channels}

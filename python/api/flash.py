@@ -47,6 +47,12 @@ class ReadBackRequest(BaseModel):
     output_path: str = ""
 
 
+class FillMemoryRequest(BaseModel):
+    address: int
+    size: int
+    value: int = 0xFF  # 填充字节 (0-255)
+
+
 @router.post("/probes/{uid}/flash/erase")
 async def erase_flash(uid: str, req: EraseRequest):
     """擦除 Flash"""
@@ -105,3 +111,14 @@ async def cancel_flash_operation(uid: str):
     """取消正在进行的 Flash 操作"""
     backend.cancel_operation()
     return {"success": True}
+
+
+@router.post("/probes/{uid}/flash/fill")
+async def fill_memory(uid: str, req: FillMemoryRequest):
+    """填充内存区域（支持 Flash 和 RAM）"""
+    with monitor_backend.pause_during(uid):
+        result = await asyncio.to_thread(
+            backend.fill_memory, uid, req.address, req.size, req.value
+        )
+    event_manager.emit("flash.complete", result.__dict__)
+    return result.__dict__

@@ -39,6 +39,7 @@ interface MonitorState {
   starting: boolean
   error: string | null
   rateHz: number
+  actualRateHz: number  // 实际采样率（由后端统计，用于诊断 HSS 性能）
   transport: 'swd' | 'rtt'
 
   // ── ELF ──
@@ -115,6 +116,7 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
   starting: false,
   error: null,
   rateHz: 1000,
+  actualRateHz: 0,
   transport: 'swd',
 
   elfPath: null,
@@ -136,6 +138,7 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
   setStarting: (starting) => set({ starting }),
   setError: (error) => set({ error }),
   setRateHz: (hz) => set({ rateHz: hz }),
+  setActualRateHz: (hz) => set({ actualRateHz: hz }),
   setTransport: (t) => set({ transport: t }),
   setFollow: (on) => set({ follow: on }),
   setTimebase: (t) => set({ timebase: t }),

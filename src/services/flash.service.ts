@@ -116,3 +116,19 @@ export async function cancelOperation(uid: string): Promise<{ success: boolean }
   const { data } = await client.post(`/api/probes/${uid}/flash/cancel`)
   return data
 }
+
+/** 填充内存区域（支持 Flash 和 RAM） */
+export async function fillMemory(
+  uid: string,
+  address: number,
+  size: number,
+  value: number = 0xFF
+): Promise<FlashResult> {
+  const client = await api()
+  const { data: result } = await client.post(`/api/probes/${uid}/flash/fill`, {
+    address,
+    size,
+    value,
+  }, { timeout: 0 })
+  return result as FlashResult
+}

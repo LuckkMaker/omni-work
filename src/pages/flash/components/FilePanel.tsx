@@ -82,7 +82,7 @@ export function FilePanel() {
               </label>
               <label className="flex items-center gap-1 cursor-pointer">
                 <input type="checkbox" checked={resetAfter} onChange={(e) => setOption('resetAfter', e.target.checked)} className="size-3 rounded border-border accent-primary" />
-                <span>复位</span>
+                <span>复位和运行</span>
               </label>
             </div>
 

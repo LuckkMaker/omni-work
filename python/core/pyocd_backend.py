@@ -139,9 +139,25 @@ class PyOCDBackend(BackendInterface):
             if existing and existing.state == ProbeState.CONNECTED:
                 return True
 
+            # 提取旧会话对象（可能来自之前失败的连接）
+            # 旧会话可能持有 USB 句柄，必须先释放才能重新连接
+            old_session = existing.session if existing else None
+
             # 创建或更新会话记录
             session_info = ProbeSession(uid=probe_uid, state=ProbeState.CONNECTING)
             self._sessions[probe_uid] = session_info
+
+        # 在锁外关闭旧会话（session.close() 可能耗时，避免阻塞其他探针操作）
+        # 这是修复 JTAG 失败后 SWD 无法重连的关键步骤：
+        # 即使旧会话的 session 字段为 None（_do_connect 中已关闭），
+        # 也要清理可能残留的旧 session 对象。
+        if old_session is not None:
+            try:
+                old_session.options.set('resume_on_disconnect', False)
+                old_session.close()
+                event_manager.log("info", f"Closed stale session for {probe_uid[:16]} before reconnect")
+            except Exception:
+                pass
 
         event_manager.log("info", f"Connecting to probe {probe_uid[:16]}...")
 
@@ -184,8 +200,19 @@ class PyOCDBackend(BackendInterface):
             )
             if sess is None:
                 return None
-            sess.open()
-            return sess
+            try:
+                sess.open()
+                return sess
+            except Exception:
+                # 连接失败时必须关闭 session，释放 USB 句柄。
+                # 否则探针会被锁定，后续重连（如 JTAG 失败后切换 SWD）
+                # 会因探针被占用而失败，只能物理拔插。
+                try:
+                    sess.options.set('resume_on_disconnect', False)
+                    sess.close()
+                except Exception:
+                    pass
+                raise
 
         session = None
         last_error = None
@@ -1007,6 +1034,75 @@ class PyOCDBackend(BackendInterface):
                     if data:
                         segments.append((section.header.sh_addr, data))
         return segments
+
+    def fill_memory(
+        self,
+        probe_uid: str,
+        address: int,
+        size: int,
+        value: int = 0xFF,
+    ) -> FlashResult:
+        """填充内存区域（支持 Flash 和 RAM）
+
+        Args:
+            address: 起始地址
+            size: 填充字节数
+            value: 填充字节值 (0-255)
+        """
+        session = self._get_session(probe_uid)
+        if not session:
+            return FlashResult(success=False, error="Not connected")
+
+        if size <= 0:
+            return FlashResult(success=False, error="Size must be positive")
+        if not (0 <= value <= 255):
+            return FlashResult(success=False, error="Value must be 0-255")
+
+        start_time = time.time()
+        try:
+            data = bytes([value]) * size
+
+            # 判断目标地址是 Flash 还是 RAM
+            region = session.target.memory_map.get_region_for_address(address)
+            if region and region.is_flash:
+                # Flash：使用 FlashLoader（自动处理擦除+编程）
+                from pyocd.flash.flash_loader import FlashLoader
+                event_manager.log("info", f"Filling flash 0x{address:08X}..0x{address + size - 1:08X} with 0x{value:02X}")
+
+                # 分块处理（避免大块内存占用）
+                CHUNK_SIZE = 0x10000  # 64KB
+                loader = FlashLoader(session.target)
+                for offset in range(0, size, CHUNK_SIZE):
+                    chunk = data[offset:offset + CHUNK_SIZE]
+                    loader.add_data(address + offset, chunk)
+                    event_manager.emit("flash.progress", {
+                        "phase": "fill",
+                        "current": offset + len(chunk),
+                        "total": size,
+                        "percent": round((offset + len(chunk)) / size * 100, 2),
+                    })
+                loader.commit()
+            else:
+                # RAM：直接写入
+                event_manager.log("info", f"Filling RAM 0x{address:08X}..0x{address + size - 1:08X} with 0x{value:02X}")
+                CHUNK_SIZE = 0x10000  # 64KB
+                for offset in range(0, size, CHUNK_SIZE):
+                    chunk = data[offset:offset + CHUNK_SIZE]
+                    session.target.write_memory_block8(address + offset, chunk)
+                    event_manager.emit("flash.progress", {
+                        "phase": "fill",
+                        "current": offset + len(chunk),
+                        "total": size,
+                        "percent": round((offset + len(chunk)) / size * 100, 2),
+                    })
+
+            duration = int((time.time() - start_time) * 1000)
+            event_manager.log("info", f"Fill done in {duration}ms ({size / 1024:.1f} KB)")
+            return FlashResult(success=True, bytes_written=size, duration_ms=duration)
+        except Exception as e:
+            logger.exception("Fill memory failed")
+            event_manager.log("error", f"Fill memory failed: {e}")
+            return FlashResult(success=False, error=str(e))
 
     def check_blank(
         self,

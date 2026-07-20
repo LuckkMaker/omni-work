@@ -164,6 +164,7 @@ export function StatusBar() {
   // Monitor 统计信息（运行时显示）
   const monRunning = useMonitorStore((s) => s.running)
   const monRateHz = useMonitorStore((s) => s.rateHz)
+  const monActualRateHz = useMonitorStore((s) => s.actualRateHz)
   const monVarCount = useMonitorStore((s) => s.variables.length)
   const monSampleCount = useMonitorStore((s) => s.samples.length)
   const monTransport = useMonitorStore((s) => s.transport)
@@ -272,8 +273,13 @@ export function StatusBar() {
             <div className="flex items-center gap-1 px-2" title={`采样模式：${monTransport === 'rtt' ? 'RTT 同步' : 'HSS 异步'}`}>
               <span className="text-white/60 text-[10px]">{monTransport === 'rtt' ? 'RTT' : 'HSS'}</span>
             </div>
-            <div className="flex items-center gap-1 px-2" title={`采样率：${monRateHz} Hz`}>
+            <div className="flex items-center gap-1 px-2" title={`采样率：${monRateHz} Hz（实际 ${monActualRateHz.toFixed(1)} Hz）`}>
               <span className="text-white/60 text-[10px]">{monRateHz >= 1000 ? `${monRateHz / 1000}kHz` : `${monRateHz}Hz`}</span>
+              {monActualRateHz > 0 && monActualRateHz < monRateHz * 0.8 && (
+                <span className="text-amber-300 text-[10px]" title="实际采样率低于设定值，HSS 模式可能受 SWD 带宽限制">
+                  (实际{monActualRateHz >= 1000 ? `${(monActualRateHz / 1000).toFixed(1)}kHz` : `${monActualRateHz.toFixed(0)}Hz`})
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-1 px-2" title={`监视变量：${monVarCount}`}>
               <span className="text-white/60 text-[10px]">{monVarCount} vars</span>
@@ -287,10 +293,6 @@ export function StatusBar() {
 
       {/* 右侧：版本号 + 铃铛 */}
       <div className="flex items-center">
-        {/* 应用版本号（构建期注入） */}
-        <span className="text-white/40 text-[10px] font-mono px-2 select-none" title={`OMNI Work v${__APP_VERSION__}`}>
-          v{__APP_VERSION__}
-        </span>
 
         {/* 通知计数 */}
         <div className="relative">

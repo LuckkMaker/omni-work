@@ -33,7 +33,7 @@ export default function MainLayout() {
   useProbeWs(port)
   useRttSession()  // 全局 RTT 会话管理（切换页面不停止）
 
-  const { fetchProbes, fetchTargets, error, clearError } = useProbeStore()
+  const { fetchProbes, fetchTargets } = useProbeStore()
   const location = useLocation()
   const isToolsActive = location.pathname.startsWith('/tools')
   const [toolsExpanded, setToolsExpanded] = useState(isToolsActive)
@@ -156,20 +156,6 @@ export default function MainLayout() {
           <div className="shrink-0 max-h-[45%] overflow-y-auto border-t border-border">
             <InfoPanel />
           </div>
-
-          {error && (
-            <div className="border-t border-border p-2">
-              <div className="flex items-center justify-between rounded-md border border-destructive/50 px-2 py-1.5">
-                <span className="truncate text-xs text-destructive">{error}</span>
-                <button
-                  className="shrink-0 text-xs text-destructive/70 hover:text-destructive"
-                  onClick={clearError}
-                >
-                  ✕
-                </button>
-              </div>
-            </div>
-          )}
         </aside>
         <main className="relative flex-1 overflow-auto">
           {/* 非 Commander 页面：正常路由渲染 */}

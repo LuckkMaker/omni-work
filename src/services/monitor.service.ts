@@ -56,6 +56,7 @@ export interface MonitorStatus {
   paused: boolean
   connected: boolean
   rate_hz: number
+  actual_rate_hz?: number
   variable_count: number
   elf_loaded: boolean
   buffer_size: number

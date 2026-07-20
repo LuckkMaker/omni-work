@@ -3,6 +3,7 @@ import type { ProbeWithState, TargetInfo, DeviceInfo } from '@shared/types'
 import * as probeService from '@/services/probe.service'
 import { listTargets } from '@/services/target.service'
 import { listDevices } from '@/services/device.service'
+import { useNotificationStore } from './notification.store'
 
 /** 调试接口类型 */
 export type DebugInterface = 'swd' | 'jtag'
@@ -129,9 +130,14 @@ export const useProbeStore = create<ProbeStore>((set, get) => ({
         : probes.length > 0 ? probes[0].uid : null
       set({ probes, selectedUid: autoUid, loadingProbes: false })
     } catch (err) {
-      set({
-        loadingProbes: false,
-        error: err instanceof Error ? err.message : '获取仿真器列表失败',
+      const msg = err instanceof Error ? err.message : '获取仿真器列表失败'
+      set({ loadingProbes: false, error: msg })
+      useNotificationStore.getState().push({
+        type: 'error',
+        title: '获取仿真器列表失败',
+        message: msg,
+        autoClose: true,
+        autoCloseDelay: 5000,
       })
     }
   },
@@ -197,13 +203,21 @@ export const useProbeStore = create<ProbeStore>((set, get) => ({
         get().fetchDevices()
       }
     } catch (err) {
+      const msg = err instanceof Error ? err.message : '连接仿真器失败'
       set((state) => ({
         probes: state.probes.map((p) =>
           p.uid === uid ? { ...p, state: 'error' as const } : p
         ),
         connecting: false,
-        error: err instanceof Error ? err.message : '连接仿真器失败',
+        error: msg,
       }))
+      useNotificationStore.getState().push({
+        type: 'error',
+        title: '连接失败',
+        message: msg,
+        autoClose: true,
+        autoCloseDelay: 8000,
+      })
     }
   },
 
@@ -220,9 +234,14 @@ export const useProbeStore = create<ProbeStore>((set, get) => ({
         connecting: false,
       }))
     } catch (err) {
-      set({
-        connecting: false,
-        error: err instanceof Error ? err.message : '断开仿真器失败',
+      const msg = err instanceof Error ? err.message : '断开仿真器失败'
+      set({ connecting: false, error: msg })
+      useNotificationStore.getState().push({
+        type: 'error',
+        title: '断开仿真器失败',
+        message: msg,
+        autoClose: true,
+        autoCloseDelay: 5000,
       })
     }
   },
@@ -242,9 +261,14 @@ export const useProbeStore = create<ProbeStore>((set, get) => ({
         connecting: false,
       }))
     } catch (err) {
-      set({
-        connecting: false,
-        error: err instanceof Error ? err.message : '设置目标芯片失败',
+      const msg = err instanceof Error ? err.message : '设置目标芯片失败'
+      set({ connecting: false, error: msg })
+      useNotificationStore.getState().push({
+        type: 'error',
+        title: '设置目标芯片失败',
+        message: msg,
+        autoClose: true,
+        autoCloseDelay: 5000,
       })
     }
   },

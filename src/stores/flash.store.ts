@@ -148,6 +148,7 @@ interface FlashStore {
   doReadBackSelectedSectors: () => Promise<void>
   doStartApp: () => Promise<void>
   doReset: () => Promise<void>
+  doFillMemory: (address: number, size: number, value: number) => Promise<void>
   cancelOperation: () => Promise<void>
   doCompare: (filePath: string) => Promise<void>
 
@@ -183,7 +184,7 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
 
   eraseBefore: true,
   verifyAfter: true,
-  resetAfter: true,
+  resetAfter: false,
 
   logs: [],
 
@@ -505,6 +506,18 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
       const result = await flashService.resetTarget(uid, 'hw', false)
       return { success: result.success }
     }, () => '目标已复位')
+  },
+
+  doFillMemory: async (address, size, value) => {
+    const uid = useProbeStore.getState().selectedUid
+    if (!uid) return
+    const addrStr = formatHex(address)
+    const endStr = formatHex(address + size - 1)
+    const valStr = `0x${value.toString(16).toUpperCase().padStart(2, '0')}`
+    await wrapOperation(set, get, '填充内存', `正在填充 ${addrStr}..${endStr} (${valStr})...`, async () => {
+      const result = await flashService.fillMemory(uid, address, size, value)
+      return { success: result.success, bytes_written: result.bytes_written ?? 0, duration_ms: result.duration_ms ?? 0, error: result.error }
+    }, (r) => `填充 ${formatSize(r.bytes_written)} · 耗时 ${(r.duration_ms / 1000).toFixed(2)}s`)
   },
 
   cancelOperation: async () => {

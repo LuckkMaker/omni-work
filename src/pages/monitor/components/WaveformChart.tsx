@@ -275,11 +275,11 @@ export function WaveformChart({
       ],
       axes: [
         {
-          label: windowSec < 0.001 ? '时间 (μs)' : windowSec < 1 ? '时间 (ms)' : '时间 (s)',
+          label: windowSec < 0.001 ? 'Time (μs)' : windowSec < 1 ? 'Time (ms)' : 'Time (s)',
           space: 60,
         },
         {
-          label: '值',
+          label: 'Value',
           space: 50,
         },
       ],

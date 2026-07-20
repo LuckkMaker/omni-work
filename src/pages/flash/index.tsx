@@ -9,6 +9,7 @@ import {
   ScanSearch,
   ChevronDown,
   ShieldCheck,
+  PaintBucket,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -18,6 +19,15 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Separator } from '@/components/ui/separator'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { FilePanel } from './components/FilePanel'
 import { BinAddressDialog } from './components/BinAddressDialog'
 import { ReadBackRangeDialog } from './components/ReadBackRangeDialog'
@@ -45,8 +55,15 @@ export default function FlashPage() {
     doReadBackSelectedSectors,
     doStartApp,
     doReset,
+    doFillMemory,
     setShowReadBackRangeDialog,
   } = useFlashStore()
+
+  // 填充内存对话框状态
+  const [showFillDialog, setShowFillDialog] = useState(false)
+  const [fillAddress, setFillAddress] = useState('0x08000000')
+  const [fillSize, setFillSize] = useState('4096')
+  const [fillValue, setFillValue] = useState('0xFF')
 
   const selectedProbe = useProbeStore((s) => {
     const uid = s.selectedUid
@@ -161,6 +178,13 @@ export default function FlashPage() {
           <ScanSearch className="size-3.5" />
           Check Blank
         </Button>
+
+        <Separator orientation="vertical" className="mx-1 h-5" />
+
+        <Button variant="ghost" size="sm" disabled={!isConnected || busy} onClick={() => setShowFillDialog(true)} className="h-8 gap-1.5">
+          <PaintBucket className="size-3.5" />
+          Fill Memory
+        </Button>
       </div>
 
       {/* 中间：文件区域（全宽） */}
@@ -187,6 +211,57 @@ export default function FlashPage() {
       <BinAddressDialog />
       <ReadBackRangeDialog />
       <CompareDialog />
+
+      {/* 填充内存对话框 */}
+      <Dialog open={showFillDialog} onOpenChange={setShowFillDialog}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>填充内存</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs">起始地址</Label>
+              <Input
+                className="font-mono text-sm"
+                value={fillAddress}
+                onChange={(e) => setFillAddress(e.target.value)}
+                placeholder="0x08000000"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">大小 (字节)</Label>
+              <Input
+                className="font-mono text-sm"
+                value={fillSize}
+                onChange={(e) => setFillSize(e.target.value)}
+                placeholder="4096"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">填充值</Label>
+              <Input
+                className="font-mono text-sm"
+                value={fillValue}
+                onChange={(e) => setFillValue(e.target.value)}
+                placeholder="0xFF"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setShowFillDialog(false)}>取消</Button>
+            <Button onClick={() => {
+              const addr = parseInt(fillAddress, fillAddress.startsWith('0x') ? 16 : 10)
+              const sz = parseInt(fillSize, fillSize.startsWith('0x') ? 16 : 10)
+              const val = parseInt(fillValue, fillValue.startsWith('0x') ? 16 : 10)
+              if (isNaN(addr) || isNaN(sz) || isNaN(val) || sz <= 0 || val < 0 || val > 255) return
+              setShowFillDialog(false)
+              doFillMemory(addr, sz, val)
+            }}>
+              填充
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

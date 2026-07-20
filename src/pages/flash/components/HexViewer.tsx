@@ -33,7 +33,8 @@ function decodeBase64(base64: string): Uint8Array {
 }
 
 function formatHexAddr(addr: number): string {
-  return `0x${addr.toString(16).toUpperCase().padStart(8, '0')}`
+  const hex = addr.toString(16).toUpperCase().padStart(8, '0')
+  return `0x${hex.slice(0, 4)}_${hex.slice(4)}`
 }
 
 const HEX_CHARS = '0123456789ABCDEF'
@@ -144,10 +145,22 @@ export function HexToolbar({
   )
 }
 
+interface HexCell {
+  hex: string
+  diff: boolean
+}
+
+interface HexGroup {
+  /** 该组的字节宽度（1/2/4），用于确定显示哪些组 */
+  width: ByteWidth
+  cells: HexCell[]
+}
+
 interface VirtualRow {
   offset: number
   addr: string
-  bytes: { hex: string; ascii: string; diff: boolean }[]
+  groups: HexGroup[]
+  ascii: { ch: string; diff: boolean }[]
 }
 
 export function HexViewer({ base64Data, baseAddress, byteWidth, diffBase64, diffBaseAddress, onScrollSync, syncScrollTop }: HexViewerProps) {
@@ -158,7 +171,8 @@ export function HexViewer({ base64Data, baseAddress, byteWidth, diffBase64, diff
   const onScrollSyncRef = useRef(onScrollSync)
   onScrollSyncRef.current = onScrollSync
 
-  const bytesPerRow = 16 / byteWidth
+  // 每行固定 8 字节，byteWidth 控制显示哪些分组视图（1B/2B/4B）
+  const bytesPerRow = 8
 
   const data = useMemo(() => decodeBase64(base64Data), [base64Data])
   const diffData = useMemo(() => diffBase64 ? decodeBase64(diffBase64) : null, [diffBase64])
@@ -188,49 +202,76 @@ export function HexViewer({ base64Data, baseAddress, byteWidth, diffBase64, diff
   const visibleRows = useMemo<VirtualRow[]>(() => {
     if (data.length === 0) return []
     const result: VirtualRow[] = []
-    for (let rowIdx = visibleStart; rowIdx < visibleEnd; rowIdx++) {
-      const offset = rowIdx * bytesPerRow
-      const byteCells: { hex: string; ascii: string; diff: boolean }[] = []
-      for (let i = 0; i < bytesPerRow; i++) {
-        const pos = offset + i * byteWidth
-        if (pos + byteWidth <= data.length) {
+
+    // 辅助函数：检查指定字节范围内是否有 diff
+    const checkDiff = (pos: number, width: number): boolean => {
+      if (!diffData) return false
+      for (let j = 0; j < width; j++) {
+        const refOffset = (baseAddress + pos + j) - (diffBaseAddress ?? baseAddress)
+        if (refOffset < 0 || refOffset >= diffData.length) return true
+        if (data[pos + j] !== diffData[refOffset]) return true
+      }
+      return false
+    }
+
+    // 辅助函数：生成一个组的 cells（offset 作为参数传入，避免闭包作用域问题）
+    const buildGroup = (width: ByteWidth, offset: number): HexGroup => {
+      const cellCount = bytesPerRow / width // 1B:8, 2B:4, 4B:2
+      const cells: HexCell[] = []
+      for (let i = 0; i < cellCount; i++) {
+        const pos = offset + i * width
+        if (pos + width <= data.length) {
           let hex: string
-          let ascii: string
-          if (byteWidth === 1) {
+          if (width === 1) {
             hex = byteToHex(data[pos])
-            ascii = byteToAscii(data[pos])
-          } else if (byteWidth === 2) {
+          } else if (width === 2) {
             hex = wordToHex(readLeU16(data, pos), 2)
-            ascii = byteToAscii(data[pos]) + byteToAscii(data[pos + 1])
           } else {
             hex = wordToHex(readLeU32(data, pos), 4)
-            ascii = byteToAscii(data[pos]) + byteToAscii(data[pos + 1]) + byteToAscii(data[pos + 2]) + byteToAscii(data[pos + 3])
           }
-          // 检查这个 word 内是否有任何字节不同
-          let diff = false
-          if (diffData) {
-            for (let j = 0; j < byteWidth; j++) {
-              const refOffset = (baseAddress + pos + j) - (diffBaseAddress ?? baseAddress)
-              if (refOffset < 0 || refOffset >= diffData.length) {
-                diff = true
-                break
-              }
-              if (data[pos + j] !== diffData[refOffset]) {
-                diff = true
-                break
-              }
-            }
-          }
-          byteCells.push({ hex, ascii, diff })
+          cells.push({ hex, diff: checkDiff(pos, width) })
         } else {
-          const hexLen = byteWidth === 1 ? 2 : byteWidth === 2 ? 4 : 8
-          byteCells.push({ hex: ' '.repeat(hexLen), ascii: ' '.repeat(byteWidth), diff: false })
+          cells.push({ hex: ' '.repeat(width * 2), diff: false })
         }
       }
+      return { width, cells }
+    }
+
+    for (let rowIdx = visibleStart; rowIdx < visibleEnd; rowIdx++) {
+      const offset = rowIdx * bytesPerRow
+
+      // 构建 ASCII 列（8 个字符，每个字节一个）
+      const ascii: { ch: string; diff: boolean }[] = []
+      for (let i = 0; i < bytesPerRow; i++) {
+        const pos = offset + i
+        if (pos < data.length) {
+          ascii.push({ ch: byteToAscii(data[pos]), diff: checkDiff(pos, 1) })
+        } else {
+          ascii.push({ ch: ' ', diff: false })
+        }
+      }
+
+      // 根据 byteWidth 决定显示哪些分组视图
+      // 1B: 显示 1B + 2B + 4B 三组（逗号分隔）
+      // 2B: 显示 2B + 4B 两组（逗号分隔）
+      // 4B: 只显示 4B 一组
+      const groups: HexGroup[] = []
+      if (byteWidth === 1) {
+        groups.push(buildGroup(1, offset))
+        groups.push(buildGroup(2, offset))
+        groups.push(buildGroup(4, offset))
+      } else if (byteWidth === 2) {
+        groups.push(buildGroup(2, offset))
+        groups.push(buildGroup(4, offset))
+      } else {
+        groups.push(buildGroup(4, offset))
+      }
+
       result.push({
         offset,
         addr: formatHexAddr(baseAddress + offset),
-        bytes: byteCells,
+        groups,
+        ascii,
       })
     }
     return result
@@ -313,26 +354,27 @@ export function HexViewer({ base64Data, baseAddress, byteWidth, diffBase64, diff
               )}
             >
               <span className="shrink-0 text-muted-foreground leading-5">{row.addr}</span>
-              {/* Hex bytes */}
-              <span className="shrink-0 flex leading-5">
-                {row.bytes.map((cell, i) => (
-                  <span key={i} className="flex">
-                    <span className={cn(cell.diff && 'bg-red-500/30 text-red-600 dark:text-red-400 rounded px-0.5')}>
-                      {cell.hex}
-                    </span>
-                    {/* 每个字节间加空格，中间加额外空格 */}
-                    <span>{' '}</span>
-                    {byteWidth === 1 && i === 7 && <span>{' '}</span>}
-                    {byteWidth === 2 && i === 3 && <span>{' '}</span>}
-                    {byteWidth === 4 && i === 1 && <span>{' '}</span>}
+              {/* Hex groups（逗号分隔的多组视图：1B/2B/4B） */}
+              <span className="shrink-0 flex items-center leading-5">
+                {row.groups.map((group, gi) => (
+                  <span key={gi} className="flex items-center">
+                    {gi > 0 && <span className="text-muted-foreground px-0.5">,</span>}
+                    {group.cells.map((cell, ci) => (
+                      <span key={ci} className="flex">
+                        {ci > 0 && <span>{' '}</span>}
+                        <span className={cn(cell.diff && 'bg-red-500/30 text-red-600 dark:text-red-400 rounded px-0.5')}>
+                          {cell.hex}
+                        </span>
+                      </span>
+                    ))}
                   </span>
                 ))}
               </span>
               {/* ASCII */}
               <span className="text-muted-foreground flex leading-5">
-                {row.bytes.map((cell, i) => (
-                  <span key={i} className={cn(cell.diff && 'bg-red-500/30 text-red-600 dark:text-red-400 rounded px-0.5')}>
-                    {cell.ascii}
+                {row.ascii.map((a, i) => (
+                  <span key={i} className={cn(a.diff && 'bg-red-500/30 text-red-600 dark:text-red-400 rounded px-0.5')}>
+                    {a.ch}
                   </span>
                 ))}
               </span>

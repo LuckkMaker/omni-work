@@ -114,6 +114,11 @@ class MonitorBackend:
         self._locks: dict[str, threading.Lock] = {}
         # uid -> 采样率
         self._rate_hz: dict[str, float] = {}
+        # uid -> 实际采样率（每秒实际采样次数，用于诊断 HSS 性能瓶颈）
+        self._actual_rate_hz: dict[str, float] = {}
+        # uid -> 采样计数器与时间戳（用于计算 actual_rate）
+        self._sample_counter: dict[str, int] = {}
+        self._sample_counter_time: dict[str, float] = {}
         # uid -> RingBuffer
         self._ring_buffers: dict[str, RingBuffer] = {}
         # uid -> ELF 符号解码器（缓存）
@@ -167,6 +172,9 @@ class MonitorBackend:
                 self._stop_internal(uid)
 
             self._rate_hz[uid] = rate_hz
+            self._actual_rate_hz[uid] = 0.0
+            self._sample_counter[uid] = 0
+            self._sample_counter_time[uid] = time.monotonic()
             self._ring_buffers[uid] = RingBuffer(max_points)
             self._transport[uid] = transport
             running = threading.Event()
@@ -327,6 +335,17 @@ class MonitorBackend:
                     t_ms = (t0 - start_t) * 1000.0
                     sample = {"t_ms": t_ms, "values": values}
                     pending_samples.append(sample)
+
+                    # 更新实际采样率统计
+                    cnt = self._sample_counter.get(uid, 0) + 1
+                    self._sample_counter[uid] = cnt
+                    now = time.monotonic()
+                    last_t = self._sample_counter_time.get(uid, now)
+                    elapsed = now - last_t
+                    if elapsed >= 1.0:
+                        self._actual_rate_hz[uid] = cnt / elapsed
+                        self._sample_counter[uid] = 0
+                        self._sample_counter_time[uid] = now
 
                     # 写入 RingBuffer
                     rb = self._ring_buffers.get(uid)
@@ -1114,6 +1133,7 @@ class MonitorBackend:
             "paused": self.is_paused(uid),
             "connected": backend.is_connected(uid),
             "rate_hz": self._rate_hz.get(uid, 0),
+            "actual_rate_hz": round(self._actual_rate_hz.get(uid, 0.0), 1),
             "variable_count": len(self._variables.get(uid, [])),
             "elf_loaded": uid in self._elf_decoders,
             "buffer_size": len(self._ring_buffers.get(uid, RingBuffer(1))),

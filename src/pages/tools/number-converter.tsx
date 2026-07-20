@@ -112,6 +112,9 @@ export default function NumberConverter() {
             onChange={(e) => handleDecimalChange(e.target.value)}
             className="font-mono"
             placeholder="0"
+            spellCheck={false}
+            autoComplete="off"
+            autoCorrect="off"
           />
         </div>
         <div className="space-y-1.5">
@@ -121,6 +124,9 @@ export default function NumberConverter() {
             onChange={(e) => handleHexChange(e.target.value)}
             className="font-mono"
             placeholder="0x0"
+            spellCheck={false}
+            autoComplete="off"
+            autoCorrect="off"
           />
         </div>
         <div className="space-y-1.5">
@@ -130,6 +136,9 @@ export default function NumberConverter() {
             onChange={(e) => handleBinaryChange(e.target.value)}
             className="font-mono"
             placeholder="0"
+            spellCheck={false}
+            autoComplete="off"
+            autoCorrect="off"
           />
         </div>
       </div>
