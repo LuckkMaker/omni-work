@@ -24,6 +24,9 @@ class AddVariableRequest(BaseModel):
     type: str                          # int8/uint8/int16/uint16/int32/uint32/float
     remark: str = ""
     refresh_sec: float = 0
+    # 数组元素索引。传入时实际地址 = address + elem_index * elem_size，
+    # 监视变量名变为 name[elem_index]，type/size 用元素类型/大小。
+    elem_index: Optional[int] = None
 
 
 class WriteVariableRequest(BaseModel):
@@ -33,7 +36,7 @@ class WriteVariableRequest(BaseModel):
 class StartSamplingRequest(BaseModel):
     rate_hz: float = 1000.0
     max_points: int = 100000
-    transport: str = "swd"             # swd | rtt（rtt 留待 5.4 实现）
+    transport: str = "swd"             # swd | rtt
 
 
 # ── 状态 ──────────────────────────────────────────────
@@ -77,7 +80,7 @@ def list_variables(uid: str):
 def add_variable(uid: str, req: AddVariableRequest):
     """添加监视变量"""
     result = monitor_backend.add_variable(
-        uid, req.name, req.address, req.type, req.remark, req.refresh_sec
+        uid, req.name, req.address, req.type, req.remark, req.refresh_sec, req.elem_index
     )
     if not result["success"]:
         raise HTTPException(status_code=400, detail=result.get("error", "Add variable failed"))

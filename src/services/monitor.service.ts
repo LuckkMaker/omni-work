@@ -18,12 +18,25 @@ export interface MonitorVariable {
   refresh_sec: number
 }
 
-/** ELF 符号（变量/函数） */
+/** ELF 符号（变量/函数）
+ *
+ *  数组符号：is_array=true，elem_type/elem_count/elem_size 描述元素信息。
+ *  非数组：is_array=false，elem_count=1，elem_size=size，elem_type=type。
+ *  type 字段：数组时为元素类型，非数组为变量类型（向后兼容）。
+ */
 export interface MonitorSymbol {
   name: string
   address: number
   size: number
   type: MonitorVarType
+  /** 是否数组 */
+  is_array: boolean
+  /** 元素数据类型（数组时为元素类型，非数组等于 type） */
+  elem_type: MonitorVarType
+  /** 数组元素个数（非数组为 1） */
+  elem_count: number
+  /** 元素字节数（非数组等于 size） */
+  elem_size: number
 }
 
 /** 符号查询结果（分页） */
@@ -99,10 +112,22 @@ export const monitorService = {
     return data
   },
 
-  /** 添加监视变量 */
+  /** 添加监视变量
+   *
+   *  elem_index：数组元素索引（可选）。传入时后端按 address + elem_index*elem_size
+   *  计算实际地址，变量名变为 name[elem_index]，类型/大小用元素信息。
+   *  非数组符号不传此参数。
+   */
   async addVariable(
     uid: string,
-    params: { name: string; address: number; type: MonitorVarType; remark?: string; refresh_sec?: number }
+    params: {
+      name: string
+      address: number
+      type: MonitorVarType
+      remark?: string
+      refresh_sec?: number
+      elem_index?: number
+    }
   ): Promise<{ success: boolean; variable: MonitorVariable }> {
     const client = await api()
     const { data } = await client.post(`/api/probes/${uid}/monitor/variables`, params)

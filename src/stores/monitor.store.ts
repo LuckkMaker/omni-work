@@ -4,7 +4,13 @@ import type { MonitorVariable, SamplePoint } from '@/services/monitor.service'
 /** 前端 ring buffer 容量上限（与后端对齐，5.2 阶段 uPlot 渲染用） */
 const MAX_SAMPLES = 100000
 
-/** 通道配置（5.2 阶段波形渲染用） */
+/** 通道配置（5.2 阶段波形渲染用）
+ *
+ *  min/max：用户设定的 Y 轴量程（用于固定量程模式，区别于 Follow 自适应）。
+ *  movingAverage：是否启用滑动平均滤波。
+ *  yResolution：Y 轴分辨率（每个刻度代表的数值大小，用于网格标注）。
+ *  这些字段属于通道显示配置，可随变量配置一起持久化（JSON）。
+ */
 export interface ChannelConfig {
   varId: string
   color: string
@@ -12,6 +18,14 @@ export interface ChannelConfig {
   yOffset: number
   yScale: number
   format: 'dec' | 'hex' | 'bin'
+  /** Y 轴最小值（固定量程模式，null 表示跟随自适应） */
+  min: number | null
+  /** Y 轴最大值（固定量程模式，null 表示跟随自适应） */
+  max: number | null
+  /** 是否启用滑动平均 */
+  movingAverage: boolean
+  /** Y 轴分辨率（每格代表的数值，0 表示自动） */
+  yResolution: number
 }
 
 interface MonitorState {
@@ -76,6 +90,10 @@ function makeChannel(varId: string, index: number): ChannelConfig {
     yOffset: 0,
     yScale: 1,
     format: 'dec',
+    min: null,
+    max: null,
+    movingAverage: false,
+    yResolution: 0,
   }
 }
 

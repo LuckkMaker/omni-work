@@ -1,14 +1,14 @@
 import { useEffect, useState, useCallback, useRef } from 'react'
-import { Activity, Play, Square, Search, Gauge, Download, X } from 'lucide-react'
+import { Activity, Play, Square, Gauge, Download, X } from 'lucide-react'
 import { useProbeStore } from '@/stores/probe.store'
 import { useMonitorStore } from '@/stores/monitor.store'
 import { useNotificationStore } from '@/stores/notification.store'
 import { monitorService, type SamplePoint } from '@/services/monitor.service'
 import { wsClient } from '@/services/ws'
-import { VariableBrowserDialog } from './components/VariableBrowserDialog'
 import { ChannelPanel } from './components/ChannelPanel'
 import { WatchPanel } from './components/WatchPanel'
 import { WaveformChart, type CursorMeasurement } from './components/WaveformChart'
+import { ResizeHandle } from '@/components/LogConsole'
 import { cn } from '@/lib/utils'
 
 /** 采样率档位（Hz） */
@@ -64,7 +64,6 @@ export default function MonitorPage() {
   const pushNotification = useNotificationStore((s) => s.push)
   const updateNotification = useNotificationStore((s) => s.update)
 
-  const [showBrowser, setShowBrowser] = useState(false)
   const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH)
   const [watchHeight, setWatchHeight] = useState(WATCH_DEFAULT_HEIGHT)
   const [cursorMeasure, setCursorMeasure] = useState<CursorMeasurement | null>(null)
@@ -156,7 +155,7 @@ export default function MonitorPage() {
         pushNotification({
           type: 'warning',
           title: '请先添加监视变量',
-          message: '点击右侧"添加变量"按钮，从 ELF 选择变量',
+          message: '在右侧边栏加载 ELF 文件并选择变量',
           autoClose: true,
           autoCloseDelay: 4000,
         })
@@ -337,15 +336,10 @@ export default function MonitorPage() {
                 </p>
               </div>
             ) : variables.length === 0 ? (
-              <div className="flex h-full flex-col items-center justify-center gap-3">
-                <Search className="size-10 text-muted-foreground/40" />
+              <div className="flex h-full flex-col items-center justify-center gap-2">
+                <Activity className="size-10 text-muted-foreground/40" />
                 <p className="text-sm text-muted-foreground">尚未添加监视变量</p>
-                <button
-                  className="rounded border border-primary bg-primary/10 px-3 py-1.5 text-xs text-primary hover:bg-primary/20"
-                  onClick={() => setShowBrowser(true)}
-                >
-                  + 添加变量
-                </button>
+                <p className="text-xs text-muted-foreground/70">在右侧边栏加载 ELF 文件并选择变量</p>
               </div>
             ) : !running ? (
               <div className="flex h-full flex-col items-center justify-center gap-2">
@@ -442,52 +436,22 @@ export default function MonitorPage() {
           )}
         </div>
 
-        {/* 右侧边栏拖拽手柄 */}
-        {sidebarWidth > 0 && (
-          <div
-            className="w-1 cursor-col-resize bg-border hover:bg-primary/40"
-            onMouseDown={(e) => {
-              e.preventDefault()
-              const startX = e.clientX
-              const startW = sidebarWidth
-              const move = (ev: MouseEvent) => handleSidebarResize(startX - ev.clientX)
-              const up = () => {
-                window.removeEventListener('mousemove', move)
-                window.removeEventListener('mouseup', up)
-              }
-              window.addEventListener('mousemove', move)
-              window.addEventListener('mouseup', up)
-            }}
-          />
-        )}
+        {/* 水平拖拽分隔条（双击折叠/展开） */}
+        <ResizeHandle
+          direction="horizontal"
+          onResize={handleSidebarResize}
+          onToggle={handleToggleSidebar}
+          expanded={sidebarWidth > 0}
+        />
 
-        {/* 右：通道面板 */}
-        {sidebarWidth > 0 && (
-          <div style={{ width: sidebarWidth }} className="flex flex-col border-l border-border bg-background overflow-hidden">
-            <ChannelPanel
-              uid={uid}
-              onAddVariable={() => setShowBrowser(true)}
-            />
-          </div>
-        )}
-      </div>
-
-      {/* 侧边栏隐藏时的展开按钮 */}
-      {sidebarWidth === 0 && (
-        <button
-          className="absolute right-0 top-1/2 -translate-y-1/2 rounded-l border border-r-0 border-border bg-background px-1 py-3 text-[10px] text-muted-foreground hover:bg-muted/30"
-          onClick={handleToggleSidebar}
+        {/* 右：通道面板（含 RTT/HSS 切换、ELF 加载、内联变量浏览） */}
+        <div
+          className={sidebarWidth > 0 ? 'flex shrink-0 flex-col overflow-hidden border-l border-border bg-background' : 'hidden'}
+          style={sidebarWidth > 0 ? { width: sidebarWidth } : undefined}
         >
-          ◀
-        </button>
-      )}
-
-      {/* ── 变量浏览器弹窗 ── */}
-      <VariableBrowserDialog
-        open={showBrowser}
-        onClose={() => setShowBrowser(false)}
-        uid={uid}
-      />
+          <ChannelPanel uid={uid} />
+        </div>
+      </div>
     </div>
   )
 }

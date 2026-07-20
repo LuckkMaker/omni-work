@@ -120,8 +120,17 @@ class MonitorBackend:
         self._elf_decoders: dict[str, object] = {}
         # uid -> ELF 文件句柄（保持打开以复用 decoder）
         self._elf_files: dict[str, object] = {}
+        # uid -> DWARF 信息对象（elftools DwarfInfo，保持引用避免被回收）
+        self._dwarf_info: dict[str, object] = {}
+        # uid -> {符号名 -> 类型信息} 缓存（load_elf 时一次性构建，get_symbols 查表）
+        # 类型信息: {is_array, elem_type, elem_count, elem_size}
+        self._dwarf_cache: dict[str, dict] = {}
         # uid -> 采样起点（monotonic）
         self._start_time: dict[str, float] = {}
+        # uid -> 传输模式（"swd" 轮询 / "rtt" 同步）
+        self._transport: dict[str, str] = {}
+        # uid -> RTT 模式下的 RTTControlBlock（直接持有，避免与 rtt_backend 的 poll loop 争抢）
+        self._rtt_cbs: dict[str, object] = {}
         # 全局锁，保护字典操作
         self._global_lock = threading.Lock()
 
@@ -134,7 +143,10 @@ class MonitorBackend:
         Args:
             rate_hz: 采样率（Hz）
             max_points: RingBuffer 容量
-            transport: 传输模式（当前仅支持 "swd" 轮询；"rtt" 留待 5.4 阶段实现）
+            transport: 传输模式
+                - "swd": SWD 轮询采样（HSS 异步模式，host 主动读 RAM）
+                - "rtt": RTT 同步模式（固件按节拍把采样数据写入 RTT up channel，
+                  host 读取并解析数据帧）
         """
         # 互斥检查：同一探针下 RTT 与 Monitor 不能同时运行
         try:
@@ -156,6 +168,7 @@ class MonitorBackend:
 
             self._rate_hz[uid] = rate_hz
             self._ring_buffers[uid] = RingBuffer(max_points)
+            self._transport[uid] = transport
             running = threading.Event()
             running.set()
             self._running[uid] = running
@@ -176,7 +189,13 @@ class MonitorBackend:
             "variables": [self._var_to_dict(v) for v in variables],
         })
 
-        thread = threading.Thread(target=self._sample_loop, args=(uid,), daemon=True,
+        # 按 transport 分派采样线程：rtt 走 RTT 同步解析循环，否则走 SWD 轮询循环
+        if transport == "rtt":
+            target_loop = self._rtt_sample_loop
+        else:
+            target_loop = self._sample_loop
+
+        thread = threading.Thread(target=target_loop, args=(uid,), daemon=True,
                                   name=f"monitor-{uid[:8]}")
         with self._global_lock:
             self._threads[uid] = thread
@@ -200,11 +219,20 @@ class MonitorBackend:
         self._locks.pop(uid, None)
         self._rate_hz.pop(uid, None)
         self._start_time.pop(uid, None)
+        self._transport.pop(uid, None)
         # 保留 ring_buffer 供回看，直到下次 start 或探针断开
         if running:
             running.clear()
         if thread:
             thread.join(timeout=2)
+        # RTT 模式：线程退出后兜底清理控制块（正常退出时线程已在 finally 清理）
+        cb = self._rtt_cbs.pop(uid, None)
+        if cb is not None:
+            try:
+                if hasattr(cb, "stop"):
+                    cb.stop()
+            except Exception:
+                pass
 
     def pause(self, uid: str):
         """暂停采样（Flash/Commander 操作前调用）
@@ -393,19 +421,253 @@ class MonitorBackend:
         """批量推送采样点到前端"""
         event_manager.emit("monitor.sample", {"uid": uid, "samples": samples})
 
+    # ── RTT 同步采样循环 ──────────────────────────────────────
+
+    def _rtt_sample_loop(self, uid: str):
+        """RTT 同步模式采样线程
+
+        固件侧集成 SEGGER_RTT，按采样节拍把采样数据写入 RTT up channel 0，
+        host 侧读取原始字节流并按帧格式解析为 SamplePoint，推 RingBuffer + emit。
+
+        数据帧格式（小端）::
+
+            [t_ms:u32][n:u8][{var_id:u8, value:f32} * n]
+
+        - t_ms:   相对采样起点的毫秒时间戳（由固件填写）
+        - n:      本帧变量个数（0-255）
+        - var_id: 变量索引（0-255，对应 variables 列表顺序，固件按此顺序写）
+        - value:  该变量的浮点值（所有类型统一按 float 传输）
+
+        变量 id 映射：RTT 模式下用 variables 列表顺序作为 id (0,1,2...)，
+        解析时映射回 MonitoredVariable.id。
+
+        设计说明（为何不直接调用 rtt_backend.start）：
+          1. rtt_backend.start 内部有 monitor_backend.is_running 互斥检查，
+             monitor 自身启动 RTT 会触发互斥导致失败；
+          2. rtt_backend.start 会启动 _poll_loop 消费式读取所有 up channel 并
+             emit rtt.data 事件，与本线程读取 up channel 0 会争抢数据
+             （RTT 读取是消费式的，双读会导致帧被拆散）；
+          3. 事件系统（core/events.py）仅有 emit 广播，无订阅机制，无法让
+             monitor 监听 rtt.data。
+        因此 RTT 模式直接使用 pyOCD 的 RTTControlBlock（底层 RTT API），
+        仍通过 rtt_backend.is_running 做互斥协调（start 入口已检查）。
+        """
+        cb = None
+        try:
+            session = backend._get_session(uid)
+            if not session:
+                event_manager.emit("monitor.error",
+                                   {"uid": uid, "error": "探针未连接"})
+                return
+            target = session.target
+
+            # 搜索 RTT 控制块：遍历所有 RAM region（对标 rtt_backend/J-Link RTT Viewer）
+            ram_regions = []
+            try:
+                from pyocd.core.memory_map import MemoryType
+                mem_map = target.get_memory_map()
+                ram_regions = list(mem_map.iter_matching_regions(type=MemoryType.RAM))
+            except Exception as e:
+                logger.warning(f"Monitor RTT: 获取 RAM region 失败: {e}")
+
+            try:
+                from pyocd.debug.rtt import RTTControlBlock
+            except Exception as e:
+                event_manager.emit("monitor.error",
+                                   {"uid": uid, "error": f"pyOCD RTT 模块不可用: {e}"})
+                return
+
+            # halt 目标后搜索控制块（对标 rtt_backend.start 的流程）
+            try:
+                target.halt()
+            except Exception:
+                pass
+
+            for r in ram_regions:
+                try:
+                    cb_obj = RTTControlBlock.from_target(
+                        target, address=r.start, size=r.length)
+                    cb_obj.start()
+                    if len(cb_obj.up_channels) > 0:
+                        cb = cb_obj
+                        event_manager.log(
+                            "info",
+                            f"Monitor RTT: 控制块找到 @0x{r.start:08X}, "
+                            f"{len(cb.up_channels)} up channels")
+                        break
+                except Exception:
+                    continue
+
+            # 搜索完成后恢复目标运行，使固件可写 RTT 缓冲区
+            try:
+                target.resume()
+            except Exception:
+                pass
+
+            if cb is None or len(cb.up_channels) == 0:
+                event_manager.emit(
+                    "monitor.error",
+                    {"uid": uid,
+                     "error": "RTT 控制块未找到，请确认固件已集成 SEGGER_RTT 并已初始化"})
+                return
+
+            up_ch = cb.up_channels[0]
+            with self._global_lock:
+                self._rtt_cbs[uid] = cb
+
+            event_manager.log("info", "Monitor RTT: 开始采样 (up channel 0)")
+
+            # 帧解析缓冲：不完整帧缓存剩余字节等下一批
+            buf = bytearray()
+            pending_samples: list = []
+
+            while True:
+                running = self._running.get(uid)
+                if running is None or not running.is_set():
+                    break
+                if not backend.is_connected(uid):
+                    event_manager.emit("monitor.stopped",
+                                       {"uid": uid, "reason": "disconnected"})
+                    break
+
+                # 暂停状态：跳过读取但保持线程存活
+                paused = self._paused.get(uid)
+                if paused is not None and not paused.is_set():
+                    time.sleep(0.02)
+                    continue
+
+                # 读取 up channel 0 原始字节
+                try:
+                    data = up_ch.read()
+                except Exception as e:
+                    logger.debug(f"Monitor RTT read error: {e}")
+                    data = None
+
+                if data:
+                    buf.extend(data)
+                    self._parse_rtt_frames(uid, buf, pending_samples)
+
+                # 批量推送，降低 WS 消息数
+                if len(pending_samples) >= PUSH_BATCH:
+                    self._emit_samples(uid, pending_samples)
+                    pending_samples.clear()
+
+                time.sleep(0.01)
+
+            # 线程退出前：尝试解析残留缓冲并刷出未推送样本
+            if buf:
+                self._parse_rtt_frames(uid, buf, pending_samples)
+            if pending_samples:
+                self._emit_samples(uid, pending_samples)
+
+            event_manager.log("info",
+                              f"Monitor RTT: 采样线程退出 (probe {uid[:16]})")
+        except Exception as e:
+            logger.exception("Monitor RTT sample loop failed")
+            event_manager.emit("monitor.error", {"uid": uid, "error": str(e)})
+        finally:
+            # 清理 RTT 控制块
+            if cb is not None:
+                try:
+                    if hasattr(cb, "stop"):
+                        cb.stop()
+                except Exception:
+                    pass
+            with self._global_lock:
+                self._rtt_cbs.pop(uid, None)
+
+    def _parse_rtt_frames(self, uid: str, buf: bytearray, pending_samples: list):
+        """从字节缓冲区解析 RTT 数据帧
+
+        帧格式（小端）：``[t_ms:u32][n:u8][{var_id:u8, value:f32} * n]``
+        最小帧长 5 字节（n=0），完整帧长 5 + 5*n 字节。
+        帧不完整时保留在 buf 中等待下一批数据补齐。
+        每个完整帧转为 SamplePoint：写 RingBuffer + 加入 pending_samples 批量推送。
+
+        变量 id 映射：RTT 模式下用 variables 列表顺序作为 id (0,1,2...)，
+        解析时把 var_id（固件写的顺序索引）映射回 MonitoredVariable.id。
+        """
+        # 顺序索引 -> MonitoredVariable.id（每次按当前变量列表重建，支持运行时增删）
+        variables = self._variables.get(uid, [])
+        id_map = {i: v.id for i, v in enumerate(variables)}
+
+        while len(buf) >= 5:
+            t_ms_raw = struct.unpack_from("<I", buf, 0)[0]
+            n = buf[4]
+            frame_len = 5 + 5 * n
+            if len(buf) < frame_len:
+                # 帧不完整，等待更多数据
+                break
+
+            values: dict = {}
+            offset = 5
+            for _ in range(n):
+                var_idx = buf[offset]
+                value = struct.unpack_from("<f", buf, offset + 1)[0]
+                offset += 5
+                real_id = id_map.get(var_idx)
+                if real_id is not None:
+                    values[real_id] = value
+
+            t_ms = float(t_ms_raw)
+            pending_samples.append({"t_ms": t_ms, "values": values})
+
+            # 写入 RingBuffer
+            # 注意：RingBuffer 定义了 __len__，空缓冲区时 bool(rb) 为 False，
+            # 故用 is not None 判定，避免首条样本因缓冲区为空被丢弃。
+            rb = self._ring_buffers.get(uid)
+            if rb is not None:
+                rb.push(t_ms, dict(values))
+
+            # 消费已解析帧
+            del buf[:frame_len]
+
     # ── 变量管理 ──────────────────────────────────────────────
 
     def add_variable(self, uid: str, name: str, address: int, var_type: str,
-                     remark: str = "", refresh_sec: float = 0) -> dict:
-        """添加监视变量"""
+                     remark: str = "", refresh_sec: float = 0,
+                     elem_index: Optional[int] = None) -> dict:
+        """添加监视变量
+
+        Args:
+            name: 变量名（数组元素时为原数组名，实际显示名会追加 [elem_index]）
+            address: 变量地址（数组元素时为数组基地址）
+            var_type: 数据类型 int8/uint8/int16/uint16/int32/uint32/float；
+                      数组元素时传元素类型
+            remark: 用户备注
+            refresh_sec: 独立刷新周期（0=跟随全局采样率）
+            elem_index: 数组元素索引。传入时实际地址 = address + elem_index * elem_size，
+                        监视变量名变为 name[elem_index]，type/size 用元素类型/大小；
+                        不传则按标量处理。
+        """
         if var_type not in TYPE_MAP:
             return {"success": False, "error": f"不支持的数据类型: {var_type}"}
-        _, size = TYPE_MAP[var_type]
+        _, elem_size = TYPE_MAP[var_type]
+
+        # 数组元素：计算实际地址与显示名，type/size 用元素类型/大小
+        if elem_index is not None:
+            real_address = address + elem_index * elem_size
+            display_name = f"{name}[{elem_index}]"
+            size = elem_size
+        else:
+            real_address = address
+            display_name = name
+            size = elem_size
+
+        # 探针已连接时探测地址可读性（一次读，失败则拒绝添加）
+        session = backend._get_session(uid)
+        if session:
+            try:
+                session.target.read_memory_block8(real_address, size)
+            except Exception as e:
+                return {"success": False,
+                        "error": f"地址 0x{real_address:08X} 不可读: {e}"}
+        # 探针未连接时跳过探测（允许先配置变量再连接）
 
         import uuid
         var_id = uuid.uuid4().hex[:12]
         var = MonitoredVariable(
-            id=var_id, name=name, address=address, type=var_type,
+            id=var_id, name=display_name, address=real_address, type=var_type,
             size=size, remark=remark, refresh_sec=refresh_sec,
         )
 
@@ -452,6 +714,8 @@ class MonitorBackend:
         """加载 ELF/AXF 文件，构建符号解码器
 
         复用 pyOCD 的 ElfSymbolDecoder（python/pyocd/debug/elf/decoder.py）。
+        同时解析 DWARF 信息，构建 {符号名 -> 类型信息} 缓存供 get_symbols 查表，
+        识别数组类型与元素信息。
         """
         try:
             from elftools.elf.elffile import ELFFile
@@ -464,10 +728,33 @@ class MonitorBackend:
                     old_file.close()
                 except Exception:
                     pass
+            # 清理旧的 DWARF 缓存（重新加载时重建）
+            self._dwarf_info.pop(uid, None)
+            self._dwarf_cache.pop(uid, None)
 
             f = open(path, "rb")
             elf = ELFFile(f)
             decoder = ElfSymbolDecoder(elf)
+
+            # 解析 DWARF（若有），一次性构建 {符号名 -> 类型信息} 缓存。
+            # DWARF 遍历较慢，在 load_elf 时构建一次，get_symbols 直接查表。
+            try:
+                if elf.has_dwarf_info():
+                    dwarfinfo = elf.get_dwarf_info()
+                    self._dwarf_info[uid] = dwarfinfo
+                    self._dwarf_cache[uid] = self._build_dwarf_cache(dwarfinfo)
+                    event_manager.log(
+                        "info",
+                        f"Monitor: DWARF 已解析，"
+                        f"{len(self._dwarf_cache[uid])} 个全局变量类型缓存")
+                else:
+                    self._dwarf_cache[uid] = {}
+                    event_manager.log("info",
+                                      "Monitor: ELF 无 DWARF 信息，类型按 size 猜测")
+            except Exception as e:
+                # DWARF 解析失败不影响主流程，回退到 size 猜测
+                logger.warning(f"Monitor: DWARF 解析失败，回退到 size 猜测: {e}")
+                self._dwarf_cache[uid] = {}
 
             with self._global_lock:
                 self._elf_decoders[uid] = decoder
@@ -495,10 +782,17 @@ class MonitorBackend:
             sym_type: "object"=仅变量, "func"=仅函数, "all"=全部
             page: 页码（1-based）
             page_size: 每页条数
+
+        每个符号字段：
+            name, address, size（整个符号大小）, type（数组时为元素类型，向后兼容），
+            is_array, elem_type, elem_count, elem_size。
+        DWARF 解析失败或未命中时回退到按 size 猜测，is_array=False。
         """
         decoder = self._elf_decoders.get(uid)
         if not decoder:
             return {"success": False, "error": "未加载 ELF 文件"}
+
+        dwarf_cache = self._dwarf_cache.get(uid, {})
 
         # 过滤
         symbols = []
@@ -509,11 +803,32 @@ class MonitorBackend:
                 continue
             if filter_str and filter_str.lower() not in name.lower():
                 continue
+
+            # 优先用 DWARF 类型信息；未命中回退到 size 猜测
+            ti = dwarf_cache.get(name)
+            if ti is not None:
+                is_array = bool(ti["is_array"])
+                elem_type = ti["elem_type"]
+                elem_count = int(ti["elem_count"])
+                elem_size = int(ti["elem_size"])
+                # 数组时 type 设为 elem_type，size 仍为整个符号大小（向后兼容）
+                sym_type_str = elem_type
+            else:
+                is_array = False
+                elem_type = self._type_from_symbol(info)
+                elem_count = 1
+                elem_size = info.size if info.size else TYPE_MAP[elem_type][1]
+                sym_type_str = elem_type
+
             symbols.append({
                 "name": name,
                 "address": info.address,
                 "size": info.size,
-                "type": self._type_from_symbol(info),
+                "type": sym_type_str,
+                "is_array": is_array,
+                "elem_type": elem_type,
+                "elem_count": elem_count,
+                "elem_size": elem_size,
             })
 
         # 排序：按地址
@@ -546,6 +861,191 @@ class MonitorBackend:
         if size == 4:
             return "int32"  # 也可能是 float，用户可在 UI 切换
         return "int32"
+
+    # ── DWARF 类型解析 ──────────────────────────────────────────
+
+    def _build_dwarf_cache(self, dwarfinfo) -> dict:
+        """遍历 DWARF，构建 {符号名 -> 类型信息} 缓存
+
+        一次性遍历所有 CU 的 DIE，先建 {offset -> DIE} 索引以便解析 DW_AT_type
+        引用，再收集全局变量（DW_TAG_variable，直接隶属于 CU）的类型信息。
+
+        Returns:
+            {name: {is_array, elem_type, elem_count, elem_size}}
+        """
+        # 第一遍：建立 offset -> DIE 索引（用于解析 DW_AT_type 引用）
+        die_by_offset: dict[int, object] = {}
+        for cu in dwarfinfo.iter_CUs():
+            for die in cu.iter_DIEs():
+                die_by_offset[die.offset] = (die, cu)
+
+        # 第二遍：收集全局变量类型
+        cache: dict[str, dict] = {}
+        for cu in dwarfinfo.iter_CUs():
+            for die in cu.iter_DIEs():
+                if die.tag != "DW_TAG_variable":
+                    continue
+                # 仅处理全局变量（直接隶属于 CU 的变量，跳过函数内局部变量）
+                parent = die.get_parent()
+                if parent is None or parent.tag != "DW_TAG_compile_unit":
+                    continue
+                name_attr = die.attributes.get("DW_AT_name")
+                if name_attr is None:
+                    continue
+                name = name_attr.value
+                if isinstance(name, bytes):
+                    name = name.decode("utf-8", errors="replace")
+                # 单个符号解析失败不影响其他符号
+                try:
+                    ti = self._resolve_var_type(die, die_by_offset, cu)
+                    if ti is not None:
+                        cache[name] = ti
+                except Exception as e:
+                    logger.debug(f"Monitor: DWARF 解析符号 {name} 失败: {e}")
+        return cache
+
+    def _follow_type_ref(self, die, die_by_offset: dict, cu):
+        """沿 DW_AT_type 引用解析到目标 DIE
+
+        根据 form 判断偏移是绝对（DW_FORM_ref_addr）还是相对 CU（ref4 等）。
+        """
+        type_attr = die.attributes.get("DW_AT_type")
+        if type_attr is None:
+            return None
+        ref = type_attr.value
+        if type_attr.form == "DW_FORM_ref_addr":
+            # 绝对偏移
+            entry = die_by_offset.get(ref)
+        else:
+            # 相对 CU 头的偏移
+            entry = die_by_offset.get(cu.cu_offset + ref)
+        return entry[0] if entry is not None else None
+
+    def _resolve_to_base_type(self, type_die, die_by_offset: dict, cu, depth: int = 0):
+        """沿 typedef/const/volatile/restrict 链解析到 DW_TAG_base_type
+
+        返回 base_type DIE 或 None。depth 防止异常循环引用。
+        """
+        if depth > 16 or type_die is None:
+            return None
+        if type_die.tag == "DW_TAG_base_type":
+            return type_die
+        if type_die.tag in ("DW_TAG_typedef", "DW_TAG_const_type",
+                            "DW_TAG_volatile_type", "DW_TAG_restrict_type"):
+            next_die = self._follow_type_ref(type_die, die_by_offset, cu)
+            return self._resolve_to_base_type(next_die, die_by_offset, cu, depth + 1)
+        # 非链式节点（如 pointer/struct），无法归约为 base_type
+        return None
+
+    def _base_type_to_monitor(self, base_die) -> Optional[str]:
+        """将 DW_TAG_base_type DIE 映射为 Monitor 数据类型字符串
+
+        DW_AT_encoding:
+            DW_ATE_signed = 0x05 -> int
+            DW_ATE_unsigned = 0x07 -> uint
+            DW_ATE_float = 0x04 -> float
+        结合 DW_AT_byte_size 决定具体 int8/16/32 或 float。
+        """
+        if base_die is None or base_die.tag != "DW_TAG_base_type":
+            return None
+        enc_attr = base_die.attributes.get("DW_AT_encoding")
+        size_attr = base_die.attributes.get("DW_AT_byte_size")
+        if enc_attr is None or size_attr is None:
+            return None
+        enc = enc_attr.value
+        bs = size_attr.value
+        if enc == 0x05:        # DW_ATE_signed
+            if bs == 1:
+                return "int8"
+            if bs == 2:
+                return "int16"
+            if bs == 4:
+                return "int32"
+        elif enc == 0x07:      # DW_ATE_unsigned
+            if bs == 1:
+                return "uint8"
+            if bs == 2:
+                return "uint16"
+            if bs == 4:
+                return "uint32"
+        elif enc == 0x04:      # DW_ATE_float
+            if bs == 4:
+                return "float"
+            if bs == 8:
+                # double 归并为 float（Monitor 暂不支持 double）
+                return "float"
+        return None
+
+    def _resolve_var_type(self, var_die, die_by_offset: dict, cu) -> Optional[dict]:
+        """解析变量 DIE 的类型信息
+
+        沿类型链查找：
+            - DW_TAG_array_type：取元素类型与 subrange 元素个数，is_array=True
+            - DW_TAG_base_type（或经 typedef/const 链归约）：标量，is_array=False
+        Returns:
+            {is_array, elem_type, elem_count, elem_size} 或 None（无法解析）
+        """
+        current = self._follow_type_ref(var_die, die_by_offset, cu)
+        seen = set()
+        while current is not None and current.offset not in seen:
+            seen.add(current.offset)
+
+            if current.tag == "DW_TAG_array_type":
+                # 元素类型 = array_type 的 DW_AT_type，归约到 base_type
+                elem_die = self._follow_type_ref(current, die_by_offset, cu)
+                base_die = self._resolve_to_base_type(elem_die, die_by_offset, cu)
+                if base_die is None:
+                    return None
+                elem_type = self._base_type_to_monitor(base_die)
+                if elem_type is None:
+                    return None
+                _, elem_size = TYPE_MAP[elem_type]
+                # 元素个数：取 DW_TAG_subrange_type 的 DW_AT_upper_bound+1
+                # 或 DW_AT_count
+                count = 1
+                for child in current.iter_children():
+                    if child.tag == "DW_TAG_subrange_type":
+                        cnt_attr = child.attributes.get("DW_AT_count")
+                        ub_attr = child.attributes.get("DW_AT_upper_bound")
+                        if cnt_attr is not None:
+                            try:
+                                count = int(cnt_attr.value)
+                            except Exception:
+                                count = 1
+                        elif ub_attr is not None:
+                            try:
+                                count = int(ub_attr.value) + 1
+                            except Exception:
+                                count = 1
+                        break
+                return {
+                    "is_array": True,
+                    "elem_type": elem_type,
+                    "elem_count": count,
+                    "elem_size": elem_size,
+                }
+
+            if current.tag in ("DW_TAG_typedef", "DW_TAG_const_type",
+                               "DW_TAG_volatile_type", "DW_TAG_restrict_type"):
+                current = self._follow_type_ref(current, die_by_offset, cu)
+                continue
+
+            # 标量：归约到 base_type
+            base_die = (current if current.tag == "DW_TAG_base_type"
+                        else self._resolve_to_base_type(current, die_by_offset, cu))
+            if base_die is None:
+                return None
+            elem_type = self._base_type_to_monitor(base_die)
+            if elem_type is None:
+                return None
+            _, elem_size = TYPE_MAP[elem_type]
+            return {
+                "is_array": False,
+                "elem_type": elem_type,
+                "elem_count": 1,
+                "elem_size": elem_size,
+            }
+        return None
 
     # ── 录制导出 ──────────────────────────────────────────────
 
@@ -596,7 +1096,7 @@ class MonitorBackend:
         """探针断开时调用，清理 Monitor 会话"""
         if uid in self._running or uid in self._variables:
             self.stop(uid)
-        # 清理 ELF
+        # 清理 ELF 与 DWARF 缓存
         f = self._elf_files.pop(uid, None)
         if f:
             try:
@@ -604,6 +1104,17 @@ class MonitorBackend:
             except Exception:
                 pass
         self._elf_decoders.pop(uid, None)
+        self._dwarf_info.pop(uid, None)
+        self._dwarf_cache.pop(uid, None)
+        # 清理 RTT 模式残留的控制块（兜底）
+        cb = self._rtt_cbs.pop(uid, None)
+        if cb is not None:
+            try:
+                if hasattr(cb, "stop"):
+                    cb.stop()
+            except Exception:
+                pass
+        self._transport.pop(uid, None)
         self._variables.pop(uid, None)
         self._ring_buffers.pop(uid, None)
 
@@ -616,6 +1127,19 @@ class MonitorBackend:
                 self._elf_files[uid].close()
             except Exception:
                 pass
+        self._elf_files.clear()
+        self._elf_decoders.clear()
+        self._dwarf_info.clear()
+        self._dwarf_cache.clear()
+        # 兜底清理 RTT 控制块
+        for cb in self._rtt_cbs.values():
+            try:
+                if hasattr(cb, "stop"):
+                    cb.stop()
+            except Exception:
+                pass
+        self._rtt_cbs.clear()
+        self._transport.clear()
 
 
 # 全局单例
