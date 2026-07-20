@@ -20,6 +20,8 @@ interface Props {
   follow: boolean
   /** 时间窗口（秒），Follow 模式下显示最近 N 秒 */
   windowSec?: number
+  /** 渲染帧率（FPS），控制波形图重绘频率，默认 30 */
+  fps?: number
   className?: string
   /** 游标选择回调（拖选区域后触发） */
   onCursorSelect?: (m: CursorMeasurement | null) => void
@@ -34,17 +36,18 @@ const Y_HYSTERESIS = 0.15
 
 export function WaveformChart({
   variables, channels, samples, follow,
-  windowSec = 10, className, onCursorSelect,
+  windowSec = 10, fps = 30, className, onCursorSelect,
 }: Props) {
   const containerRef = useRef<HTMLDivElement>(null)
   const plotRef = useRef<uPlot | null>(null)
   const dirtyRef = useRef(false)
-  const rafRef = useRef<number | null>(null)
+  const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const followRef = useRef(follow)
   const samplesRef = useRef(samples)
   const varsRef = useRef(variables)
   const chansRef = useRef(channels)
   const windowRef = useRef(windowSec)
+  const fpsRef = useRef(fps)
   // Y 轴 hysteresis：记录上次设置的 Y 范围
   const yRangeRef = useRef<{ min: number; max: number } | null>(null)
   // 游标回调 ref（避免重建 uPlot）
@@ -57,6 +60,7 @@ export function WaveformChart({
   useEffect(() => { varsRef.current = variables; dirtyRef.current = true; scheduleRender() }, [variables])
   useEffect(() => { chansRef.current = channels; dirtyRef.current = true; scheduleRender() }, [channels])
   useEffect(() => { windowRef.current = windowSec }, [windowSec])
+  useEffect(() => { fpsRef.current = fps }, [fps])
 
   // ── 构建可见通道列表（visible=true 的通道）──
   const getVisibleSeries = useCallback(() => {
@@ -104,13 +108,14 @@ export function WaveformChart({
     }
   }, [getVisibleSeries])
 
-  // ── 渲染调度（rAF 节流）──
+  // ── 渲染调度（按 FPS 节流）──
   const scheduleRender = useCallback(() => {
-    if (rafRef.current !== null) return
-    rafRef.current = requestAnimationFrame(() => {
-      rafRef.current = null
+    if (timerRef.current !== null) return
+    const interval = 1000 / Math.max(1, fpsRef.current)
+    timerRef.current = setTimeout(() => {
+      timerRef.current = null
       doRender()
-    })
+    }, interval)
   }, [])
 
   // ── 实际渲染 ──
@@ -168,42 +173,78 @@ export function WaveformChart({
       const xMin = xMax - win
       plot.setScale('x', { min: xMin, max: xMax })
 
-      // Y 轴自适应：计算窗口内数据的 min/max
-      let yMin = Infinity
-      let yMax = -Infinity
-      for (let i = 0; i < data[0].length; i++) {
-        const t = data[0][i] as number
-        if (t < xMin || t > xMax) continue
-        for (let si = 0; si < series.length; si++) {
-          const v = data[si + 1][i]
-          if (v !== null && typeof v === 'number') {
-            if (v < yMin) yMin = v
-            if (v > yMax) yMax = v
+      // Y 轴量程：优先使用用户设定的固定量程（min/max），否则自适应
+      const hasFixedRange = series.some((s) => s.channel.min !== null || s.channel.max !== null)
+      if (hasFixedRange) {
+        // 固定量程模式：取各通道 min/max 的并集
+        let fixedMin = Infinity
+        let fixedMax = -Infinity
+        for (const s of series) {
+          if (s.channel.min !== null) fixedMin = Math.min(fixedMin, s.channel.min)
+          if (s.channel.max !== null) fixedMax = Math.max(fixedMax, s.channel.max)
+        }
+        // 若只设了一端，另一端用数据补
+        if (fixedMin === Infinity || fixedMax === -Infinity) {
+          let yMin = Infinity, yMax = -Infinity
+          for (let i = 0; i < data[0].length; i++) {
+            const t = data[0][i] as number
+            if (t < xMin || t > xMax) continue
+            for (let si = 0; si < series.length; si++) {
+              const v = data[si + 1][i]
+              if (v !== null && typeof v === 'number') {
+                if (v < yMin) yMin = v
+                if (v > yMax) yMax = v
+              }
+            }
+          }
+          if (fixedMin === Infinity) fixedMin = yMin
+          if (fixedMax === -Infinity) fixedMax = yMax
+        }
+        if (fixedMin !== Infinity && fixedMax !== -Infinity) {
+          const range = fixedMax - fixedMin || 1
+          const paddedMin = fixedMin - range * Y_PADDING
+          const paddedMax = fixedMax + range * Y_PADDING
+          yRangeRef.current = { min: paddedMin, max: paddedMax }
+          plot.setScale('y', { min: paddedMin, max: paddedMax })
+        }
+      } else {
+        // 自适应模式：计算窗口内可见通道数据的 min/max
+        let yMin = Infinity
+        let yMax = -Infinity
+        for (let i = 0; i < data[0].length; i++) {
+          const t = data[0][i] as number
+          if (t < xMin || t > xMax) continue
+          for (let si = 0; si < series.length; si++) {
+            const v = data[si + 1][i]
+            if (v !== null && typeof v === 'number') {
+              if (v < yMin) yMin = v
+              if (v > yMax) yMax = v
+            }
           }
         }
-      }
 
-      if (yMin !== Infinity && yMax !== -Infinity) {
-        // 添加边距
-        const range = yMax - yMin || 1
-        const paddedMin = yMin - range * Y_PADDING
-        const paddedMax = yMax + range * Y_PADDING
+        if (yMin !== Infinity && yMax !== -Infinity) {
+          // 添加边距
+          const range = yMax - yMin || 1
+          const paddedMin = yMin - range * Y_PADDING
+          const paddedMax = yMax + range * Y_PADDING
 
-        // Hysteresis：如果新范围在旧范围内且变化不大，不更新
-        const prev = yRangeRef.current
-        if (prev) {
-          const prevRange = prev.max - prev.min
-          // 如果数据仍在旧范围内且未超出 hysteresis 阈值，保持旧范围
-          if (paddedMin >= prev.min + prevRange * Y_HYSTERESIS &&
-              paddedMax <= prev.max - prevRange * Y_HYSTERESIS) {
-            // 数据在旧范围内，不更新
+          // Hysteresis：如果新范围在旧范围内且变化不大，不更新
+          const prev = yRangeRef.current
+          if (prev) {
+            const prevRange = prev.max - prev.min
+            // 如果数据仍在旧范围内且未超出 hysteresis 阈值，保持旧范围
+            if (paddedMin >= prev.min + prevRange * Y_HYSTERESIS &&
+                paddedMax <= prev.max - prevRange * Y_HYSTERESIS) {
+              // 数据在旧范围内，不更新
+            } else {
+              yRangeRef.current = { min: paddedMin, max: paddedMax }
+              plot.setScale('y', { min: paddedMin, max: paddedMax })
+            }
           } else {
             yRangeRef.current = { min: paddedMin, max: paddedMax }
             plot.setScale('y', { min: paddedMin, max: paddedMax })
           }
-        } else {
-          yRangeRef.current = { min: paddedMin, max: paddedMax }
-          plot.setScale('y', { min: paddedMin, max: paddedMax })
         }
       }
     } else {

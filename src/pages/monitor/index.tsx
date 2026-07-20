@@ -36,6 +36,7 @@ export default function MonitorPage() {
   const channels = useMonitorStore((s) => s.channels)
   const follow = useMonitorStore((s) => s.follow)
   const timebase = useMonitorStore((s) => s.timebase)
+  const fps = useMonitorStore((s) => s.fps)
 
   const setRunning = useMonitorStore((s) => s.setRunning)
   const setPaused = useMonitorStore((s) => s.setPaused)
@@ -301,6 +302,7 @@ export default function MonitorPage() {
                     samples={samples}
                     follow={follow}
                     windowSec={timebase}
+                    fps={fps}
                     className="h-full w-full"
                     onCursorSelect={setCursorMeasure}
                   />

@@ -35,15 +35,39 @@ const RATE_OPTIONS = [
   { label: '100 kHz', value: 100000 },
 ]
 
-/** 时基档位（秒，作为 Follow/触发模式的时间窗口宽度） */
+/** 时基档位（秒，作为 Follow/触发模式的时间窗口宽度），覆盖 us~s 全范围 */
 const TIMEBASE_OPTIONS = [
+  { label: '1 us/div', value: 0.000001 },
+  { label: '2 us/div', value: 0.000002 },
+  { label: '5 us/div', value: 0.000005 },
+  { label: '10 us/div', value: 0.00001 },
+  { label: '20 us/div', value: 0.00002 },
+  { label: '50 us/div', value: 0.00005 },
+  { label: '100 us/div', value: 0.0001 },
+  { label: '200 us/div', value: 0.0002 },
+  { label: '500 us/div', value: 0.0005 },
   { label: '1 ms/div', value: 0.001 },
+  { label: '2 ms/div', value: 0.002 },
+  { label: '5 ms/div', value: 0.005 },
   { label: '10 ms/div', value: 0.01 },
+  { label: '20 ms/div', value: 0.02 },
+  { label: '50 ms/div', value: 0.05 },
   { label: '100 ms/div', value: 0.1 },
+  { label: '200 ms/div', value: 0.2 },
+  { label: '500 ms/div', value: 0.5 },
   { label: '1 s/div', value: 1 },
+  { label: '2 s/div', value: 2 },
+  { label: '5 s/div', value: 5 },
   { label: '10 s/div', value: 10 },
-  { label: '60 s/div', value: 60 },
+  { label: '20 s/div', value: 20 },
+  { label: '50 s/div', value: 50 },
+  { label: '100 s/div', value: 100 },
+  { label: '200 s/div', value: 200 },
+  { label: '500 s/div', value: 500 },
 ]
+
+/** 渲染帧率档位（FPS） */
+const FPS_OPTIONS = [1, 2, 5, 10, 15, 20, 25, 30, 40, 50]
 
 /** 触发方式 */
 type ChannelTriggerMode = 'none' | 'rising' | 'falling' | 'level'
@@ -68,10 +92,12 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
   const rateHz = useMonitorStore((s) => s.rateHz)
   const follow = useMonitorStore((s) => s.follow)
   const timebase = useMonitorStore((s) => s.timebase)
+  const fps = useMonitorStore((s) => s.fps)
   const setTransport = useMonitorStore((s) => s.setTransport)
   const setRateHz = useMonitorStore((s) => s.setRateHz)
   const setFollow = useMonitorStore((s) => s.setFollow)
   const setTimebase = useMonitorStore((s) => s.setTimebase)
+  const setFps = useMonitorStore((s) => s.setFps)
   const setElf = useMonitorStore((s) => s.setElf)
   const addVariable = useMonitorStore((s) => s.addVariable)
   const removeVariable = useMonitorStore((s) => s.removeVariable)
@@ -359,6 +385,34 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
     <div className="flex h-full flex-col">
       {/* ── 工具栏 ── */}
       <div className="border-b border-border p-2 space-y-2">
+        {/* 启动 + Follow（最上方）*/}
+        <div className="flex gap-1.5">
+          <button
+            className={cn(
+              'flex h-7 flex-[2] items-center justify-center gap-1 rounded text-[11px] font-medium transition-colors',
+              running
+                ? 'bg-destructive/10 text-destructive hover:bg-destructive/20'
+                : 'bg-primary text-primary-foreground hover:bg-primary/90',
+              starting && 'opacity-60 cursor-wait',
+            )}
+            onClick={onToggleSampling}
+            disabled={!isConnected || starting || (running && paused)}
+          >
+            {running ? <Square className="size-3" /> : <Play className="size-3" />}
+            {running ? '停止' : starting ? '启动中...' : '启动'}
+          </button>
+          <button
+            className={cn(
+              'flex h-7 flex-1 items-center justify-center gap-1 rounded border text-[11px] transition-colors',
+              follow ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted/30',
+            )}
+            onClick={() => setFollow(!follow)}
+            title="Follow 模式：跟随最新数据滚动；启用触发时以触发点对齐"
+          >
+            <Gauge className="size-3" /> Follow
+          </button>
+        </div>
+
         {/* 采样模式切换：RTT 同步 / HSS 异步 */}
         <div className="flex items-center rounded-md border border-border p-0.5">
           <button
@@ -403,54 +457,36 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
           </div>
         )}
 
-        {/* 采样率 + 时基 */}
+        {/* 采样率 + FPS */}
         <div className="grid grid-cols-2 gap-1.5">
           <select
             className="h-7 rounded border border-border bg-background px-1 text-[11px]"
             value={rateHz}
             onChange={(e) => setRateHz(Number(e.target.value))}
             disabled={running}
-            title="采样率"
+            title="采样率（后端每秒采样次数）"
           >
             {RATE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
           </select>
           <select
             className="h-7 rounded border border-border bg-background px-1 text-[11px]"
-            value={timebase}
-            onChange={(e) => setTimebase(Number(e.target.value))}
-            title="时基（时间窗口宽度）"
+            value={fps}
+            onChange={(e) => setFps(Number(e.target.value))}
+            title="渲染帧率（波形图每秒刷新次数）"
           >
-            {TIMEBASE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+            {FPS_OPTIONS.map((f) => <option key={f} value={f}>{f} FPS</option>)}
           </select>
         </div>
 
-        {/* Follow + 启停 */}
-        <div className="flex gap-1.5">
-          <button
-            className={cn(
-              'flex h-7 flex-1 items-center justify-center gap-1 rounded border text-[11px] transition-colors',
-              follow ? 'border-primary bg-primary/10 text-primary' : 'border-border text-muted-foreground hover:bg-muted/30',
-            )}
-            onClick={() => setFollow(!follow)}
-            title="Follow 模式：跟随最新数据滚动；启用触发时以触发点对齐"
-          >
-            <Gauge className="size-3" /> Follow
-          </button>
-          <button
-            className={cn(
-              'flex h-7 flex-1 items-center justify-center gap-1 rounded text-[11px] font-medium transition-colors',
-              running
-                ? 'bg-destructive/10 text-destructive hover:bg-destructive/20'
-                : 'bg-primary text-primary-foreground hover:bg-primary/90',
-              starting && 'opacity-60 cursor-wait',
-            )}
-            onClick={onToggleSampling}
-            disabled={!isConnected || starting || (running && paused)}
-          >
-            {running ? <Square className="size-3" /> : <Play className="size-3" />}
-            {running ? '停止' : starting ? '启动中...' : '启动'}
-          </button>
-        </div>
+        {/* 时基（div 时间分辨率）*/}
+        <select
+          className="h-7 w-full rounded border border-border bg-background px-1 text-[11px]"
+          value={timebase}
+          onChange={(e) => setTimebase(Number(e.target.value))}
+          title="时基（每格代表的时间，决定时间窗口宽度）"
+        >
+          {TIMEBASE_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
+        </select>
 
         {transport === 'rtt' && (
           <div className="flex items-start gap-1 rounded border border-amber-500/30 bg-amber-500/10 p-1.5 text-[10px] text-amber-600">

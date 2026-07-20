@@ -57,6 +57,8 @@ interface MonitorState {
   follow: boolean
   /** 时基窗口（秒），Follow/触发模式下显示的窗口宽度，如 0.001=1ms, 1=1s */
   timebase: number
+  /** 波形图渲染帧率（FPS），控制重绘频率，默认 30 */
+  fps: number
   channels: ChannelConfig[]
 
   // ── actions ──
@@ -68,6 +70,7 @@ interface MonitorState {
   setTransport: (t: 'swd' | 'rtt') => void
   setFollow: (on: boolean) => void
   setTimebase: (t: number) => void
+  setFps: (fps: number) => void
 
   setElf: (path: string, count: number) => void
   setVariables: (vars: MonitorVariable[]) => void
@@ -125,6 +128,7 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
 
   follow: true,
   timebase: 1,
+  fps: 30,
   channels: [],
 
   setRunning: (running) => set({ running }),
@@ -135,6 +139,7 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
   setTransport: (t) => set({ transport: t }),
   setFollow: (on) => set({ follow: on }),
   setTimebase: (t) => set({ timebase: t }),
+  setFps: (fps) => set({ fps }),
 
   setElf: (path, count) => set({ elfPath: path, elfLoaded: true, symbolCount: count }),
 

@@ -103,7 +103,6 @@ export function ConfigPanel({ uid, terminalRef, onOpenMultiString }: ConfigPanel
 
   const {
     running,
-    error,
     displayMode,
     inputMode,
     localEcho,
@@ -397,13 +396,6 @@ export function ConfigPanel({ uid, terminalRef, onOpenMultiString }: ConfigPanel
           多字符串
         </Button>
       </section>
-
-      {/* 错误信息 */}
-      {error && (
-        <div className="rounded border border-red-500/30 bg-red-500/10 p-1.5 text-[10px] text-red-500">
-          {error}
-        </div>
-      )}
 
       <SaveFormatDialog open={showSaveDialog} onOpenChange={setShowSaveDialog} onConfirm={handleSave} dataSize={dataSize} />
     </div>

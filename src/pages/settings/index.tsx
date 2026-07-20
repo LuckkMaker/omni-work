@@ -107,16 +107,7 @@ export default function SettingsPage() {
         </CardContent>
       </Card>
 
-      <Card className="mt-4">
-        <CardHeader>
-          <CardTitle>常规</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <p className="text-sm text-muted-foreground">暂无可配置项</p>
-        </CardContent>
-      </Card>
-
-      {/* 关于：应用版本、后端版本、Python、SQLite、数据库、pyOCD 等 */}
+      {/* 关于：应用版本、后端版本、数据库版本、数据库路径 */}
       <Card className="mt-4">
         <CardHeader>
           <CardTitle>关于</CardTitle>
@@ -143,20 +134,8 @@ export default function SettingsPage() {
               <dt className="text-muted-foreground">后端版本</dt>
               <dd className="font-mono break-all">{sysInfo.backend_version || '—'}</dd>
 
-              <dt className="text-muted-foreground">Python 版本</dt>
-              <dd className="font-mono break-all">{sysInfo.python_version || '—'}</dd>
-
-              <dt className="text-muted-foreground">运行平台</dt>
-              <dd className="font-mono break-all">{sysInfo.platform || '—'}</dd>
-
-              <dt className="text-muted-foreground">SQLite 版本</dt>
-              <dd className="font-mono break-all">{sysInfo.sqlite_version || '—'}</dd>
-
               <dt className="text-muted-foreground">数据库版本</dt>
               <dd className="font-mono break-all">{sysInfo.db_version || '—'}</dd>
-
-              <dt className="text-muted-foreground">pyOCD 版本</dt>
-              <dd className="font-mono break-all">{sysInfo.pyocd_version || '—'}</dd>
 
               <dt className="text-muted-foreground">数据库路径</dt>
               <dd className="font-mono text-xs break-all">{sysInfo.db_path || '—'}</dd>

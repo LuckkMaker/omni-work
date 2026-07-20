@@ -805,24 +805,23 @@ class MonitorBackend:
             if filter_str and filter_str.lower() not in name.lower():
                 continue
 
-            # 优先用 DWARF 类型信息；未命中回退到 size 猜测
+            # 优先用 DWARF 类型信息；未命中或类型解析失败回退到 size 猜测
             ti = dwarf_cache.get(name)
-            if ti is not None:
+            source_file = ti.get("source_file", "unknown") if ti is not None else "unknown"
+            if ti is not None and "is_array" in ti:
+                # 类型解析成功
                 is_array = bool(ti["is_array"])
                 elem_type = ti["elem_type"]
                 elem_count = int(ti["elem_count"])
                 elem_size = int(ti["elem_size"])
-                # source_file 取自 DWARF 缓存，缺失时回退 "unknown"
-                source_file = ti.get("source_file", "unknown")
                 # 数组时 type 设为 elem_type，size 仍为整个符号大小（向后兼容）
                 sym_type_str = elem_type
             else:
+                # 无 DWARF 或类型解析失败：回退 size 猜测，但仍保留 source_file
                 is_array = False
                 elem_type = self._type_from_symbol(info)
                 elem_count = 1
                 elem_size = info.size if info.size else TYPE_MAP[elem_type][1]
-                # 无 DWARF 信息时无法获知源文件
-                source_file = "unknown"
                 sym_type_str = elem_type
 
             symbols.append({
@@ -921,8 +920,13 @@ class MonitorBackend:
                 try:
                     ti = self._resolve_var_type(die, die_by_offset, cu)
                     if ti is not None:
-                        # 在类型信息基础上追加 source_file，保留原有字段
+                        # 类型解析成功：在类型信息基础上追加 source_file
                         cache[name] = {**ti, "source_file": cu_name}
+                    else:
+                        # 类型解析失败（如 struct/union/pointer/无 DW_AT_type）：
+                        # 仍记录 source_file，类型字段留空，get_symbols 时走 size 猜测回退。
+                        # 这样即使类型不可解析，变量仍能按源文件分组显示。
+                        cache[name] = {"source_file": cu_name}
                 except Exception as e:
                     logger.debug(f"Monitor: DWARF 解析符号 {name} 失败: {e}")
         return cache
