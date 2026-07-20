@@ -171,8 +171,8 @@ export function HexViewer({ base64Data, baseAddress, byteWidth, diffBase64, diff
   const onScrollSyncRef = useRef(onScrollSync)
   onScrollSyncRef.current = onScrollSync
 
-  // 每行固定 8 字节，byteWidth 控制显示哪些分组视图（1B/2B/4B）
-  const bytesPerRow = 8
+  // 每行固定 16 字节（标准十六进制编辑器宽度），byteWidth 控制字分组方式
+  const bytesPerRow = 16
 
   const data = useMemo(() => decodeBase64(base64Data), [base64Data])
   const diffData = useMemo(() => diffBase64 ? decodeBase64(diffBase64) : null, [diffBase64])
@@ -251,21 +251,11 @@ export function HexViewer({ base64Data, baseAddress, byteWidth, diffBase64, diff
         }
       }
 
-      // 根据 byteWidth 决定显示哪些分组视图
-      // 1B: 显示 1B + 2B + 4B 三组（逗号分隔）
-      // 2B: 显示 2B + 4B 两组（逗号分隔）
-      // 4B: 只显示 4B 一组
-      const groups: HexGroup[] = []
-      if (byteWidth === 1) {
-        groups.push(buildGroup(1, offset))
-        groups.push(buildGroup(2, offset))
-        groups.push(buildGroup(4, offset))
-      } else if (byteWidth === 2) {
-        groups.push(buildGroup(2, offset))
-        groups.push(buildGroup(4, offset))
-      } else {
-        groups.push(buildGroup(4, offset))
-      }
+      // byteWidth 选择唯一的字分组方式（标准十六进制编辑器行为）：
+      // 1B: 16 个单字节单元，空格分隔
+      // 2B: 8 个双字节词，空格分隔，词内无空格（ABCD）
+      // 4B: 4 个四字节词，空格分隔，词内无空格（ABCDEF01）
+      const groups: HexGroup[] = [buildGroup(byteWidth, offset)]
 
       result.push({
         offset,
@@ -354,27 +344,39 @@ export function HexViewer({ base64Data, baseAddress, byteWidth, diffBase64, diff
               )}
             >
               <span className="shrink-0 text-muted-foreground leading-5">{row.addr}</span>
-              {/* Hex groups（逗号分隔的多组视图：1B/2B/4B） */}
+              {/* Hex 数据：按 byteWidth 分组显示，8 字节中线处加额外空格 */}
               <span className="shrink-0 flex items-center leading-5">
                 {row.groups.map((group, gi) => (
                   <span key={gi} className="flex items-center">
-                    {gi > 0 && <span className="text-muted-foreground px-0.5">,</span>}
-                    {group.cells.map((cell, ci) => (
-                      <span key={ci} className="flex">
-                        {ci > 0 && <span>{' '}</span>}
-                        <span className={cn(cell.diff && 'bg-red-500/30 text-red-600 dark:text-red-400 rounded px-0.5')}>
-                          {cell.hex}
+                    {group.cells.map((cell, ci) => {
+                      // 8 字节中线：前 8 字节后加更宽间距（标准十六进制编辑器习惯）
+                      const isMidpoint = ci === (8 / group.width)
+                      return (
+                        <span key={ci} className="flex items-center">
+                          {ci > 0 && <span className={isMidpoint ? 'w-[1.5ch]' : 'w-[0.5ch]'} />}
+                          <span className={cn('font-mono', cell.diff && 'bg-red-500/30 text-red-600 dark:text-red-400 rounded px-0.5')}>
+                            {cell.hex}
+                          </span>
                         </span>
-                      </span>
-                    ))}
+                      )
+                    })}
                   </span>
                 ))}
               </span>
-              {/* ASCII */}
-              <span className="text-muted-foreground flex leading-5">
-                {row.ascii.map((a, i) => (
-                  <span key={i} className={cn(a.diff && 'bg-red-500/30 text-red-600 dark:text-red-400 rounded px-0.5')}>
-                    {a.ch}
+              {/* ASCII（按 byteWidth 分组对齐 hex 列） */}
+              <span className="text-muted-foreground flex items-center leading-5 font-mono">
+                {Array.from({ length: 16 / byteWidth }, (_, gi) => (
+                  <span key={gi} className="flex items-center">
+                    {gi > 0 && <span className={gi === 8 / byteWidth ? 'w-[1.5ch]' : 'w-[0.5ch]'} />}
+                    {Array.from({ length: byteWidth }, (_, ci) => {
+                      const idx = gi * byteWidth + ci
+                      const a = row.ascii[idx]
+                      return (
+                        <span key={ci} className={cn('w-[0.625ch] text-center', a?.diff && 'bg-red-500/30 text-red-600 dark:text-red-400 rounded')}>
+                          {a?.ch ?? ' '}
+                        </span>
+                      )
+                    })}
                   </span>
                 ))}
               </span>

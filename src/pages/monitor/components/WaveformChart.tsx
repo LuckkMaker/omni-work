@@ -27,8 +27,8 @@ interface Props {
   onCursorSelect?: (m: CursorMeasurement | null) => void
 }
 
-/** 最大渲染点数（超过时做 min/max 降采样） */
-const MAX_RENDER_POINTS = 5000
+/** 最大渲染点数（超过时做 min/max 降采样保留波形形状） */
+const MAX_RENDER_POINTS = 20000
 /** Y 轴自适应的边距比例（上下各留 10%） */
 const Y_PADDING = 0.1
 /** Y 轴 hysteresis：新范围与旧范围重叠超过此比例时不更新，避免频繁跳动 */
@@ -85,21 +85,61 @@ export function WaveformChart({
       return { data: [[] as number[], ...series.map(() => [] as number[])] as uPlot.AlignedData, series }
     }
 
-    // 降采样：如果点数超过上限，等间隔抽样
-    const step = pts.length > MAX_RENDER_POINTS
-      ? Math.ceil(pts.length / MAX_RENDER_POINTS)
-      : 1
+    // 降采样：点数超过上限时用 min/max 降采样（每桶取最小+最大值，保留波形形状）
+    // 等间隔抽样会丢失峰值导致正弦波失真成锯齿，min/max 能保真
+    const needDownsample = pts.length > MAX_RENDER_POINTS
+    const bucketSize = needDownsample ? Math.ceil(pts.length / MAX_RENDER_POINTS) : 1
 
     const tArr: number[] = []
     const valArrays: number[][] = series.map(() => [])
 
-    for (let i = 0; i < pts.length; i += step) {
-      const pt = pts[i]
-      tArr.push(pt.t_ms / 1000) // 转为秒
-      series.forEach((s, si) => {
-        const v = pt.values.find((x) => x.id === s.variable.id)
-        valArrays[si].push(v?.value ?? null as any)
-      })
+    if (!needDownsample) {
+      // 无需降采样：直接取每个点
+      for (let i = 0; i < pts.length; i++) {
+        const pt = pts[i]
+        tArr.push(pt.t_ms / 1000)
+        series.forEach((s, si) => {
+          const v = pt.values.find((x) => x.id === s.variable.id)
+          valArrays[si].push(v?.value ?? null as any)
+        })
+      }
+    } else {
+      // min/max 降采样：每个桶输出 min 和 max 两个点（保持波形包络）
+      for (let b = 0; b < pts.length; b += bucketSize) {
+        const end = Math.min(b + bucketSize, pts.length)
+        // 桶内时间取首点（min 和 max 共用同一时间戳会导致垂直线，但 uPlot 会正确渲染）
+        const tFirst = pts[b].t_ms / 1000
+        const tLast = pts[end - 1].t_ms / 1000
+        tArr.push(tFirst)
+        series.forEach((s, si) => {
+          let min: number | null = null
+          let max: number | null = null
+          for (let j = b; j < end; j++) {
+            const v = pts[j].values.find((x) => x.id === s.variable.id)
+            const val = v?.value
+            if (val == null) continue
+            if (min == null || val < min) min = val
+            if (max == null || val > max) max = val
+          }
+          // 同一桶的 min/max 先存，后续 push max（order: min then max）
+          ;(valArrays[si] as (number | null)[]).push(min)
+        })
+        // 桶末尾再 push 一次 max（确保峰值可见）
+        if (tLast !== tFirst) tArr.push(tLast)
+        else tArr.push(tFirst + 1e-9) // 避免时间戳完全相同
+        series.forEach((s, si) => {
+          let min: number | null = null
+          let max: number | null = null
+          for (let j = b; j < end; j++) {
+            const v = pts[j].values.find((x) => x.id === s.variable.id)
+            const val = v?.value
+            if (val == null) continue
+            if (min == null || val < min) min = val
+            if (max == null || val > max) max = val
+          }
+          ;(valArrays[si] as (number | null)[]).push(max)
+        })
+      }
     }
 
     return {

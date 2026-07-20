@@ -88,6 +88,8 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
   const transport = useMonitorStore((s) => s.transport)
   const elfPath = useMonitorStore((s) => s.elfPath)
   const elfLoaded = useMonitorStore((s) => s.elfLoaded)
+  const elfChanged = useMonitorStore((s) => s.elfChanged)
+  const setElfChanged = useMonitorStore((s) => s.setElfChanged)
   const symbolCount = useMonitorStore((s) => s.symbolCount)
   const rateHz = useMonitorStore((s) => s.rateHz)
   const follow = useMonitorStore((s) => s.follow)
@@ -102,14 +104,18 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
   const addVariable = useMonitorStore((s) => s.addVariable)
   const removeVariable = useMonitorStore((s) => s.removeVariable)
   const setChannel = useMonitorStore((s) => s.setChannel)
+  const registerArrayGroup = useMonitorStore((s) => s.registerArrayGroup)
+  const removeArrayGroup = useMonitorStore((s) => s.removeArrayGroup)
   const pushNotification = useNotificationStore((s) => s.push)
 
   // ELF 加载与符号浏览状态
   const [loading, setLoading] = useState(false)
   const [symbols, setSymbols] = useState<MonitorSymbol[]>([])
   const [filter, setFilter] = useState('')
-  // 已添加到监视的符号名集合（用于复选框状态同步）
+  // 已添加到监视的符号名集合（与 store variables 同步：WatchPanel 删除变量时自动移除）
   const [added, setAdded] = useState<Set<string>>(new Set())
+  // 用户勾选的待添加符号名集合（复选框勾选 = 待添加，点击[添加到监视]后批量加入 watch）
+  const [checked, setChecked] = useState<Set<string>>(new Set())
   // 数组已添加的元素索引（symName -> Set<elemIndex>）
   const [addedElems, setAddedElems] = useState<Record<string, Set<number>>>({})
   // 展开的数组符号（二级元素列表）
@@ -143,7 +149,7 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
       groups.get(file)!.push(sym)
     }
     // 每组内按名称排序
-    for (const arr of groups.values()) arr.sort((a, b) => a.name.localeCompare(b.name))
+    for (const arr of Array.from(groups.values())) arr.sort((a, b) => a.name.localeCompare(b.name))
     return Array.from(groups.entries()).sort((a, b) => a[0].localeCompare(b[0]))
   }, [symbols, filter])
 
@@ -161,6 +167,80 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
   useEffect(() => {
     if (elfLoaded) fetchSymbols()
   }, [elfLoaded, fetchSymbols])
+
+  // ── added 集合与 store variables 同步 ──
+  // WatchPanel 删除变量时 store variables 变化，此处自动移除不再存在的符号名
+  useEffect(() => {
+    const storeNames = new Set<string>()
+    for (const v of variables) {
+      // 数组元素名为 baseName[idx]，取 baseName
+      const baseName = v.name.replace(/\[\d+\]$/, '')
+      storeNames.add(baseName)
+    }
+    setAdded((prev) => {
+      let changed = false
+      const next = new Set<string>()
+      for (const name of prev) {
+        if (storeNames.has(name)) next.add(name)
+        else changed = true
+      }
+      return changed ? next : prev
+    })
+    // 同步清理 checked 中已添加的（已添加的不应再处于待添加状态）
+    setChecked((prev) => {
+      let changed = false
+      const next = new Set<string>()
+      for (const name of prev) {
+        if (storeNames.has(name)) { changed = true; continue }
+        next.add(name)
+      }
+      return changed ? next : prev
+    })
+  }, [variables])
+
+  // ── 批量添加：将所有勾选（checked）的变量一次性加入 watch 监视 ──
+  const handleBatchAdd = useCallback(async () => {
+    if (!uid || checked.size === 0) return
+    setLoading(true)
+    let okCount = 0
+    for (const sym of symbols) {
+      if (!checked.has(sym.name)) continue
+      if (sym.is_array) {
+        // 数组：只添加首元素（elem_index=0），Watch 面板可展开
+        try {
+          const res = await monitorService.addVariable(uid, {
+            name: sym.name, address: sym.address, type: sym.elem_type, elem_index: 0,
+          })
+          if (res.success) {
+            addVariable(res.variable)
+            registerArrayGroup({
+              baseName: sym.name, elemCount: sym.elem_count, elemType: sym.elem_type,
+              baseAddress: sym.address, elemSize: sym.elem_size, firstElemId: res.variable.id,
+            })
+            okCount++
+          }
+        } catch { /* ignore */ }
+        setAddedElems((m) => { const c = { ...m }; c[sym.name] = new Set([0]); return c })
+      } else {
+        try {
+          const res = await monitorService.addVariable(uid, {
+            name: sym.name, address: sym.address, type: sym.type,
+          })
+          if (res.success) { addVariable(res.variable); okCount++ }
+        } catch { /* ignore */ }
+      }
+      setAdded((s) => { const n = new Set(s); n.add(sym.name); return n })
+    }
+    setChecked(new Set())
+    setLoading(false)
+    if (okCount > 0) {
+      pushNotification({
+        type: 'success', title: '已添加到监视',
+        message: `${okCount} 个变量`,
+        autoClose: true, autoCloseDelay: 2000,
+      })
+    }
+  }, [uid, checked, symbols, addVariable, registerArrayGroup, pushNotification])
 
   // ── 加载 ELF 文件（只支持 elf/axf）──
   const handleLoadElf = useCallback(async () => {
@@ -186,6 +266,7 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
         })
         setSymbols(symRes.symbols)
         setAdded(new Set())
+        setChecked(new Set())
         setAddedElems({})
         setExpandedArrays(new Set())
       }
@@ -200,6 +281,46 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
     }
   }, [uid, setElf, pushNotification])
 
+  // ── 重新加载已加载的 ELF（用已存路径，不弹文件框）──
+  const reloadElf = useCallback(async () => {
+    if (!uid || !elfPath) return
+    setLoading(true)
+    try {
+      const res = await monitorService.loadElf(uid, elfPath)
+      setElf(elfPath, res.symbol_count)
+      setElfChanged(false)
+      fetchSymbols()
+      pushNotification({
+        type: 'success', title: 'ELF 已重新加载',
+        message: `${res.symbol_count} 个符号`,
+        autoClose: true, autoCloseDelay: 2000,
+      })
+    } catch (e) {
+      pushNotification({
+        type: 'error', title: 'ELF 重载失败',
+        message: e instanceof Error ? e.message : String(e),
+        autoClose: true, autoCloseDelay: 5000,
+      })
+    } finally {
+      setLoading(false)
+    }
+  }, [uid, elfPath, setElf, setElfChanged, fetchSymbols, pushNotification])
+
+  // ── ELF 文件变化轮询：采样未运行时每 5 秒检测 mtime，变化则提示重载 ──
+  useEffect(() => {
+    if (!uid || !elfLoaded || !elfPath || running) return
+    let active = true
+    const check = async () => {
+      try {
+        const r = await monitorService.checkElfChanged(uid)
+        if (active && r.changed) setElfChanged(true)
+      } catch { /* ignore */ }
+    }
+    check()
+    const id = setInterval(check, 5000)
+    return () => { active = false; clearInterval(id) }
+  }, [uid, elfLoaded, elfPath, running, setElfChanged])
+
   // ── 分组折叠 ──
   const toggleGroup = (file: string) => {
     setCollapsedGroups((s) => {
@@ -210,47 +331,34 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
     })
   }
 
-  // ── 标量/数组整体勾选 → 即时添加/移除监视 ──
+  // ── 复选框勾选：切换 checked 状态（待添加），不立即加入 watch ──
+  // 已添加到 watch 的变量：点击复选框 = 移除（乐观更新，404 静默）
   const toggleSelect = async (sym: MonitorSymbol) => {
     if (!uid) return
     const isAdded = added.has(sym.name)
     if (isAdded) {
-      // 移除：找到该符号对应的所有监视变量并删除
+      // 已添加 → 点击 = 移除
       const toRemove = variables.filter((v) => v.name === sym.name || v.name.startsWith(`${sym.name}[`))
       for (const v of toRemove) {
+        removeVariable(v.id)
         try {
           await monitorService.removeVariable(uid, v.id)
-          removeVariable(v.id)
-        } catch { /* ignore */ }
+        } catch (e) {
+          const status = (e as { response?: { status?: number } })?.response?.status
+          if (status === 404) continue
+        }
       }
       setAdded((s) => { const n = new Set(s); n.delete(sym.name); return n })
       setAddedElems((m) => { const c = { ...m }; delete c[sym.name]; return c })
+      removeArrayGroup(sym.name)
     } else {
-      // 添加
-      if (sym.is_array) {
-        // 数组整体 = 全部元素
-        for (let i = 0; i < sym.elem_count; i++) {
-          try {
-            const res = await monitorService.addVariable(uid, {
-              name: sym.name, address: sym.address, type: sym.elem_type, elem_index: i,
-            })
-            if (res.success) addVariable(res.variable)
-          } catch { /* ignore */ }
-        }
-        setAddedElems((m) => {
-          const c = { ...m }
-          c[sym.name] = new Set(Array.from({ length: sym.elem_count }, (_, i) => i))
-          return c
-        })
-      } else {
-        try {
-          const res = await monitorService.addVariable(uid, {
-            name: sym.name, address: sym.address, type: sym.type,
-          })
-          if (res.success) addVariable(res.variable)
-        } catch { /* ignore */ }
-      }
-      setAdded((s) => { const n = new Set(s); n.add(sym.name); return n })
+      // 未添加 → 点击 = 切换 checked（待添加）状态
+      setChecked((s) => {
+        const n = new Set(s)
+        if (n.has(sym.name)) n.delete(sym.name)
+        else n.add(sym.name)
+        return n
+      })
     }
   }
 
@@ -265,18 +373,22 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
   }
 
   // ── 数组元素勾选 → 即时添加/移除监视（不连续多选）──
+  // 注意：数组整体（toggleSelect）走批量添加流程；单个元素仍保持即时添加/移除
   const toggleElem = async (sym: MonitorSymbol, idx: number) => {
     if (!uid) return
     const elemSet = addedElems[sym.name]
     const isAdded = elemSet?.has(idx) ?? false
     if (isAdded) {
-      // 移除单个元素
+      // 移除单个元素（乐观更新，404 静默）
       const varToRemove = variables.find((v) => v.name === `${sym.name}[${idx}]`)
       if (varToRemove) {
+        removeVariable(varToRemove.id)
         try {
           await monitorService.removeVariable(uid, varToRemove.id)
-          removeVariable(varToRemove.id)
-        } catch { /* ignore */ }
+        } catch (e) {
+          const status = (e as { response?: { status?: number } })?.response?.status
+          if (status !== 404) { /* 其他错误忽略，保持静默 */ }
+        }
       }
       setAddedElems((m) => {
         const c = { ...m }
@@ -307,15 +419,20 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
   // ── 删除监视变量 ──
   const handleRemoveVar = useCallback(async (id: string) => {
     if (!uid) return
+    // 乐观更新：先从 store 移除，避免连续点击/并发移除撞 404
+    removeVariable(id)
     try {
       await monitorService.removeVariable(uid, id)
-      removeVariable(id)
     } catch (e) {
-      pushNotification({
-        type: 'error', title: '移除失败',
-        message: e instanceof Error ? e.message : String(e),
-        autoClose: true, autoCloseDelay: 3000,
-      })
+      const status = (e as { response?: { status?: number } })?.response?.status
+      const msg = e instanceof Error ? e.message : String(e)
+      if (status !== 404 && !/404|not found/i.test(msg)) {
+        pushNotification({
+          type: 'error', title: '移除失败',
+          message: msg,
+          autoClose: true, autoCloseDelay: 3000,
+        })
+      }
     }
   }, [uid, removeVariable, pushNotification])
 
@@ -440,6 +557,16 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
             <span className="shrink-0">· {symbolCount} 符号</span>
           </div>
         )}
+        {elfChanged && (
+          <div className="flex items-center gap-2 rounded border border-yellow-500/50 bg-yellow-500/10 px-2 py-1.5 text-[11px] text-yellow-700 dark:text-yellow-400">
+            <span className="flex-1">ELF 文件已变化，建议重新加载</span>
+            <button
+              className="shrink-0 font-medium underline hover:no-underline"
+              onClick={reloadElf}
+              disabled={loading}
+            >重新加载</button>
+          </div>
+        )}
 
         {/* 采样率 + FPS */}
         <div className="grid grid-cols-2 gap-1.5">
@@ -515,23 +642,37 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
                   {/* 组内符号 */}
                   {!collapsed && (
                     <table className="w-full text-[11px]">
+                      <thead className="sticky top-0 bg-background z-10">
+                        <tr className="text-[10px] text-muted-foreground border-b border-border">
+                          <th className="w-5 px-1 py-0.5 font-medium text-left"></th>
+                          <th className="px-1 py-0.5 font-medium text-left">Name</th>
+                          <th className="px-1 py-0.5 font-medium text-left w-20">Address</th>
+                          <th className="px-1 py-0.5 font-medium text-left w-16">Type</th>
+                          <th className="px-1 py-0.5 font-medium text-center w-10">Size</th>
+                          <th className="px-1 py-0.5 font-medium text-right w-16">Value</th>
+                        </tr>
+                      </thead>
                       <tbody>
                         {syms.map((sym) => {
                           const isSel = added.has(sym.name)
                           const isExp = expandedArrays.has(sym.name)
                           const partSet = addedElems[sym.name]
+                          const isChecked = checked.has(sym.name)  // 待添加勾选状态
+                          // 已添加变量的最新值（从 lastValues 获取）
+                          const addedVar = variables.find((v) => v.name === sym.name || v.name === `${sym.name}[0]`)
+                          const val = addedVar ? lastValues.get(addedVar.id) : undefined
                           return (
                             <Fragment key={sym.name}>
                               <tr
-                                className={cn('cursor-pointer border-b border-border/30', isSel && 'bg-primary/5')}
-                                onClick={() => toggleSelect(sym)}
+                                className={cn('border-b border-border/30', isSel && 'bg-primary/5', !isSel && isChecked && 'bg-primary/3')}
                               >
-                                <td className="w-5 px-1 py-0.5" onClick={(e) => e.stopPropagation()}>
+                                <td className="w-5 px-1 py-0.5">
                                   <input
                                     type="checkbox"
                                     className="size-3 cursor-pointer"
-                                    checked={isSel}
+                                    checked={isSel || isChecked}
                                     onChange={() => toggleSelect(sym)}
+                                    title={isSel ? '已添加到监视（点击移除）' : isChecked ? '已勾选（点击取消）' : '点击勾选待添加'}
                                   />
                                 </td>
                                 <td className="px-1 py-0.5">
@@ -551,12 +692,15 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
                                     </span>
                                   </div>
                                 </td>
+                                <td className="px-1 py-0.5 font-mono text-[10px] w-20">
+                                  0x{sym.address.toString(16).toUpperCase().padStart(8, '0')}
+                                </td>
                                 <td className="px-1 py-0.5 font-mono text-[10px] w-16">
                                   {sym.is_array ? `${sym.elem_type}[${sym.elem_count}]` : sym.type}
                                 </td>
                                 <td className="px-1 py-0.5 font-mono text-[10px] text-center w-10">{sym.size}</td>
-                                <td className="px-1 py-0.5 font-mono text-[10px] w-16">
-                                  0x{sym.address.toString(16).toUpperCase().padStart(8, '0').slice(-4)}
+                                <td className="px-1 py-0.5 font-mono text-[10px] text-right w-16">
+                                  {val != null ? val : ''}
                                 </td>
                               </tr>
                               {/* 数组元素二级列表（展开） */}
@@ -564,7 +708,7 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
                                 <>
                                   {partSet && partSet.size > 0 && !isSel && (
                                     <tr className="bg-primary/5">
-                                      <td colSpan={5} className="px-2 py-0.5 text-[10px] text-primary">
+                                      <td colSpan={6} className="px-2 py-0.5 text-[10px] text-primary">
                                         已监视 {partSet.size}/{sym.elem_count} 个元素
                                       </td>
                                     </tr>
@@ -575,25 +719,32 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
                                     return (
                                       <tr
                                         key={`${sym.name}[${i}]`}
-                                        className={cn('cursor-pointer bg-muted/10', checked && 'bg-primary/5')}
-                                        onClick={() => toggleElem(sym, i)}
+                                        className={cn('bg-muted/10', checked && 'bg-primary/5')}
                                       >
-                                        <td className="w-5 px-1 py-0.5" onClick={(e) => e.stopPropagation()}>
+                                        <td className="w-5 px-1 py-0.5">
                                           <input
                                             type="checkbox"
                                             className="size-3 cursor-pointer"
                                             checked={checked}
-                                            disabled={isSel}
                                             onChange={() => toggleElem(sym, i)}
+                                            disabled={isSel}
+                                            title={checked ? '已添加到监视（点击移除）' : '点击勾选待添加'}
                                           />
                                         </td>
                                         <td className="px-1 py-0.5 pl-4 font-mono text-[10px]">
                                           {sym.name}[{i}]
                                         </td>
+                                        <td className="px-1 py-0.5 font-mono text-[10px] w-20">
+                                          0x{elemAddr.toString(16).toUpperCase().padStart(8, '0')}
+                                        </td>
                                         <td className="px-1 py-0.5 font-mono text-[10px] w-16">{sym.elem_type}</td>
                                         <td className="px-1 py-0.5 font-mono text-[10px] text-center w-10">{sym.elem_size}</td>
-                                        <td className="px-1 py-0.5 font-mono text-[10px] w-16">
-                                          0x{elemAddr.toString(16).toUpperCase().padStart(8, '0').slice(-4)}
+                                        <td className="px-1 py-0.5 font-mono text-[10px] text-right w-16">
+                                          {(() => {
+                                            const ev = variables.find((v) => v.name === `${sym.name}[${i}]`)
+                                            const eval_ = ev ? lastValues.get(ev.id) : undefined
+                                            return eval_ != null ? eval_ : ''
+                                          })()}
                                         </td>
                                       </tr>
                                     )
@@ -663,130 +814,23 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
             >
               <Plus className="size-3" /> 手动地址
             </button>
+            <button
+              className="flex items-center gap-1 text-[10px] text-primary hover:underline disabled:opacity-40 disabled:no-underline"
+              onClick={handleBatchAdd}
+              disabled={checked.size === 0 || loading || !uid}
+              title={checked.size === 0 ? '请先勾选变量' : `将 ${checked.size} 个勾选变量添加到监视`}
+            >
+              {loading ? <Loader2 className="size-3 animate-spin" /> : <Plus className="size-3" />}
+              添加到监视{checked.size > 0 && `(${checked.size})`}
+            </button>
             <span className="ml-auto text-[10px] text-muted-foreground">
-              勾选变量即添加到监视
+              勾选变量后点击「添加到监视」
             </span>
           </div>
         </div>
       )}
 
-      {/* ── 监视变量/通道列表 ── */}
-      <div className={cn('min-h-0 overflow-auto', !elfLoaded && 'flex-1')}>
-        {variables.length === 0 ? (
-          <div className="flex h-full items-center justify-center p-4">
-            <p className="text-center text-xs text-muted-foreground">
-              {elfLoaded ? '从上方选择变量添加' : '加载 ELF 文件后选择变量'}
-            </p>
-          </div>
-        ) : (
-          <div className="space-y-1 p-2">
-            {variables.map((v) => {
-              const ch = channels.find((c) => c.varId === v.id)
-              if (!ch) return null
-              return (
-                <div
-                  key={v.id}
-                  className={cn(
-                    'rounded border border-border bg-background p-2',
-                    !ch.visible && 'opacity-50',
-                  )}
-                >
-                  {/* 颜色 + 名称 + 显隐 + 删除 */}
-                  <div className="flex items-center gap-2">
-                    <input
-                      type="color"
-                      className="size-4 cursor-pointer rounded border-0 bg-transparent p-0"
-                      value={ch.color}
-                      onChange={(e) => setChannel(v.id, { color: e.target.value })}
-                      title="通道颜色"
-                    />
-                    <span className="flex-1 truncate text-xs font-medium" title={v.name}>{v.name}</span>
-                    <button
-                      className="text-muted-foreground hover:text-foreground"
-                      onClick={() => setChannel(v.id, { visible: !ch.visible })}
-                      title={ch.visible ? '隐藏' : '显示'}
-                    >
-                      {ch.visible ? <Eye className="size-3.5" /> : <EyeOff className="size-3.5" />}
-                    </button>
-                    <button
-                      className="text-muted-foreground hover:text-destructive"
-                      onClick={() => handleRemoveVar(v.id)}
-                      title="删除变量"
-                    >
-                      <Trash2 className="size-3.5" />
-                    </button>
-                  </div>
-
-                  {/* 当前值 */}
-                  {running && (
-                    <div className="mt-1 text-xs font-mono tabular-nums text-muted-foreground">
-                      {lastValues.has(v.id) ? (lastValues.get(v.id) ?? 'N/A') : '—'}
-                    </div>
-                  )}
-
-                  {/* Y 偏移/缩放（显示配置） */}
-                  <div className="mt-1.5 flex items-center gap-1.5">
-                    <label className="text-[10px] text-muted-foreground" title="Y 轴偏移：波形垂直方向的平移量（数值加减）">
-                      偏移
-                    </label>
-                    <input
-                      type="number"
-                      className="h-5 w-12 rounded border border-border bg-background px-1 text-[10px]"
-                      value={ch.yOffset}
-                      onChange={(e) => setChannel(v.id, { yOffset: Number(e.target.value) })}
-                      step="any"
-                      title="Y 轴偏移：波形垂直平移（数值加减）"
-                    />
-                    <label className="text-[10px] text-muted-foreground" title="Y 轴缩放：波形垂直方向的放大倍数（1=原始）">
-                      缩放
-                    </label>
-                    <input
-                      type="number"
-                      className="h-5 w-12 rounded border border-border bg-background px-1 text-[10px]"
-                      value={ch.yScale}
-                      onChange={(e) => setChannel(v.id, { yScale: Number(e.target.value) })}
-                      step="any"
-                      title="Y 轴缩放：垂直放大倍数（1=原始大小）"
-                    />
-                  </div>
-
-                  {/* 触发配置 */}
-                  <div className="mt-1.5 flex items-center gap-1.5">
-                    <label className="text-[10px] text-muted-foreground" title="触发方式：信号达到阈值时定格波形">触发</label>
-                    <select
-                      className="h-5 flex-1 rounded border border-border bg-background px-1 text-[10px]"
-                      value={ch.triggerMode}
-                      onChange={(e) => setChannel(v.id, { triggerMode: e.target.value as ChannelTriggerMode })}
-                      title="触发方式"
-                    >
-                      {TRIGGER_MODES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
-                    </select>
-                    {ch.triggerMode !== 'none' && (
-                      <>
-                        <label className="text-[10px] text-muted-foreground">阈值</label>
-                        <input
-                          type="number"
-                          className="h-5 w-14 rounded border border-border bg-background px-1 text-[10px]"
-                          value={ch.triggerLevel}
-                          onChange={(e) => setChannel(v.id, { triggerLevel: Number(e.target.value) })}
-                          step="any"
-                          title="触发阈值"
-                        />
-                      </>
-                    )}
-                  </div>
-
-                  {/* 地址 + 类型 */}
-                  <div className="mt-1 flex items-center gap-2 text-[10px] text-muted-foreground/70">
-                    <span className="font-mono">0x{v.address.toString(16).toUpperCase().padStart(8, '0')}</span>
-                    <span className="font-mono">{v.type}</span>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
-        )}
-      </div>
+      {/* 监视变量/通道配置已移至下方 Watch 面板：每行可展开配置偏移/缩放/触发 */}
     </div>
   )
 }

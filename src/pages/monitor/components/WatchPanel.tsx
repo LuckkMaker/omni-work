@@ -1,9 +1,17 @@
 import { useState } from 'react'
-import { Trash2 } from 'lucide-react'
-import { useMonitorStore } from '@/stores/monitor.store'
+import { Trash2, ChevronRight, ChevronDown, Eye, EyeOff } from 'lucide-react'
+import { useMonitorStore, type ArrayGroup } from '@/stores/monitor.store'
 import { useNotificationStore } from '@/stores/notification.store'
 import { monitorService } from '@/services/monitor.service'
 import { cn } from '@/lib/utils'
+
+/** 触发方式选项（与 ChannelConfig.triggerMode 对齐） */
+const TRIGGER_MODES: { value: 'none' | 'rising' | 'falling' | 'level'; label: string }[] = [
+  { value: 'none', label: '无' },
+  { value: 'rising', label: '上升沿' },
+  { value: 'falling', label: '下降沿' },
+  { value: 'level', label: '电平' },
+]
 
 interface Props {
   uid: string | null
@@ -14,9 +22,9 @@ interface Props {
 /**
  * Watch 监视面板
  *
- * 表头：Color | Name | Address | Size | Type | Value | Min | Max | Moving Average | Y Resolution | Y Offset | 操作
- * 其中 Min/Max/Moving Average/Y Resolution/Y Offset 属通道显示配置（ChannelConfig），
- * 可随变量配置一起持久化（JSON），与波形采样数据解耦。
+ * 表头：Color | Name | Address | Size | Type | Value | Min | Max | Moving Avg | Y Resolution | 展开 | 操作
+ * 其中 Min/Max/Moving Average/Y Resolution 属通道显示配置（ChannelConfig）。
+ * Y 偏移/Y 缩放/触发 放在每行的"展开二级区"中，避免列过多导致横向滚动。
  */
 export function WatchPanel({ uid, onCollapse }: Props) {
   const variables = useMonitorStore((s) => s.variables)
@@ -24,11 +32,23 @@ export function WatchPanel({ uid, onCollapse }: Props) {
   const samples = useMonitorStore((s) => s.samples)
   const running = useMonitorStore((s) => s.running)
   const removeVariable = useMonitorStore((s) => s.removeVariable)
+  const addVariable = useMonitorStore((s) => s.addVariable)
   const setChannel = useMonitorStore((s) => s.setChannel)
+  const arrayGroups = useMonitorStore((s) => s.arrayGroups)
+  const expandArrayGroup = useMonitorStore((s) => s.expandArrayGroup)
+  const collapseArrayGroup = useMonitorStore((s) => s.collapseArrayGroup)
+  const removeArrayGroup = useMonitorStore((s) => s.removeArrayGroup)
   const pushNotification = useNotificationStore((s) => s.push)
 
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editValue, setEditValue] = useState('')
+  /** 展开二级配置区的通道 id 集合 */
+  const [expandedRows, setExpandedRows] = useState<Set<string>>(new Set())
+  const toggleExpand = (id: string) => setExpandedRows((s) => {
+    const n = new Set(s)
+    if (n.has(id)) n.delete(id); else n.add(id)
+    return n
+  })
 
   // 取最新值
   const lastSample = samples[samples.length - 1]
@@ -44,16 +64,76 @@ export function WatchPanel({ uid, onCollapse }: Props) {
 
   const handleRemove = async (id: string) => {
     if (!uid) return
+    // 检查是否是数组组的首元素：移除首元素 = 移除整个数组组
+    const group = arrayGroups.find((g) => g.firstElemId === id)
+    if (group) {
+      const toRemove = variables.filter((v) => v.name.startsWith(`${group.baseName}[`))
+      for (const v of toRemove) {
+        removeVariable(v.id)
+        try {
+          await monitorService.removeVariable(uid, v.id)
+        } catch (e) {
+          const status = (e as { response?: { status?: number } })?.response?.status
+          if (status === 404) continue
+        }
+      }
+      removeArrayGroup(group.baseName)
+      return
+    }
+    // 普通变量移除（乐观更新，404 静默）
+    removeVariable(id)
     try {
       await monitorService.removeVariable(uid, id)
-      removeVariable(id)
     } catch (e) {
-      pushNotification({
-        type: 'error', title: '移除失败',
-        message: e instanceof Error ? e.message : String(e),
-        autoClose: true, autoCloseDelay: 3000,
-      })
+      const status = (e as { response?: { status?: number } })?.response?.status
+      const msg = e instanceof Error ? e.message : String(e)
+      if (status !== 404 && !/404|not found/i.test(msg)) {
+        pushNotification({
+          type: 'error', title: '移除失败',
+          message: msg,
+          autoClose: true, autoCloseDelay: 3000,
+        })
+      }
     }
+  }
+
+  /** 展开数组分组：添加 1..N-1 元素到监视 */
+  const handleExpandArray = async (group: ArrayGroup) => {
+    if (!uid) return
+    const newIds: string[] = []
+    for (let i = 1; i < group.elemCount; i++) {
+      try {
+        const res = await monitorService.addVariable(uid, {
+          name: group.baseName, address: group.baseAddress, type: group.elemType, elem_index: i,
+        })
+        if (res.success) {
+          addVariable(res.variable)
+          newIds.push(res.variable.id)
+        }
+      } catch { /* ignore */ }
+    }
+    expandArrayGroup(group.baseName, newIds)
+  }
+
+  /** 收起数组分组：移除非首元素（保留 elem_index=0） */
+  const handleCollapseArray = async (group: ArrayGroup) => {
+    if (!uid) return
+    const prefix = `${group.baseName}[`
+    const toRemove = variables.filter((v) => {
+      if (!v.name.startsWith(prefix)) return false
+      const idx = parseInt(v.name.slice(prefix.length, v.name.length - 1))
+      return idx > 0
+    })
+    for (const v of toRemove) {
+      removeVariable(v.id)
+      try {
+        await monitorService.removeVariable(uid, v.id)
+      } catch (e) {
+        const status = (e as { response?: { status?: number } })?.response?.status
+        if (status === 404) continue
+      }
+    }
+    collapseArrayGroup(group.baseName)
   }
 
   const handleWriteValue = async (id: string) => {
@@ -109,7 +189,7 @@ export function WatchPanel({ uid, onCollapse }: Props) {
               <th className="border border-border px-1.5 py-1 text-center font-medium w-16">Max</th>
               <th className="border border-border px-1.5 py-1 text-center font-medium w-12">Moving Avg</th>
               <th className="border border-border px-1.5 py-1 text-center font-medium w-16">Y Resolution</th>
-              <th className="border border-border px-1.5 py-1 text-center font-medium w-16">Y Offset</th>
+              <th className="border border-border px-1 py-1 text-center font-medium w-8">⚙</th>
               <th className="border border-border w-8" />
             </tr>
           </thead>
@@ -125,7 +205,11 @@ export function WatchPanel({ uid, onCollapse }: Props) {
               const prevVal = prevValues.get(v.id)
               const changed = running && val !== undefined && prevVal !== undefined && val !== prevVal
               const ch = channels.find((c) => c.varId === v.id)
+              // 数组分组查找：首元素显示展开按钮，非首元素缩进显示
+              const arrGroup = arrayGroups.find((g) => g.firstElemId === v.id)
+              const subElemGroup = !arrGroup ? arrayGroups.find((g) => g.elemIds.includes(v.id) && g.firstElemId !== v.id) : null
               return (
+                <>
                 <tr
                   key={v.id}
                   className={i % 2 === 0 ? 'bg-background' : 'bg-muted/20'}
@@ -140,9 +224,26 @@ export function WatchPanel({ uid, onCollapse }: Props) {
                       title="通道颜色"
                     />
                   </td>
-                  {/* Name */}
+                  {/* Name（数组首元素显示展开/收起按钮，非首元素缩进） */}
                   <td className="border border-border px-2 py-1 truncate max-w-[160px]" title={v.name}>
-                    {v.name}
+                    <div className="flex items-center gap-0.5">
+                      {arrGroup && (
+                        <button
+                          className="shrink-0 text-muted-foreground hover:text-foreground"
+                          onClick={() => arrGroup.expanded ? handleCollapseArray(arrGroup) : handleExpandArray(arrGroup)}
+                          title={arrGroup.expanded ? `收起（当前显示全部 ${arrGroup.elemCount} 个元素）` : `展开全部 ${arrGroup.elemCount} 个元素`}
+                        >
+                          {arrGroup.expanded ? <ChevronDown className="size-3" /> : <ChevronRight className="size-3" />}
+                        </button>
+                      )}
+                      {subElemGroup && <span className="shrink-0 w-3.5" />}
+                      <span className={cn('truncate', subElemGroup && 'text-muted-foreground')}>
+                        {v.name}
+                      </span>
+                      {arrGroup && !arrGroup.expanded && (
+                        <span className="shrink-0 ml-1 text-[10px] text-muted-foreground">+{arrGroup.elemCount - 1}</span>
+                      )}
+                    </div>
                   </td>
                   {/* Address */}
                   <td className="border border-border px-2 py-1 font-mono">
@@ -224,28 +325,92 @@ export function WatchPanel({ uid, onCollapse }: Props) {
                       title="Y 轴分辨率（每格代表的数值，0=自动）"
                     />
                   </td>
-                  {/* Y Offset */}
-                  <td className="border border-border px-1 py-1">
-                    <input
-                      type="number"
-                      className="h-5 w-full bg-transparent text-center font-mono text-[11px] outline-none focus:bg-background focus:ring-1 focus:ring-primary rounded"
-                      value={ch?.yOffset ?? 0}
-                      onChange={(e) => setChannel(v.id, { yOffset: Number(e.target.value) })}
-                      step="any"
-                      title="Y 轴偏移"
-                    />
-                  </td>
-                  {/* 操作 */}
-                  <td className="border border-border px-1 text-center">
+                  {/* 展开二级配置区 */}
+                  <td className="border border-border px-1 py-1 text-center">
                     <button
-                      className="text-muted-foreground hover:text-destructive"
-                      onClick={() => handleRemove(v.id)}
-                      title="移除变量"
+                      className="text-muted-foreground hover:text-foreground"
+                      onClick={() => toggleExpand(v.id)}
+                      title="展开/收起 通道显示配置（偏移/缩放/触发）"
                     >
-                      <Trash2 className="size-3" />
+                      {expandedRows.has(v.id) ? <ChevronDown className="size-3.5" /> : <ChevronRight className="size-3.5" />}
                     </button>
                   </td>
+                  {/* 操作：隐藏/显示 + 移除 */}
+                  <td className="border border-border px-1 text-center">
+                    <div className="flex items-center justify-center gap-0.5">
+                      <button
+                        className={cn('hover:text-foreground', ch?.visible === false ? 'text-muted-foreground/50' : 'text-muted-foreground')}
+                        onClick={() => setChannel(v.id, { visible: !(ch?.visible ?? true) })}
+                        title={ch?.visible === false ? '显示通道' : '隐藏通道'}
+                      >
+                        {ch?.visible === false ? <EyeOff className="size-3" /> : <Eye className="size-3" />}
+                      </button>
+                      <button
+                        className="text-muted-foreground hover:text-destructive"
+                        onClick={() => handleRemove(v.id)}
+                        title="移除变量"
+                      >
+                        <Trash2 className="size-3" />
+                      </button>
+                    </div>
+                  </td>
                 </tr>
+                {/* 展开二级区：Y 偏移 / Y 缩放 / 触发方式 / 触发阈值 */}
+                {expandedRows.has(v.id) && (
+                  <tr key={`${v.id}-cfg`} className={i % 2 === 0 ? 'bg-background' : 'bg-muted/20'}>
+                    <td colSpan={12} className="border border-border px-2 py-1.5">
+                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 text-[11px]">
+                        <div className="flex items-center gap-1.5">
+                          <label className="text-muted-foreground" title="Y 轴偏移：波形垂直平移（数值加减）">偏移</label>
+                          <input
+                            type="number"
+                            className="h-5 w-16 rounded border border-border bg-background px-1 text-center font-mono outline-none focus:ring-1 focus:ring-primary"
+                            value={ch?.yOffset ?? 0}
+                            onChange={(e) => setChannel(v.id, { yOffset: Number(e.target.value) })}
+                            step="any"
+                            title="Y 轴偏移：波形垂直平移（数值加减）"
+                          />
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <label className="text-muted-foreground" title="Y 轴缩放：垂直放大倍数（1=原始）">缩放</label>
+                          <input
+                            type="number"
+                            className="h-5 w-16 rounded border border-border bg-background px-1 text-center font-mono outline-none focus:ring-1 focus:ring-primary"
+                            value={ch?.yScale ?? 1}
+                            onChange={(e) => setChannel(v.id, { yScale: Number(e.target.value) })}
+                            step="any"
+                            title="Y 轴缩放：垂直放大倍数（1=原始大小）"
+                          />
+                        </div>
+                        <div className="flex items-center gap-1.5">
+                          <label className="text-muted-foreground" title="触发方式：信号达到阈值时定格波形">触发</label>
+                          <select
+                            className="h-5 rounded border border-border bg-background px-1 outline-none focus:ring-1 focus:ring-primary"
+                            value={ch?.triggerMode ?? 'none'}
+                            onChange={(e) => setChannel(v.id, { triggerMode: e.target.value as 'none' | 'rising' | 'falling' | 'level' })}
+                            title="触发方式"
+                          >
+                            {TRIGGER_MODES.map((t) => <option key={t.value} value={t.value}>{t.label}</option>)}
+                          </select>
+                          {ch?.triggerMode && ch.triggerMode !== 'none' && (
+                            <>
+                              <label className="text-muted-foreground">阈值</label>
+                              <input
+                                type="number"
+                                className="h-5 w-18 rounded border border-border bg-background px-1 text-center font-mono outline-none focus:ring-1 focus:ring-primary"
+                                value={ch?.triggerLevel ?? 0}
+                                onChange={(e) => setChannel(v.id, { triggerLevel: Number(e.target.value) })}
+                                step="any"
+                                title="触发阈值"
+                              />
+                            </>
+                          )}
+                        </div>
+                      </div>
+                    </td>
+                  </tr>
+                )}
+                </>
               )
             })}
           </tbody>

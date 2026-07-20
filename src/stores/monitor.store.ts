@@ -1,5 +1,5 @@
 import { create } from 'zustand'
-import type { MonitorVariable, SamplePoint } from '@/services/monitor.service'
+import type { MonitorVariable, SamplePoint, MonitorVarType } from '@/services/monitor.service'
 
 /** 前端 ring buffer 容量上限（与后端对齐，5.2 阶段 uPlot 渲染用） */
 const MAX_SAMPLES = 100000
@@ -32,6 +32,26 @@ export interface ChannelConfig {
   triggerLevel: number
 }
 
+/** 数组变量分组（M6：数组在 Watch 面板以首元素展示，可展开/收起全部元素） */
+export interface ArrayGroup {
+  /** 数组基础名（不含 [n] 后缀） */
+  baseName: string
+  /** 元素个数 */
+  elemCount: number
+  /** 元素类型 */
+  elemType: MonitorVarType
+  /** 数组基地址 */
+  baseAddress: number
+  /** 元素字节数 */
+  elemSize: number
+  /** 首元素变量 ID */
+  firstElemId: string
+  /** 是否已展开（显示全部元素） */
+  expanded: boolean
+  /** 所有元素变量 ID（含首元素） */
+  elemIds: string[]
+}
+
 interface MonitorState {
   // ── 运行状态 ──
   running: boolean
@@ -45,6 +65,8 @@ interface MonitorState {
   // ── ELF ──
   elfPath: string | null
   elfLoaded: boolean
+  /** 已加载的 ELF 文件在磁盘上发生变化（轮询检测到 mtime 改变） */
+  elfChanged: boolean
   symbolCount: number
 
   // ── 变量 ──
@@ -62,18 +84,23 @@ interface MonitorState {
   fps: number
   channels: ChannelConfig[]
 
+  // ── 数组分组（M6：数组首元素+展开/收起）──
+  arrayGroups: ArrayGroup[]
+
   // ── actions ──
   setRunning: (running: boolean) => void
   setPaused: (paused: boolean) => void
   setStarting: (starting: boolean) => void
   setError: (error: string | null) => void
   setRateHz: (hz: number) => void
+  setActualRateHz: (hz: number) => void
   setTransport: (t: 'swd' | 'rtt') => void
   setFollow: (on: boolean) => void
   setTimebase: (t: number) => void
   setFps: (fps: number) => void
 
   setElf: (path: string, count: number) => void
+  setElfChanged: (v: boolean) => void
   setVariables: (vars: MonitorVariable[]) => void
   addVariable: (v: MonitorVariable) => void
   removeVariable: (id: string) => void
@@ -86,6 +113,15 @@ interface MonitorState {
   /** 同步通道配置（变量增删时） */
   syncChannels: () => void
   setChannel: (varId: string, patch: Partial<ChannelConfig>) => void
+
+  /** 注册数组分组（添加数组首元素时调用） */
+  registerArrayGroup: (g: { baseName: string; elemCount: number; elemType: MonitorVarType; baseAddress: number; elemSize: number; firstElemId: string }) => void
+  /** 展开数组分组（添加 1..N-1 元素后调用） */
+  expandArrayGroup: (baseName: string, newElemIds: string[]) => void
+  /** 收起数组分组（移除非首元素后调用） */
+  collapseArrayGroup: (baseName: string) => void
+  /** 移除数组分组（删除整个数组时调用） */
+  removeArrayGroup: (baseName: string) => void
 
   reset: () => void
 }
@@ -121,6 +157,7 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
 
   elfPath: null,
   elfLoaded: false,
+  elfChanged: false,
   symbolCount: 0,
 
   variables: [],
@@ -132,6 +169,7 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
   timebase: 1,
   fps: 30,
   channels: [],
+  arrayGroups: [],
 
   setRunning: (running) => set({ running }),
   setPaused: (paused) => set({ paused }),
@@ -144,7 +182,8 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
   setTimebase: (t) => set({ timebase: t }),
   setFps: (fps) => set({ fps }),
 
-  setElf: (path, count) => set({ elfPath: path, elfLoaded: true, symbolCount: count }),
+  setElf: (path, count) => set({ elfPath: path, elfLoaded: true, symbolCount: count, elfChanged: false }),
+  setElfChanged: (v) => set({ elfChanged: v }),
 
   setVariables: (vars) => {
     set({ variables: vars })
@@ -190,6 +229,30 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
     channels: s.channels.map((c) => (c.varId === varId ? { ...c, ...patch } : c)),
   })),
 
+  registerArrayGroup: (g) => set((s) => ({
+    arrayGroups: [...s.arrayGroups, { ...g, expanded: false, elemIds: [g.firstElemId] }],
+  })),
+
+  expandArrayGroup: (baseName, newElemIds) => set((s) => ({
+    arrayGroups: s.arrayGroups.map((g) =>
+      g.baseName === baseName
+        ? { ...g, expanded: true, elemIds: [...g.elemIds, ...newElemIds] }
+        : g
+    ),
+  })),
+
+  collapseArrayGroup: (baseName) => set((s) => ({
+    arrayGroups: s.arrayGroups.map((g) =>
+      g.baseName === baseName
+        ? { ...g, expanded: false, elemIds: g.elemIds.filter((id) => id === g.firstElemId) }
+        : g
+    ),
+  })),
+
+  removeArrayGroup: (baseName) => set((s) => ({
+    arrayGroups: s.arrayGroups.filter((g) => g.baseName !== baseName),
+  })),
+
   reset: () => set({
     running: false,
     paused: false,
@@ -198,5 +261,6 @@ export const useMonitorStore = create<MonitorState>((set, get) => ({
     samples: [],
     totalSamples: 0,
     channels: [],
+    arrayGroups: [],
   }),
 }))

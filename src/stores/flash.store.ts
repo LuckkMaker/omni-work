@@ -101,6 +101,11 @@ interface FlashStore {
   pendingBinPath: string | null
   showReadBackRangeDialog: boolean
   showCompareDialog: boolean
+  /** 填充内存对话框（数据 tab 的 Compare 旁与顶部工具栏共用） */
+  showFillDialog: boolean
+  fillAddress: string
+  fillSize: string
+  fillValue: string
 
   // ── 烧录状态 ──────────────────────────
   phase: FlashPhase
@@ -134,6 +139,10 @@ interface FlashStore {
   confirmBinAddress: (address: number) => Promise<void>
   setShowReadBackRangeDialog: (show: boolean) => void
   setShowCompareDialog: (show: boolean) => void
+  setShowFillDialog: (show: boolean) => void
+  setFillAddress: (v: string) => void
+  setFillSize: (v: string) => void
+  setFillValue: (v: string) => void
 
   // ── Flash 操作 ────────────────────────
   doCheckBlank: () => Promise<void>
@@ -173,6 +182,10 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
   pendingBinPath: null,
   showReadBackRangeDialog: false,
   showCompareDialog: false,
+  showFillDialog: false,
+  fillAddress: '0x08000000',
+  fillSize: '4096',
+  fillValue: '0xFF',
 
   phase: 'idle',
   progress: 0,
@@ -311,6 +324,10 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
 
   setShowReadBackRangeDialog: (show) => set({ showReadBackRangeDialog: show }),
   setShowCompareDialog: (show) => set({ showCompareDialog: show }),
+  setShowFillDialog: (show) => set({ showFillDialog: show }),
+  setFillAddress: (v) => set({ fillAddress: v }),
+  setFillSize: (v) => set({ fillSize: v }),
+  setFillValue: (v) => set({ fillValue: v }),
 
   // ── Flash 操作 ────────────────────────
   doCheckBlank: async () => {

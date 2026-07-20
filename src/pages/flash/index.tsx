@@ -57,13 +57,15 @@ export default function FlashPage() {
     doReset,
     doFillMemory,
     setShowReadBackRangeDialog,
+    showFillDialog,
+    setShowFillDialog,
+    fillAddress,
+    fillSize,
+    fillValue,
+    setFillAddress,
+    setFillSize,
+    setFillValue,
   } = useFlashStore()
-
-  // 填充内存对话框状态
-  const [showFillDialog, setShowFillDialog] = useState(false)
-  const [fillAddress, setFillAddress] = useState('0x08000000')
-  const [fillSize, setFillSize] = useState('4096')
-  const [fillValue, setFillValue] = useState('0xFF')
 
   const selectedProbe = useProbeStore((s) => {
     const uid = s.selectedUid
@@ -181,7 +183,7 @@ export default function FlashPage() {
 
         <Separator orientation="vertical" className="mx-1 h-5" />
 
-        <Button variant="ghost" size="sm" disabled={!isConnected || busy} onClick={() => setShowFillDialog(true)} className="h-8 gap-1.5">
+        <Button variant="ghost" size="sm" disabled={busy} onClick={() => setShowFillDialog(true)} className="h-8 gap-1.5" title={busy ? '操作进行中，请稍候' : '填充内存'}>
           <PaintBucket className="size-3.5" />
           Fill Memory
         </Button>
@@ -248,8 +250,11 @@ export default function FlashPage() {
             </div>
           </div>
           <DialogFooter>
+            {!isConnected && (
+              <span className="text-xs text-amber-600 mr-auto">⚠ 未连接探针，连接后才能执行填充</span>
+            )}
             <Button variant="ghost" onClick={() => setShowFillDialog(false)}>取消</Button>
-            <Button onClick={() => {
+            <Button disabled={!isConnected || busy} onClick={() => {
               const addr = parseInt(fillAddress, fillAddress.startsWith('0x') ? 16 : 10)
               const sz = parseInt(fillSize, fillSize.startsWith('0x') ? 16 : 10)
               const val = parseInt(fillValue, fillValue.startsWith('0x') ? 16 : 10)

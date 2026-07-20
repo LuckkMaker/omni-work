@@ -91,6 +91,13 @@ export const monitorService = {
     return data
   },
 
+  /** 检测已加载 ELF 文件是否在磁盘上变化（供轮询提醒重载） */
+  async checkElfChanged(uid: string): Promise<{ loaded: boolean; changed: boolean; path?: string; mtime?: number; error?: string }> {
+    const client = await api()
+    const { data } = await client.get(`/api/probes/${uid}/monitor/elf/changed`)
+    return data
+  },
+
   /** 查询符号列表（分页） */
   async getSymbols(
     uid: string,

@@ -271,7 +271,7 @@ export default function MonitorPage() {
                 <p className="text-sm text-muted-foreground">尚未添加监视变量</p>
                 <p className="text-xs text-muted-foreground/70">在右侧边栏加载 ELF 文件并选择变量</p>
               </div>
-            ) : !running ? (
+            ) : !running && samples.length === 0 ? (
               <div className="flex h-full flex-col items-center justify-center gap-2">
                 <Activity className="size-10 text-muted-foreground/40" />
                 <p className="text-sm text-muted-foreground">
@@ -287,7 +287,8 @@ export default function MonitorPage() {
                 <div className="mb-1 flex items-center justify-between px-1">
                   <span className="text-xs font-medium text-muted-foreground">
                     {samples.length} 个采样点
-                    {follow && ' · Follow'}
+                    {!running && samples.length > 0 && ' · 已停止'}
+                    {running && follow && ' · Follow'}
                     {cursorMeasure && ' · 游标测量中'}
                   </span>
                   <div className="flex items-center gap-3">

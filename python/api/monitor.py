@@ -58,6 +58,12 @@ def load_elf(uid: str, req: ElfLoadRequest):
     return result
 
 
+@router.get("/probes/{uid}/monitor/elf/changed")
+def check_elf_changed(uid: str):
+    """检测已加载 ELF 文件是否在磁盘上变化（供前端轮询提醒重载）"""
+    return monitor_backend.check_elf_changed(uid)
+
+
 @router.get("/probes/{uid}/monitor/symbols")
 def get_symbols(uid: str, filter: str = "", type: str = "object",
                 page: int = 1, page_size: int = 200):

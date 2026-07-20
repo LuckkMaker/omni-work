@@ -130,6 +130,10 @@ class MonitorBackend:
         # uid -> {符号名 -> 类型信息} 缓存（load_elf 时一次性构建，get_symbols 查表）
         # 类型信息: {is_array, elem_type, elem_count, elem_size}
         self._dwarf_cache: dict[str, dict] = {}
+        # uid -> 已加载 ELF 文件的 mtime（用于检测文件变化提醒重载）
+        self._elf_mtimes: dict[str, float] = {}
+        # uid -> 已加载 ELF 文件路径（用于检测文件变化）
+        self._elf_paths: dict[str, str] = {}
         # uid -> 采样起点（monotonic）
         self._start_time: dict[str, float] = {}
         # uid -> 传输模式（"swd" 轮询 / "rtt" 同步）
@@ -165,6 +169,18 @@ class MonitorBackend:
         session = backend._get_session(uid)
         if not session:
             return {"success": False, "error": "探针未连接"}
+
+        # 兜底：确保内核处于运行状态。
+        # connect() 使用 init_board=False，pyOCD 在 sess.open() 阶段会 halt 内核做
+        # CoreSight 发现，但因不执行 board.init() 的 resume 流程，内核会停留在 halt。
+        # 此外 Flash/Commander 的 erase/verify/check_blank/read_back 等操作 halt 后
+        # 也不 resume。这些都会导致固件主循环不执行、监视变量值冻结不变化。
+        # Monitor 本身是非侵入运行时监控，启动采样前必须保证内核在跑。
+        try:
+            session.target.resume()
+            event_manager.log("info", "Monitor: 启动前确认内核运行状态（resume 兜底）")
+        except Exception as e:
+            event_manager.log("warning", f"Monitor: 启动前 resume 内核失败（可能已在运行）: {e}")
 
         with self._global_lock:
             # 已在运行则先停止
@@ -778,6 +794,13 @@ class MonitorBackend:
             with self._global_lock:
                 self._elf_decoders[uid] = decoder
                 self._elf_files[uid] = f
+                # 记录 mtime 与路径，供 check_elf_changed 检测文件变化
+                import os
+                self._elf_paths[uid] = path
+                try:
+                    self._elf_mtimes[uid] = os.path.getmtime(path)
+                except OSError:
+                    self._elf_mtimes[uid] = 0.0
 
             # 统计变量符号数
             var_count = sum(
@@ -1125,6 +1148,28 @@ class MonitorBackend:
             "size": v.size,
             "remark": v.remark,
             "refresh_sec": v.refresh_sec,
+        }
+
+    def check_elf_changed(self, uid: str) -> dict:
+        """检测已加载的 ELF 文件是否在磁盘上发生变化（mtime 变化）。
+
+        供前端轮询：采样未运行时定期调用，变化则提示用户是否重新加载。
+        """
+        import os
+        path = self._elf_paths.get(uid)
+        recorded = self._elf_mtimes.get(uid)
+        if not path or recorded is None:
+            return {"loaded": False, "changed": False}
+        try:
+            current = os.path.getmtime(path)
+        except OSError:
+            # 文件被删除或不可访问
+            return {"loaded": True, "changed": False, "path": path, "error": "文件不可访问"}
+        return {
+            "loaded": True,
+            "changed": current != recorded,
+            "path": path,
+            "mtime": current,
         }
 
     def get_status(self, uid: str) -> dict:

@@ -1,10 +1,11 @@
 import { useState } from 'react'
-import { Loader2, Save, GitCompare, Cpu, FileText } from 'lucide-react'
+import { Loader2, Save, GitCompare, PaintBucket, Cpu, FileText } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { HexViewer, HexToolbar, type ByteWidth } from './HexViewer'
 import { CompareView } from './CompareView'
 import { TabBar } from './TabBar'
 import { useFlashStore } from '@/stores/flash.store'
+import { useProbeStore } from '@/stores/probe.store'
 
 function formatSize(bytes: number): string {
   if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`
@@ -25,7 +26,14 @@ export function FilePanel() {
     setOption,
     saveTabAs,
     setShowCompareDialog,
+    setShowFillDialog,
+    busy,
   } = useFlashStore()
+
+  const isConnected = useProbeStore((s) => {
+    const uid = s.selectedUid
+    return uid ? (s.probes.find((p) => p.uid === uid)?.state === 'connected') : false
+  })
 
   const [byteWidth, setByteWidth] = useState<ByteWidth>(1)
 
@@ -96,6 +104,10 @@ export function FilePanel() {
             <Button variant="ghost" size="sm" onClick={() => setShowCompareDialog(true)} className="h-6 gap-1 px-1.5 text-xs">
               <GitCompare className="size-3" />
               Compare
+            </Button>
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => setShowFillDialog(true)} className="h-6 gap-1 px-1.5 text-xs" title={busy ? '操作进行中，请稍候' : '填充内存'}>
+              <PaintBucket className="size-3" />
+              Fill Memory
             </Button>
 
             {/* 右侧：文件信息 */}
