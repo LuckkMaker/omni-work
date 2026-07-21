@@ -35,6 +35,7 @@ from ..probe.tcp_probe_server import DebugProbeServer
 from ..core.target import Target
 from ..flash.loader import FlashLoader
 from ..flash.eraser import FlashEraser
+from ..core.memory_map import MemoryType
 from ..flash.file_programmer import FileProgrammer
 from ..gdbserver.gdbserver import GDBServer
 from ..utility import conversion
@@ -616,6 +617,9 @@ class SavememCommand(CommandBase):
             'nargs': 3,
             'usage': "ADDR LEN FILENAME",
             'help': "Save a range of memory to a binary file.",
+            'extra_help': "Saves raw binary data (not hex format). Use a .bin extension for the filename. "
+                    "The file will contain the exact bytes read from memory. "
+                    "To view as hex dump, use: $ ' '.join(f'{b:02X}' for b in target.read_memory_block8(0x20000000, 16))",
             }
 
     def parse(self, args):
@@ -673,6 +677,10 @@ class LoadCommand(CommandBase):
             'nargs': [1, 2],
             'usage': "FILENAME [ADDR]",
             'help': "Load a binary, hex, or elf file with optional base address.",
+            'extra_help': "Supports .bin, .hex, and .elf files. On Windows, use forward slashes (/) in paths "
+                    "or use the path converter tool. "
+                    "If you get 'flash program page failure', the flash may be protected. "
+                    "Try: 1) 'unlock' to remove flash protection, 2) 'erase' to clear flash, 3) 'load' to program.",
             }
 
     def parse(self, args):
@@ -922,9 +930,20 @@ class EraseCommand(CommandBase):
         if self.erase_chip:
             eraser = FlashEraser(self.context.session, FlashEraser.Mode.CHIP)
             eraser.erase()
+            # 统计所有 flash 区域总大小
+            pname = self.context.session.target.selected_core.node_name
+            total_bytes = sum(
+                r.length
+                for r in self.context.session.target.memory_map.iter_matching_regions(
+                    type=MemoryType.FLASH, pname=pname
+                )
+            )
+            self.context.writei("Erased chip (%d bytes)", total_bytes)
         else:
             eraser = FlashEraser(self.context.session, FlashEraser.Mode.SECTOR)
-            while self.count:
+            total_erased = 0
+            remaining = self.count
+            while remaining:
                 # Look up the flash region so we can get the page size.
                 region = self.context.session.target.memory_map.get_region_for_address(self.addr)
                 if not region:
@@ -936,10 +955,12 @@ class EraseCommand(CommandBase):
 
                 # Erase this page.
                 eraser.erase([self.addr])
+                total_erased += region.blocksize
 
                 # Next page.
-                self.count -= 1
+                remaining -= 1
                 self.addr += region.blocksize
+            self.context.writei("Erased %d sector(s) (%d bytes)", self.count - remaining, total_erased)
 
 class UnlockCommand(CommandBase):
     INFO = {
@@ -953,6 +974,111 @@ class UnlockCommand(CommandBase):
 
     def execute(self):
         self.context.target.mass_erase()
+
+class ElfCommand(CommandBase):
+    INFO = {
+            'names': ['elf'],
+            'group': 'standard',
+            'category': 'symbols',
+            'nargs': 1,
+            'usage': "FILENAME",
+            'help': "Load an ELF file for source-level debugging and symbol lookup.",
+            'extra_help': "Sets the target's ELF file, enabling source-level info in 'step', "
+                    "'where', 'symbol', and 'break' commands. After loading, 'step' will show "
+                    "file:line alongside disassembly, and 'where' will resolve addresses to "
+                    "source locations.\n"
+                    "Full workflow: 1) halt  2) erase  3) load FIRMWARE.axf  "
+                    "4) reset -h  5) elf FIRMWARE.axf  6) step",
+            }
+
+    def parse(self, args):
+        self.filename = os.path.expanduser(args[0])
+
+    def execute(self):
+        self.context.session.target.elf = self.filename
+        elf = self.context.session.target.elf
+        self.context.writei("Loaded ELF: %s", os.path.basename(self.filename))
+        # 输出 ELF 的 CPU 信息（可选，帮助确认正确加载）
+        if elf and hasattr(elf, 'decoder'):
+            pass  # ELF 对象创建成功即可
+        # 提示用户配置源码路径：DWARF 中的 comp_dir 指向编译时目录，本机可能不存在，
+        # 此时 step 命令无法显示 C 源代码，需用 source 命令配置搜索路径或替换规则
+        self.context.write("Tip: if 'step' does not show C source, use "
+                           "'source PATH' to add source directories, or "
+                           "'source substitute FROM TO' to remap the build path.")
+
+class SourceCommand(CommandBase):
+    INFO = {
+            'names': ['source'],
+            'group': 'standard',
+            'category': 'symbols',
+            'nargs': '*',
+            'usage': "[PATH | substitute FROM TO | list | clear]",
+            'help': "Manage source file search paths for source-level debugging.",
+            'extra_help': "Configures how 'step' locates C/C++ source files when the "
+                    "DWARF compilation directory (comp_dir) does not exist on this "
+                    "machine, corresponding to GDB's 'directory' and "
+                    "'set substitute-path' commands.\n"
+                    "Subcommands:\n"
+                    "  source PATH                Add PATH to the source search directories.\n"
+                    "  source substitute FROM TO  Add a path prefix substitution rule.\n"
+                    "  source list               List configured directories and substitutions.\n"
+                    "  source clear              Clear all directories and substitutions.",
+            }
+
+    def parse(self, args):
+        self.args = args
+
+    def execute(self):
+        args = self.args
+        if len(args) == 0:
+            self.context.write("Usage: source [PATH | substitute FROM TO | list | clear]")
+            return
+
+        subcmd = args[0]
+
+        if subcmd == 'substitute':
+            if len(args) != 3:
+                self.context.write("Usage: source substitute FROM TO")
+                return
+            frm = os.path.normpath(args[1])
+            to = os.path.normpath(args[2])
+            # 避免重复添加相同规则
+            for existing in self.context.source_substitutions:
+                if existing[0] == frm and existing[1] == to:
+                    self.context.writei("Substitution already exists: %s -> %s", frm, to)
+                    return
+            self.context.source_substitutions.append((frm, to))
+            self.context.writei("Added substitution: %s -> %s", frm, to)
+
+        elif subcmd == 'list':
+            dirs = self.context.source_directories
+            subs = self.context.source_substitutions
+            if not dirs and not subs:
+                self.context.write("No source directories or substitutions configured.")
+                return
+            if dirs:
+                self.context.write("Source directories:")
+                for d in dirs:
+                    self.context.writei("  %s", d)
+            if subs:
+                self.context.write("Path substitutions:")
+                for frm, to in subs:
+                    self.context.writei("  %s -> %s", frm, to)
+
+        elif subcmd == 'clear':
+            self.context.source_directories = []
+            self.context.source_substitutions = []
+            self.context.write("Cleared all source directories and substitutions.")
+
+        else:
+            # 将第一个参数视为要添加的源码搜索目录
+            path = os.path.normpath(os.path.expanduser(args[0]))
+            if not os.path.isdir(path):
+                self.context.writei("Warning: '%s' is not an existing directory", path)
+            if path not in self.context.source_directories:
+                self.context.source_directories.append(path)
+            self.context.writei("Added source directory: %s", path)
 
 class ContinueCommand(CommandBase):
     INFO = {
@@ -968,8 +1094,19 @@ class ContinueCommand(CommandBase):
             }
 
     def execute(self):
-        self.context.selected_core.resume()
-        status = self.context.selected_core.get_state()
+        core = self.context.selected_core
+        # 如果 PC 正好在断点上，先临时移除断点并 step 一次跳过断点指令，
+        # 否则 resume 后 FPB 会立刻匹配当前 PC 导致瞬间 halt。
+        pc = core.read_core_register('pc')
+        bp = core.find_breakpoint(pc) or core.find_breakpoint(pc | 1)
+        if bp is not None:
+            core.remove_breakpoint(bp.addr)
+            core.bp_manager.flush()
+            core.step(disable_interrupts=True)
+            core.set_breakpoint(bp.addr, bp.type)
+            core.bp_manager.flush()
+        core.resume()
+        status = core.get_state()
         if status == Target.State.RUNNING:
             self.context.write("Successfully resumed device")
         elif status == Target.State.SLEEPING:
@@ -1004,15 +1141,95 @@ class StepCommand(CommandBase):
             self.context.write("Core is not halted; cannot step")
             return
 
+        core = self.context.selected_core
+        # 临时移除当前 PC 处的断点，避免 step 后被同一断点重新捕获。
+        # 虽然 Cortex-M 的 C_STEP 模式下 FPB 理论上不触发，但某些实现
+        # （如通过 J-Link 连接时）可能不完全遵循此规范。
+        pc = core.read_core_register('pc')
+        bp = core.find_breakpoint(pc) or core.find_breakpoint(pc | 1)
+        if bp is not None:
+            core.remove_breakpoint(bp.addr)
+            core.bp_manager.flush()
+
         for i in range(self.count):
-            self.context.selected_core.step(disable_interrupts=not self.context.session.options['step_into_interrupt'])
-            addr = self.context.selected_core.read_core_register('pc')
+            core.step(disable_interrupts=not self.context.session.options['step_into_interrupt'])
+            addr = core.read_core_register('pc')
             if IS_CAPSTONE_AVAILABLE:
                 addr &= ~1
                 data = self.context.selected_ap.read_memory_block8(addr, 4)
-                print_disasm(self.context, bytes(bytearray(data)), addr, max_instructions=1)
+                # 内联反汇编，以便同行附加源码信息
+                md = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_THUMB)
+                hex_bytes = ''; mnemonic = ''; op_str = ''
+                for insn in md.disasm(bytes(bytearray(data)), addr):
+                    hex_bytes = ''.join('%02x' % b for b in insn.bytes)
+                    mnemonic = insn.mnemonic
+                    op_str = insn.op_str
+                    break
+                # 查找源码行
+                src_tag = ''
+                if self.context.elf is not None:
+                    line_info = self.context.elf.address_decoder.get_line_for_address(addr)
+                    if line_info is not None:
+                        dirname = line_info.dirname or ''
+                        comp_dir = getattr(line_info, 'comp_dir', '') or ''
+                        filename = line_info.filename
+                        fname = os.path.basename(filename)
+                        code = ''
+                        # 构建候选路径列表（参考 GDB source path 解析机制）：
+                        #   1. dirname 若为绝对路径：直接 dirname + filename
+                        #   2. dirname 为相对路径且 comp_dir 存在：comp_dir + dirname + filename
+                        #      （ARM Compiler 常见：dirname="boards/xxx/startup", comp_dir="D:\project"）
+                        #   3. comp_dir + filename（dirname 为空时的回退）
+                        #   4. filename 本身为绝对路径
+                        #   5. substitute-path 前缀替换（对应 GDB set substitute-path）
+                        #   6. source_directories 按 basename 搜索（对应 GDB directory）
+                        candidates = []
+                        if os.path.isabs(dirname):
+                            candidates.append(os.path.normpath(os.path.join(dirname, filename)))
+                        elif dirname and comp_dir:
+                            candidates.append(os.path.normpath(os.path.join(comp_dir, dirname, filename)))
+                        elif comp_dir:
+                            candidates.append(os.path.normpath(os.path.join(comp_dir, filename)))
+                        elif dirname:
+                            candidates.append(os.path.normpath(os.path.join(dirname, filename)))
+                        if os.path.isabs(filename):
+                            candidates.append(os.path.normpath(filename))
+                        # substitute-path 对所有已有候选做前缀替换
+                        existing = list(candidates)
+                        for frm, to in self.context.source_substitutions:
+                            for p in existing:
+                                if p.startswith(frm):
+                                    candidates.append(
+                                        os.path.normpath(to + p[len(frm):]))
+                        for d in self.context.source_directories:
+                            candidates.append(os.path.normpath(os.path.join(d, fname)))
+                        resolved = None
+                        for cand in candidates:
+                            if os.path.isfile(cand):
+                                resolved = cand
+                                break
+                        try:
+                            if resolved is not None:
+                                with open(resolved, 'r', encoding='utf-8', errors='replace') as f:
+                                    for _ in range(line_info.line - 1):
+                                        next(f, None)
+                                    code = next(f, '').rstrip()
+                        except (OSError, StopIteration):
+                            pass
+                        src_tag = f"  {fname}:{line_info.line}  {code}" if code else f"  {fname}:{line_info.line}"
+                # 同行输出：反汇编 + 源码
+                # args 固定宽度使源码注释始终对齐
+                self.context.writef(
+                    "{addr:#010x}:* {bytes:<10}{mnemonic:<8}{args:<22}{src}",
+                    addr=addr, bytes=hex_bytes, mnemonic=mnemonic,
+                    args=op_str, src=src_tag)
             else:
                 self.context.writei("PC = 0x%08x", addr)
+
+        # 恢复临时移除的断点
+        if bp is not None:
+            core.set_breakpoint(bp.addr, bp.type)
+            core.bp_manager.flush()
 
 class HaltCommand(CommandBase):
     INFO = {
@@ -1417,7 +1634,7 @@ class WhereCommand(CommandBase):
 
         lineInfo = self.context.elf.address_decoder.get_line_for_address(self.addr)
         if lineInfo is not None:
-            path = os.path.join(lineInfo.dirname, lineInfo.filename).decode()
+            path = os.path.join(lineInfo.dirname, lineInfo.filename) if isinstance(lineInfo.filename, str) else os.path.join(lineInfo.dirname, lineInfo.filename).decode()
             line = lineInfo.line
             pathline = "{}:{}".format(path, line)
         else:

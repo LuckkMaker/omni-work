@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import {
   Eraser,
   Upload,
@@ -18,16 +18,30 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Separator } from '@/components/ui/separator'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogFooter,
+} from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { FilePanel } from './components/FilePanel'
 import { BinAddressDialog } from './components/BinAddressDialog'
 import { ReadBackRangeDialog } from './components/ReadBackRangeDialog'
 import { CompareDialog } from './components/CompareDialog'
-import { LogConsole, ResizeHandle } from './components/LogConsole'
+import { LogConsole, ResizeHandle } from '@/components/LogConsole'
 import { useFlashStore } from '@/stores/flash.store'
 import { useProbeStore } from '@/stores/probe.store'
 
+const LOG_MIN_HEIGHT = 0 // 0 = 完全隐藏
+const LOG_DEFAULT_EXPANDED = 280
+
 export default function FlashPage() {
-  const [bottomHeight, setBottomHeight] = useState(200)
+  // 默认收缩到最小值；lastExpandedHeight 保存上次展开值用于双击恢复
+  const [bottomHeight, setBottomHeight] = useState(LOG_MIN_HEIGHT)
+  const lastExpandedHeight = useRef(LOG_DEFAULT_EXPANDED)
 
   const {
     busy,
@@ -40,7 +54,16 @@ export default function FlashPage() {
     doReadBackSelectedSectors,
     doStartApp,
     doReset,
+    doFillMemory,
     setShowReadBackRangeDialog,
+    showFillDialog,
+    setShowFillDialog,
+    fillAddress,
+    fillSize,
+    fillValue,
+    setFillAddress,
+    setFillSize,
+    setFillValue,
   } = useFlashStore()
 
   const selectedProbe = useProbeStore((s) => {
@@ -56,36 +79,29 @@ export default function FlashPage() {
   const canReadBack = !!activeTab
 
   const handleResize = (delta: number) => {
-    setBottomHeight((h) => Math.max(120, Math.min(window.innerHeight / 2, h - delta)))
+    setBottomHeight((h) => {
+      const next = Math.max(LOG_MIN_HEIGHT, Math.min(window.innerHeight / 2, h - delta))
+      // 记录非最小值作为"上次展开值"
+      if (next > LOG_MIN_HEIGHT) lastExpandedHeight.current = next
+      return next
+    })
+  }
+
+  const handleToggleLog = () => {
+    setBottomHeight((h) => {
+      if (h > LOG_MIN_HEIGHT) {
+        // 当前展开 → 折叠到最小
+        return LOG_MIN_HEIGHT
+      }
+      // 当前折叠 → 恢复上次展开值
+      return lastExpandedHeight.current
+    })
   }
 
   return (
     <div className="flex h-full flex-col">
       {/* 顶部工具栏 */}
       <div className="flex items-center gap-1 border-b border-border px-3 py-2 shrink-0">
-        <Button variant="ghost" size="sm" disabled={!isConnected || busy} onClick={doCheckBlank} className="h-8 gap-1.5">
-          <ScanSearch className="size-3.5" />
-          Check Blank
-        </Button>
-
-        <Separator orientation="vertical" className="mx-1 h-5" />
-
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button variant="ghost" size="sm" disabled={!isConnected || busy} className="h-8 gap-1">
-              <Eraser className="size-3.5" />
-              Erase
-              <ChevronDown className="size-3" />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="start">
-            <DropdownMenuItem onClick={doEraseChip}>Erase Chip</DropdownMenuItem>
-            <DropdownMenuItem onClick={() => doEraseSelectedSectors()}>Erase Sectors...</DropdownMenuItem>
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        <Separator orientation="vertical" className="mx-1 h-5" />
-
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" size="sm" disabled={!isConnected || busy || !canProgram} className="h-8 gap-1">
@@ -100,6 +116,22 @@ export default function FlashPage() {
               <ShieldCheck className="size-3.5 mr-1.5" />
               Program &amp; Verify
             </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+
+        <Separator orientation="vertical" className="mx-1 h-5" />
+
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="ghost" size="sm" disabled={!isConnected || busy} className="h-8 gap-1">
+              <Eraser className="size-3.5" />
+              Erase
+              <ChevronDown className="size-3" />
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuItem onClick={doEraseChip}>Erase Chip</DropdownMenuItem>
+            <DropdownMenuItem onClick={() => doEraseSelectedSectors()}>Erase Sectors...</DropdownMenuItem>
           </DropdownMenuContent>
         </DropdownMenu>
 
@@ -134,9 +166,18 @@ export default function FlashPage() {
           Start App
         </Button>
 
+        <Separator orientation="vertical" className="mx-1 h-5" />
+
         <Button variant="ghost" size="sm" disabled={!isConnected || busy} onClick={doReset} className="h-8 gap-1.5">
           <RotateCcw className="size-3.5" />
           Reset
+        </Button>
+
+        <Separator orientation="vertical" className="mx-1 h-5" />
+
+        <Button variant="ghost" size="sm" disabled={!isConnected || busy} onClick={doCheckBlank} className="h-8 gap-1.5">
+          <ScanSearch className="size-3.5" />
+          Check Blank
         </Button>
       </div>
 
@@ -145,18 +186,83 @@ export default function FlashPage() {
         <FilePanel />
       </div>
 
-      {/* 可拖拽分隔 */}
-      <ResizeHandle onResize={handleResize} />
+      {/* 可拖拽分隔（双击完全隐藏/恢复） */}
+      <ResizeHandle
+        onResize={handleResize}
+        onToggle={handleToggleLog}
+        expanded={bottomHeight > LOG_MIN_HEIGHT}
+      />
 
-      {/* 底部：日志（全宽） */}
-      <div className="shrink-0 border-t border-border" style={{ height: bottomHeight }}>
-        <LogConsole />
+      {/* 底部：日志（高度为 0 时完全隐藏，避免残留 border） */}
+      <div
+        className={bottomHeight > LOG_MIN_HEIGHT ? 'shrink-0 border-t border-border' : 'hidden'}
+        style={bottomHeight > LOG_MIN_HEIGHT ? { height: bottomHeight } : undefined}
+      >
+        <FlashLogConsole />
       </div>
 
       {/* 弹窗 */}
       <BinAddressDialog />
       <ReadBackRangeDialog />
       <CompareDialog />
+
+      {/* 填充内存对话框 */}
+      <Dialog open={showFillDialog} onOpenChange={setShowFillDialog}>
+        <DialogContent className="sm:max-w-[400px]">
+          <DialogHeader>
+            <DialogTitle>填充内存</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1.5">
+              <Label className="text-xs">起始地址</Label>
+              <Input
+                className="font-mono text-sm"
+                value={fillAddress}
+                onChange={(e) => setFillAddress(e.target.value)}
+                placeholder="0x08000000"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">大小 (字节)</Label>
+              <Input
+                className="font-mono text-sm"
+                value={fillSize}
+                onChange={(e) => setFillSize(e.target.value)}
+                placeholder="4096"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label className="text-xs">填充值</Label>
+              <Input
+                className="font-mono text-sm"
+                value={fillValue}
+                onChange={(e) => setFillValue(e.target.value)}
+                placeholder="0xFF"
+              />
+            </div>
+          </div>
+          <DialogFooter>
+            <Button variant="ghost" onClick={() => setShowFillDialog(false)}>取消</Button>
+            <Button disabled={busy} onClick={() => {
+              const addr = parseInt(fillAddress, fillAddress.startsWith('0x') ? 16 : 10)
+              const sz = parseInt(fillSize, fillSize.startsWith('0x') ? 16 : 10)
+              const val = parseInt(fillValue, fillValue.startsWith('0x') ? 16 : 10)
+              if (isNaN(addr) || isNaN(sz) || isNaN(val) || sz <= 0 || val < 0 || val > 255) return
+              setShowFillDialog(false)
+              doFillMemory(addr, sz, val)
+            }}>
+              填充
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   )
+}
+
+/** Flash 日志控制台（响应式订阅 flash store） */
+function FlashLogConsole() {
+  const logs = useFlashStore((s) => s.logs)
+  const clearLogs = useFlashStore((s) => s.clearLogs)
+  return <LogConsole logs={logs} onClear={clearLogs} title="日志" />
 }

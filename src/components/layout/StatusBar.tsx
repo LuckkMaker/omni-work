@@ -1,8 +1,10 @@
 import { useState, useRef, useEffect } from 'react'
-import { Bell, Usb, ChevronDown, CheckCircle2, AlertTriangle, XCircle, Info, Loader2, Trash2, X } from 'lucide-react'
+import { Bell, Usb, ChevronDown, CheckCircle2, AlertTriangle, XCircle, Info, Loader2, Trash2, X, ArrowDownToLine, ArrowUpFromLine, Activity } from 'lucide-react'
 import { useProbeStore, SPEED_OPTIONS, type DebugInterface } from '@/stores/probe.store'
 import { useNotificationStore } from '@/stores/notification.store'
 import { useBackendStatus } from '@/hooks/useBackendStatus'
+import { useRttStore } from '@/stores/rtt.store'
+import { useMonitorStore } from '@/stores/monitor.store'
 import { cn } from '@/lib/utils'
 
 const typeConfig = {
@@ -152,15 +154,37 @@ export function StatusBar() {
   const { status } = useBackendStatus()
   const { history, historyVisible, toggleHistory } = useNotificationStore()
 
+  // RTT 统计信息（运行时显示在中间）
+  const rttRunning = useRttStore((s) => s.running)
+  const rttBytesReceived = useRttStore((s) => s.bytesReceived)
+  const rttBytesSent = useRttStore((s) => s.bytesSent)
+  const rttRecordToFile = useRttStore((s) => s.recordToFile)
+  const rttSendTiming = useRttStore((s) => s.sendTiming)
+
+  // Monitor 统计信息（运行时显示）
+  const monRunning = useMonitorStore((s) => s.running)
+  const monRateHz = useMonitorStore((s) => s.rateHz)
+  const monActualRateHz = useMonitorStore((s) => s.actualRateHz)
+  const monVarCount = useMonitorStore((s) => s.variables.length)
+  const monSampleCount = useMonitorStore((s) => s.samples.length)
+  const monTransport = useMonitorStore((s) => s.transport)
+
   const probe = probes.find((p) => p.uid === selectedUid) ?? null
   const isConnected = probe?.state === 'connected'
   const isConnecting = probe?.state === 'connecting'
   const speedLabel = SPEED_OPTIONS.find((s) => s.value === pendingSpeed)?.label ?? `${pendingSpeed} Hz`
   const interfaceDisabled = isConnected || isConnecting
 
+  /** 格式化字节数为可读字符串 */
+  const fmtBytes = (n: number): string => {
+    if (n < 1024) return `${n} B`
+    if (n < 1024 * 1024) return `${(n / 1024).toFixed(1)} KB`
+    return `${(n / (1024 * 1024)).toFixed(2)} MB`
+  }
+
   return (
     <div className="flex h-6 items-center justify-between bg-primary text-white px-1 text-xs select-none shrink-0">
-      {/* 左侧：后端状态 + 接口/速度 */}
+      {/* 左侧：后端状态 + 接口/速度 + 连接 + RTT 统计（紧凑内联） */}
       <div className="flex items-center gap-0.5">
         {/* 后端状态 */}
         <div className="flex items-center gap-1 px-2">
@@ -212,10 +236,64 @@ export function StatusBar() {
             </>
           )}
         </div>
+
+        {/* RTT 统计：运行时紧凑内联显示，与左侧项一致分隔 */}
+        {rttRunning && (
+          <>
+            <div className="w-px h-3 bg-white/20" />
+            <div className="flex items-center gap-1 px-2" title="RTT 会话运行中">
+              <Activity className="size-3 text-green-400 animate-pulse" />
+              <span className="text-white/80">RTT</span>
+            </div>
+            <div className="flex items-center gap-1 px-2" title={`接收：${rttBytesReceived} 字节`}>
+              <ArrowDownToLine className="size-3 text-blue-300" />
+              <span className="text-white/80 font-mono">{fmtBytes(rttBytesReceived)}</span>
+            </div>
+            <div className="flex items-center gap-1 px-2" title={`发送：${rttBytesSent} 字节`}>
+              <ArrowUpFromLine className="size-3 text-amber-300" />
+              <span className="text-white/80 font-mono">{fmtBytes(rttBytesSent)}</span>
+            </div>
+            {rttRecordToFile && (
+              <span className="text-amber-300 px-1" title="正在录制到文件">●REC</span>
+            )}
+            {rttSendTiming && (
+              <span className="text-amber-300 px-1" title="定时发送中">⏱</span>
+            )}
+          </>
+        )}
+
+        {/* Monitor 统计：运行时紧凑内联显示 */}
+        {monRunning && (
+          <>
+            <div className="w-px h-3 bg-white/20" />
+            <div className="flex items-center gap-1 px-2" title="Monitor 采样运行中">
+              <Activity className="size-3 text-green-400 animate-pulse" />
+              <span className="text-white/80">Monitor</span>
+            </div>
+            <div className="flex items-center gap-1 px-2" title={`采样模式：${monTransport === 'rtt' ? 'RTT 同步' : 'HSS 异步'}`}>
+              <span className="text-white/60 text-[10px]">{monTransport === 'rtt' ? 'RTT' : 'HSS'}</span>
+            </div>
+            <div className="flex items-center gap-1 px-2" title={`采样率：${monRateHz} Hz（实际 ${monActualRateHz.toFixed(1)} Hz）`}>
+              <span className="text-white/60 text-[10px]">{monRateHz >= 1000 ? `${monRateHz / 1000}kHz` : `${monRateHz}Hz`}</span>
+              {monActualRateHz > 0 && monActualRateHz < monRateHz * 0.8 && (
+                <span className="text-amber-300 text-[10px]" title="实际采样率低于设定值，HSS 模式可能受 SWD 带宽限制">
+                  (实际{monActualRateHz >= 1000 ? `${(monActualRateHz / 1000).toFixed(1)}kHz` : `${monActualRateHz.toFixed(0)}Hz`})
+                </span>
+              )}
+            </div>
+            <div className="flex items-center gap-1 px-2" title={`监视变量：${monVarCount}`}>
+              <span className="text-white/60 text-[10px]">{monVarCount} vars</span>
+            </div>
+            <div className="flex items-center gap-1 px-2" title={`已采集：${monSampleCount} 个采样点`}>
+              <span className="text-white/60 text-[10px] font-mono">{monSampleCount} pts</span>
+            </div>
+          </>
+        )}
       </div>
 
-      {/* 右侧：铃铛 */}
+      {/* 右侧：版本号 + 铃铛 */}
       <div className="flex items-center">
+
         {/* 通知计数 */}
         <div className="relative">
           <button

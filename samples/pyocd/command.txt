@@ -1,0 +1,12 @@
+# Halt target and read registers
+halt
+reg
+# Read memory block
+read32 0x20000000 16
+# Set breakpoint and run
+break 0x08000100
+continue
+# Check status
+status
+halt
+where

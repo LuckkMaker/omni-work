@@ -2,24 +2,110 @@
 
 提供设备目录数据的持久化存储，替代 device_info.json。
 
-首次运行时自动从 device_info.json 导入初始数据。
+首次运行时优先从打包内种子库 devices.db 复制到用户可写目录；
+若种子库不存在则回退从 device_info.json 导入初始数据。
 后续可通过 API 进行 CRUD 操作。
+
+路径解析：
+- 开发模式：使用源码目录下 data/devices.db（可被 OMNI_DATA_DIR 覆盖）
+- 生产模式（PyInstaller frozen）：数据库写入 OMNI_DATA_DIR 指向的用户目录，
+  种子库来自 sys._MEIPASS 或 exe 目录下 data/devices.db（随 --add-data 打包）
 """
 
 import json
 import os
+import shutil
 import sqlite3
+import sys
 import threading
 from typing import Optional
-
-# 数据库文件路径：python/data/devices.db
-_DB_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "devices.db")
-# 初始数据源：device_info.json（仅首次导入用）
-_JSON_PATH = os.path.join(os.path.dirname(__file__), "..", "data", "device_info.json")
 
 # 线程锁（sqlite3 连接默认不可跨线程，用锁保护）
 _lock = threading.Lock()
 _conn: Optional[sqlite3.Connection] = None
+
+
+def _resolve_paths() -> tuple[str, str, str]:
+    """解析数据库、种子库、JSON 文件的路径。
+
+    返回 (db_path, seed_db_path, json_path)：
+    - db_path：实际使用的数据库路径（必须可写）
+    - seed_db_path：打包内/源码内的种子库路径（仅首次复制用，只读）
+    - json_path：device_info.json 路径（JSON 导入回退用，只读）
+
+    优先级：
+    1. 生产模式（getattr(sys, 'frozen', False) 为 True）：
+       - db_path = OMNI_DATA_DIR 环境变量指向目录下 devices.db（用户可写目录）
+       - seed_db_path / json_path = sys._MEIPASS 下 data/ 子目录（PyInstaller 临时解压目录）
+         若 _MEIPASS 不可用或文件不存在，回退到 exe 同级目录下 data/
+    2. 开发模式（非 frozen）：
+       - 保持原有逻辑，db_path = 源码目录下 data/devices.db
+       - 若设置了 OMNI_DATA_DIR，则 db_path 指向该目录（可选覆盖）
+       - seed_db_path / json_path 始终指向源码目录下 data/
+    """
+    # 源码目录下的 data 子目录（开发模式基点与种子库共同基点）
+    src_dir = os.path.dirname(os.path.abspath(__file__))
+    src_data_dir = os.path.normpath(os.path.join(src_dir, "..", "data"))
+
+    if getattr(sys, "frozen", False):
+        # 生产模式：种子库与 JSON 来自打包内目录
+        meipass = getattr(sys, "_MEIPASS", None)
+        bundled_data_dir = (
+            os.path.join(meipass, "data")
+            if meipass and os.path.exists(os.path.join(meipass, "data", "devices.db"))
+            else os.path.join(os.path.dirname(sys.executable), "data")
+        )
+        seed_db_path = os.path.join(bundled_data_dir, "devices.db")
+        json_path = os.path.join(bundled_data_dir, "device_info.json")
+
+        # 实际数据库路径：用户可写目录（由 Electron 通过环境变量注入）
+        data_dir = os.environ.get("OMNI_DATA_DIR") or os.path.dirname(sys.executable)
+        db_path = os.path.join(data_dir, "devices.db")
+    else:
+        # 开发模式：种子库与 JSON 始终在源码 data 目录
+        seed_db_path = os.path.join(src_data_dir, "devices.db")
+        json_path = os.path.join(src_data_dir, "device_info.json")
+
+        # 开发模式可选覆盖：若设置了 OMNI_DATA_DIR，数据库写入该目录
+        omni_data_dir = os.environ.get("OMNI_DATA_DIR")
+        db_path = (
+            os.path.join(omni_data_dir, "devices.db")
+            if omni_data_dir
+            else os.path.join(src_data_dir, "devices.db")
+        )
+
+    return db_path, seed_db_path, json_path
+
+
+# 路径在导入时解析一次（后续不可变）
+_DB_PATH, _SEED_DB_PATH, _JSON_PATH = _resolve_paths()
+
+
+def _init_database() -> None:
+    """首次启动时初始化数据库文件。
+
+    优先策略：若 db_path 不存在且种子库存在，用 shutil.copy2 复制种子库
+              （保留 schema、数据与 user_version，避免重新迁移）。
+    回退策略：若种子库不存在或复制失败，则不创建文件，由 _migrate_from_json
+              从 device_info.json 导入（_init_schema 会建表）。
+    同时确保用户数据目录存在。
+    """
+    if os.path.exists(_DB_PATH):
+        return
+
+    # 确保用户数据目录存在
+    db_dir = os.path.dirname(_DB_PATH)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
+
+    # 优先从种子库复制
+    if _SEED_DB_PATH and os.path.exists(_SEED_DB_PATH):
+        try:
+            shutil.copy2(_SEED_DB_PATH, _DB_PATH)
+            return
+        except Exception:
+            # 复制失败则回退到 JSON 导入（_migrate_from_json 会处理）
+            pass
 
 
 def _get_conn() -> sqlite3.Connection:
@@ -28,8 +114,13 @@ def _get_conn() -> sqlite3.Connection:
     if _conn is not None:
         return _conn
 
-    # 确保数据目录存在
-    os.makedirs(os.path.dirname(_DB_PATH), exist_ok=True)
+    # 首次启动初始化：从种子库复制或确保目录存在
+    _init_database()
+
+    # 兜底：确保数据目录存在（_init_database 未创建文件时也需要）
+    db_dir = os.path.dirname(_DB_PATH)
+    if db_dir:
+        os.makedirs(db_dir, exist_ok=True)
 
     _conn = sqlite3.connect(_DB_PATH, check_same_thread=False)
     _conn.row_factory = sqlite3.Row  # 支持按列名访问
@@ -80,6 +171,17 @@ def _init_schema(conn: sqlite3.Connection) -> None:
     # Schema 增量迁移：为旧数据库添加新列
     _migrate_add_column(conn, "devices", "device_id_address", "TEXT NOT NULL DEFAULT '0xE0042000'")
 
+    # 初始化数据库版本号（PRAGMA user_version）：旧库为 0 时升级到 1
+    # 用于 /api/system/info 展示当前 schema 版本，后续迁移可递增
+    try:
+        row = conn.execute("PRAGMA user_version").fetchone()
+        current_version = int(row[0]) if row else 0
+        if current_version == 0:
+            conn.execute("PRAGMA user_version = 1")
+            conn.commit()
+    except Exception:
+        pass
+
 
 def _migrate_add_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
     """安全地为表添加列（如果列不存在）"""
@@ -113,6 +215,21 @@ def _migrate_from_json(conn: sqlite3.Connection) -> None:
 def get_db_path() -> str:
     """返回数据库文件路径"""
     return _DB_PATH
+
+
+def get_db_version() -> int:
+    """返回数据库 schema 版本号（PRAGMA user_version）
+
+    首次初始化时 user_version 被设为 1，后续迁移可递增。
+    任何异常均回退到 0，确保不崩溃。
+    """
+    try:
+        with _lock:
+            conn = _get_conn()
+            row = conn.execute("PRAGMA user_version").fetchone()
+            return int(row[0]) if row else 0
+    except Exception:
+        return 0
 
 
 # ── CRUD 操作 ─────────────────────────────

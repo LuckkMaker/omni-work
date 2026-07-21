@@ -1,33 +1,64 @@
-import { useEffect } from 'react'
-import { NavLink, Outlet } from 'react-router-dom'
-import { Zap, Terminal, Radio, Activity, Settings, Cpu } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { NavLink, Outlet, useLocation } from 'react-router-dom'
+import { Download, SquareTerminal, Logs, Settings, SquareActivity, Wrench, ChevronDown, AlertOctagon, FileBarChart, Binary, FileCheck2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useBackendStatus } from '@/hooks/useBackendStatus'
 import { useProbeWs } from '@/hooks/useProbeWs'
+import { useRttSession } from '@/hooks/useRttSession'
 import { useProbeStore } from '@/stores/probe.store'
 import { resetApiClient } from '@/services/api'
 import { DeviceSwitcher } from '@/components/layout/DeviceSwitcher'
 import { InfoPanel } from '@/pages/flash/components/InfoPanel'
 import { StatusBar } from '@/components/layout/StatusBar'
 import { NotificationContainer } from '@/components/NotificationContainer'
+import CommanderPage from '@/pages/commander'
 
 const navItems = [
-  { to: '/flash', label: 'Flash', icon: Zap },
-  { to: '/commander', label: 'Commander', icon: Terminal },
-  { to: '/rtt', label: 'RTT Viewer', icon: Radio },
-  { to: '/swo', label: 'SWO Viewer', icon: Activity },
-  { to: '/scope', label: 'Scope', icon: Cpu },
-  { to: '/settings', label: '设置', icon: Settings }
+  { to: '/flash', label: 'Flash', icon: Download },
+  { to: '/commander', label: 'Commander', icon: SquareTerminal },
+  { to: '/rtt', label: 'RTT Viewer', icon: Logs },
+  { to: '/monitor', label: 'Monitor', icon: SquareActivity },
+  { to: '/settings', label: '设置', icon: Settings },
+]
+
+const toolsSubItems = [
+  { to: '/tools/fault', label: 'Fault Analyzer', icon: AlertOctagon },
+  { to: '/tools/map', label: 'Map Analyzer', icon: FileBarChart },
+  { to: '/tools/number', label: 'Number Converter', icon: Binary },
+  { to: '/tools/checksum', label: 'File Checksum', icon: FileCheck2 },
 ]
 
 export default function MainLayout() {
-  // 全局后端状态 + WebSocket 初始化（所有页面共享）
   const { status, port } = useBackendStatus()
   useProbeWs(port)
+  useRttSession()  // 全局 RTT 会话管理（切换页面不停止）
 
-  const { fetchProbes, fetchTargets, error, clearError } = useProbeStore()
+  const { fetchProbes, fetchTargets } = useProbeStore()
+  const location = useLocation()
+  const isToolsActive = location.pathname.startsWith('/tools')
+  const [toolsExpanded, setToolsExpanded] = useState(isToolsActive)
 
-  // 后端就绪后重置 API 客户端并拉取仿真器列表和目标列表
+  // Commander keep-alive：首次进入 /commander 才挂载，之后切走仅隐藏（display:none），
+  // 保留 xterm 实例与命令历史，切回时触发 resize 让 FitAddon 重算尺寸。
+  const isOnCommander = location.pathname === '/commander'
+  const [commanderMounted, setCommanderMounted] = useState(false)
+  useEffect(() => {
+    if (isOnCommander) setCommanderMounted(true)
+  }, [isOnCommander])
+  useEffect(() => {
+    if (isOnCommander) {
+      const timer = setTimeout(() => window.dispatchEvent(new Event('resize')), 50)
+      return () => clearTimeout(timer)
+    }
+  }, [isOnCommander])
+
+  // 路由变化到 tools 时自动展开
+  useEffect(() => {
+    if (isToolsActive) {
+      setToolsExpanded(true)
+    }
+  }, [isToolsActive])
+
   useEffect(() => {
     if (status) {
       resetApiClient()
@@ -40,14 +71,70 @@ export default function MainLayout() {
     <div className="flex h-screen w-full flex-col">
       <div className="flex flex-1 min-h-0">
         <aside className="flex w-56 flex-col border-r border-border bg-muted/30">
-          {/* 设备选择器（替代原来的品牌区） */}
           <div className="border-b border-border p-2">
             <DeviceSwitcher />
           </div>
 
-          {/* 导航菜单（占据剩余空间，可滚动） */}
           <nav className="flex-1 min-h-0 overflow-y-auto space-y-1 p-3">
-            {navItems.map((item) => (
+            {navItems.slice(0, 4).map((item) => (
+              <NavLink
+                key={item.to}
+                to={item.to}
+                className={({ isActive }) =>
+                  cn(
+                    'flex items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                    isActive
+                      ? 'bg-primary text-primary-foreground'
+                      : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                  )
+                }
+              >
+                <item.icon className="size-4" />
+                {item.label}
+              </NavLink>
+            ))}
+
+            {/* 工具 — 可展开的二级菜单 */}
+            <div>
+              <button
+                onClick={() => setToolsExpanded(!toolsExpanded)}
+                className={cn(
+                  'flex w-full items-center gap-3 rounded-md px-3 py-2 text-sm font-medium transition-colors',
+                  isToolsActive
+                    ? 'bg-primary text-primary-foreground'
+                    : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                )}
+              >
+                <Wrench className="size-4" />
+                <span className="flex-1 text-left">工具</span>
+                <ChevronDown
+                  className={cn('size-4 transition-transform', toolsExpanded && 'rotate-180')}
+                />
+              </button>
+              {toolsExpanded && (
+                <div className="ml-4 mt-0.5 space-y-0.5 border-l border-border pl-2">
+                  {toolsSubItems.map((item) => (
+                    <NavLink
+                      key={item.to}
+                      to={item.to}
+                      className={({ isActive }) =>
+                        cn(
+                          'flex items-center gap-2.5 rounded-md px-2.5 py-1.5 text-xs font-medium transition-colors',
+                          isActive
+                            ? 'bg-primary/10 text-primary'
+                            : 'text-muted-foreground hover:bg-accent hover:text-accent-foreground'
+                        )
+                      }
+                    >
+                      <item.icon className="size-3.5" />
+                      {item.label}
+                    </NavLink>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            {navItems.slice(4).map((item) => (
               <NavLink
                 key={item.to}
                 to={item.to}
@@ -66,35 +153,23 @@ export default function MainLayout() {
             ))}
           </nav>
 
-          {/* 全局信息面板（固定在侧边栏底端，仅设备信息和Flash信息） */}
           <div className="shrink-0 max-h-[45%] overflow-y-auto border-t border-border">
             <InfoPanel />
           </div>
-
-          {/* 错误提示 */}
-          {error && (
-            <div className="border-t border-border p-2">
-              <div className="flex items-center justify-between rounded-md border border-destructive/50 px-2 py-1.5">
-                <span className="truncate text-xs text-destructive">{error}</span>
-                <button
-                  className="shrink-0 text-xs text-destructive/70 hover:text-destructive"
-                  onClick={clearError}
-                >
-                  ✕
-                </button>
-              </div>
+        </aside>
+        <main className="relative flex-1 overflow-auto">
+          {/* 非 Commander 页面：正常路由渲染 */}
+          {!isOnCommander && <Outlet />}
+          {/* Commander 页面：keep-alive 常驻，切走仅隐藏 */}
+          {commanderMounted && (
+            <div className={cn('absolute inset-0', isOnCommander ? 'block' : 'hidden')}>
+              <CommanderPage />
             </div>
           )}
-        </aside>
-        <main className="flex-1 overflow-hidden">
-          <Outlet />
         </main>
       </div>
 
-      {/* 底部状态栏（类似 VSCode） */}
       <StatusBar />
-
-      {/* 全局通知容器 */}
       <NotificationContainer />
     </div>
   )

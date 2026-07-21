@@ -1,15 +1,178 @@
+import { useEffect, useRef, useCallback, useState } from 'react'
+import { RttTerminal, type RttTerminalApi } from './components/RttTerminal'
+import { ConfigPanel } from './components/ConfigPanel'
+import { InputBar } from './components/InputBar'
+import { RttTabBar } from './components/RttTabBar'
+import { MultiStringDialog } from './components/MultiStringDialog'
+import { LogConsole, ResizeHandle } from '@/components/LogConsole'
+import { useRecordToFile } from './hooks/useRecordToFile'
+import { useProbeStore } from '@/stores/probe.store'
+import { useRttStore } from '@/stores/rtt.store'
+import { useUiStore } from '@/stores/ui.store'
+
+const LOG_MIN_HEIGHT = 0 // 0 = 完全隐藏
+const LOG_DEFAULT_EXPANDED = 220
+const SIDEBAR_MAX_RATIO = 0.25 // 最大尺寸 = 窗口宽度 1/4
+const SIDEBAR_DEFAULT_WIDTH = 288 // w-72
+
+function getSidebarMaxWidth(): number {
+  return Math.floor((window.innerWidth ?? 1280) * SIDEBAR_MAX_RATIO)
+}
+
 export default function RttPage() {
+  const terminalRef = useRef<RttTerminalApi | null>(null)
+  const [bottomHeight, setBottomHeight] = useState(LOG_MIN_HEIGHT)
+  const lastExpandedHeight = useRef(LOG_DEFAULT_EXPANDED)
+  const [sidebarWidth, setSidebarWidth] = useState(SIDEBAR_DEFAULT_WIDTH)
+  const [showMultiString, setShowMultiString] = useState(false)
+
+  const selectedProbe = useProbeStore((s) => {
+    const uid = s.selectedUid
+    return uid ? s.probes.find((p) => p.uid === uid) ?? null : null
+  })
+  const isConnected = selectedProbe?.state === 'connected'
+  const uid = selectedProbe?.uid ?? null
+
+  const running = useRttStore((s) => s.running)
+  const activeTabId = useRttStore((s) => s.activeTabId)
+  const logs = useRttStore((s) => s.logs)
+  const clearLogs = useRttStore((s) => s.clearLogs)
+  const terminalTheme = useUiStore((s) => s.terminalTheme)
+  const inputMode = useRttStore((s) => s.inputMode)
+  const localEcho = useRttStore((s) => s.localEcho)
+
+  // 接收数据到文件（持续录制 .dat）
+  useRecordToFile(activeTabId)
+
+  // 侧边栏宽度变化后触发 resize 让 xterm 重新 fit
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      window.dispatchEvent(new Event('resize'))
+    }, 50)
+    return () => clearTimeout(timer)
+  }, [sidebarWidth, inputMode])
+
+  const handleSidebarResize = useCallback((delta: number) => {
+    setSidebarWidth((w) => {
+      const next = Math.max(0, Math.min(getSidebarMaxWidth(), w - delta))
+      return next
+    })
+  }, [])
+
+  const handleToggleSidebar = useCallback(() => {
+    setSidebarWidth((w) => (w > 0 ? 0 : getSidebarMaxWidth()))
+  }, [])
+
+  const handleResize = useCallback((deltaY: number) => {
+    setBottomHeight((h) => {
+      const next = Math.max(LOG_MIN_HEIGHT, Math.min(window.innerHeight / 2, h - deltaY))
+      if (next > LOG_MIN_HEIGHT) lastExpandedHeight.current = next
+      return next
+    })
+  }, [])
+
+  const handleToggleLog = useCallback(() => {
+    setBottomHeight((h) => {
+      if (h > LOG_MIN_HEIGHT) return LOG_MIN_HEIGHT
+      return lastExpandedHeight.current
+    })
+  }, [])
+
+  /** 获取发送目标 down channel（供 InputBar/MultiStringDialog 使用） */
+  const getSendChannel = useCallback(() => {
+    const tab = useRttStore.getState().tabs.find((t) => t.id === activeTabId)
+    if (tab?.mode === 'single' && tab.channel !== undefined) return tab.channel
+    return useRttStore.getState().selectedDownChannel
+  }, [activeTabId])
+
   return (
-    <div className="p-6">
-      <div className="mb-6">
-        <h1 className="text-2xl font-bold">RTT Viewer</h1>
-        <p className="text-sm text-muted-foreground mt-1">
-          RTT 实时数据收发
-        </p>
+    <div className="flex h-full min-h-0">
+      {/* 左侧：终端 + 输入栏 + 日志 */}
+      <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
+        {/* Tab 栏 */}
+        <RttTabBar running={running} />
+
+        {/* 终端：容器背景跟随主题；pb-1 留底部余量避免最后行被 InputBar 遮挡 */}
+        <div
+          className="relative min-h-0 flex-1 overflow-hidden"
+          style={{ backgroundColor: terminalTheme.theme.background }}
+        >
+          {isConnected ? (
+            <RttTerminal
+              key={activeTabId}
+              ref={terminalRef}
+              uid={uid}
+              running={running}
+              tabId={activeTabId}
+              inputMode={inputMode}
+              localEcho={localEcho}
+            />
+          ) : (
+            <div className="flex h-full items-center justify-center">
+              <div className="text-center">
+                <p style={{ color: terminalTheme.theme.foreground, opacity: 0.7 }}>
+                  {uid ? '仿真器未连接' : '请选择并连接仿真器'}
+                </p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        {/* 输入栏：仅 bar 模式显示（terminal 模式由终端直接输入） */}
+        {inputMode === 'bar' && (
+          <InputBar
+            uid={uid}
+            running={running}
+          />
+        )}
+
+        {/* 可拖拽分隔（双击完全隐藏/恢复） */}
+        <ResizeHandle
+          onResize={handleResize}
+          onToggle={handleToggleLog}
+          expanded={bottomHeight > LOG_MIN_HEIGHT}
+        />
+
+        {/* 底部日志 */}
+        <div
+          className={bottomHeight > LOG_MIN_HEIGHT ? 'shrink-0 border-t border-border' : 'hidden'}
+          style={bottomHeight > LOG_MIN_HEIGHT ? { height: bottomHeight } : undefined}
+        >
+          <LogConsole logs={logs} onClear={clearLogs} title="RTT 日志" />
+        </div>
       </div>
-      <div className="flex h-96 items-center justify-center rounded-lg border border-border bg-muted/30">
-        <span className="text-sm text-muted-foreground">Phase 3 — 待开发</span>
+
+      {/* 水平拖拽分隔条 */}
+      <ResizeHandle
+        direction="horizontal"
+        onResize={handleSidebarResize}
+        onToggle={handleToggleSidebar}
+        expanded={sidebarWidth > 0}
+      />
+
+      {/* 右侧配置面板（无标题，直接渲染 ConfigPanel） */}
+      <div
+        className={sidebarWidth > 0 ? 'flex shrink-0 flex-col overflow-hidden border-l border-border bg-card' : 'hidden'}
+        style={sidebarWidth > 0 ? { width: sidebarWidth } : undefined}
+      >
+        <div className="flex-1 overflow-y-auto">
+          <ConfigPanel
+            uid={uid}
+            connected={isConnected}
+            terminalRef={terminalRef}
+            onOpenMultiString={() => setShowMultiString(true)}
+          />
+        </div>
       </div>
+
+      {/* 多字符串对话框 */}
+      <MultiStringDialog
+        open={showMultiString}
+        onOpenChange={setShowMultiString}
+        uid={uid}
+        running={running}
+        getSendChannel={getSendChannel}
+      />
     </div>
   )
 }

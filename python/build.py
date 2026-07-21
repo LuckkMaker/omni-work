@@ -8,7 +8,7 @@ Usage:
     python build.py --python PATH      # Use specific Python executable
 
 Output:
-    dist/daplink-backend/daplink-backend.exe   # Executable (Windows)
+    dist/omni-backend/omni-backend.exe   # Executable (Windows)
 
 The output is placed in dist/ and is consumed by electron-builder
 when building the Electron installer.
@@ -29,13 +29,16 @@ DIST_DIR = BACKEND_DIR / "dist"
 BUILD_DIR = BACKEND_DIR / "build"
 
 ENTRY_SCRIPT = BACKEND_DIR / "server.py"
-APP_NAME = "daplink-backend"
+APP_NAME = "omni-backend"
 
-# Required runtime packages that must be importable by the building Python
+# Required runtime packages that must be importable by the building Python.
+# 注意：pyocd 是内置源码（python/pyocd/），check_package 会把 BACKEND_DIR 加入
+# sys.path 使其可导入；pyusb / hidapi 是 pyOCD 可选 USB 后端，项目实际用
+# libusb_package，不强制检测。
 REQUIRED_PACKAGES = [
     "fastapi", "uvicorn", "pyocd", "cmsis_pack_manager",
-    "capstone", "intelhex", "pyusb", "libusb_package",
-    "hidapi", "jinja2", "yaml",
+    "capstone", "intelhex", "libusb_package",
+    "jinja2", "yaml",
 ]
 
 # Hidden imports for FastAPI / uvicorn / pyOCD modules that PyInstaller can't auto-detect
@@ -85,10 +88,24 @@ HIDDEN_IMPORTS = [
     "api.targets",
     "api.files",
     "api.devices",
+    "api.commander",
+    "api.rtt",
+    "api.monitor",
+    "api.tools",
     "core.pyocd_backend",
     "core.events",
     "core.probe_monitor",
     "core.interface",
+    "core.rtt_backend",
+    "core.commander_backend",
+    "core.monitor_backend",
+    "core.database",
+    "core.map_parser",
+    "core.command_examples",
+    # ELF 解析依赖
+    "elftools.elf.elffile",
+    "elftools.elf.sections",
+    "elftools.dwarf.dwarfinfo",
 ]
 
 # Data files to include
@@ -107,10 +124,14 @@ def log(msg: str):
 
 
 def check_package(python_exe: str, package: str) -> bool:
-    """Check if a package is importable in the given Python."""
+    """Check if a package is importable in the given Python.
+
+    把 BACKEND_DIR 加入 sys.path，让内置的 pyocd 源码包可被 import。
+    """
     try:
         subprocess.run(
-            [python_exe, "-c", f"import {package}"],
+            [python_exe, "-c",
+             f"import sys; sys.path.insert(0, r'{BACKEND_DIR}'); import {package}"],
             check=True,
             capture_output=True,
         )
@@ -243,7 +264,7 @@ def build(python_exe: str):
 # Main
 # ---------------------------------------------------------------------------
 def main():
-    parser = argparse.ArgumentParser(description="Build DAPLink Work backend")
+    parser = argparse.ArgumentParser(description="Build OMNI Work backend")
     parser.add_argument(
         "--clean", action="store_true",
         help="Clean build artifacts before building",

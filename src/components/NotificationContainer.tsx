@@ -5,11 +5,11 @@ import { useFlashStore } from '@/stores/flash.store'
 import { cn } from '@/lib/utils'
 
 const typeConfig = {
-  info: { icon: Info, accent: 'border-l-primary', iconColor: 'text-primary' },
-  success: { icon: CheckCircle2, accent: 'border-l-green-500', iconColor: 'text-green-500' },
-  warning: { icon: AlertTriangle, accent: 'border-l-yellow-500', iconColor: 'text-yellow-500' },
-  error: { icon: XCircle, accent: 'border-l-red-500', iconColor: 'text-red-500' },
-  progress: { icon: Loader2, accent: 'border-l-primary', iconColor: 'text-primary' },
+  info: { icon: Info, accent: 'border-l-primary', iconColor: 'text-primary', titleColor: 'text-primary' },
+  success: { icon: CheckCircle2, accent: 'border-l-green-500', iconColor: 'text-green-500', titleColor: 'text-green-600' },
+  warning: { icon: AlertTriangle, accent: 'border-l-yellow-500', iconColor: 'text-yellow-500', titleColor: 'text-yellow-600' },
+  error: { icon: XCircle, accent: 'border-l-red-500', iconColor: 'text-red-500', titleColor: 'text-red-600' },
+  progress: { icon: Loader2, accent: 'border-l-primary', iconColor: 'text-primary', titleColor: 'text-primary' },
 } as const
 
 function NotificationItem({ notification }: { notification: Notification }) {
@@ -49,7 +49,7 @@ function NotificationItem({ notification }: { notification: Notification }) {
 
       {/* 内容 */}
       <div className="min-w-0 flex-1">
-        <div className="text-sm font-medium text-popover-foreground">{notification.title}</div>
+        <div className={cn('text-sm font-medium', config.titleColor)}>{notification.title}</div>
         {notification.message && (
           <div className="mt-0.5 text-xs text-muted-foreground break-words">{notification.message}</div>
         )}
@@ -95,7 +95,7 @@ export function NotificationContainer() {
   if (notifications.length === 0) return null
 
   return (
-    <div className="pointer-events-none fixed bottom-8 right-4 z-50 flex max-h-[calc(100vh-3rem)] flex-col-reverse gap-2 overflow-y-auto">
+    <div className="pointer-events-none fixed bottom-8 right-4 z-50 flex max-h-[calc(100vh-3rem)] flex-col-reverse gap-2 overflow-hidden">
       {notifications.map((n) => (
         <NotificationItem key={n.id} notification={n} />
       ))}

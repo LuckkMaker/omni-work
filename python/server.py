@@ -1,4 +1,4 @@
-"""DAPLink Work - Python 后端入口
+"""OMNI Work - Python 后端入口
 
 启动 FastAPI 服务器，通过 stdout 输出端口信息供 Electron 主进程读取。
 启动时自动初始化探针热插拔监控。
@@ -13,12 +13,15 @@ import uvicorn
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from api import probes, flash, targets, files, devices
+from api import probes, flash, targets, files, devices, commander, rtt, tools, monitor, system
 from core.events import event_manager
 from core.probe_monitor import probe_monitor
 from core.pyocd_backend import backend
 
-logger = logging.getLogger("daplink-work")
+# 后端版本号（与前端 package.json 保持一致）
+BACKEND_VERSION = "0.3.1"
+
+logger = logging.getLogger("omni-work")
 
 
 @asynccontextmanager
@@ -36,10 +39,16 @@ async def lifespan(app: FastAPI):
     # 关闭时清理
     probe_monitor.stop()
     backend.cleanup()
+    from core.commander_backend import commander_backend
+    commander_backend.cleanup_all()
+    from core.rtt_backend import rtt_backend
+    rtt_backend.cleanup_all()
+    from core.monitor_backend import monitor_backend
+    monitor_backend.cleanup_all()
     logger.info("Application shutdown")
 
 
-app = FastAPI(title="DAPLink Work Backend", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="OMNI Work Backend", version=BACKEND_VERSION, lifespan=lifespan)
 
 # CORS 配置：允许 Electron 渲染进程（开发模式 localhost:5173/5174）访问
 app.add_middleware(
@@ -56,6 +65,11 @@ app.include_router(targets.router, prefix="/api/targets", tags=["targets"])
 app.include_router(devices.router, prefix="/api/devices", tags=["devices"])
 app.include_router(flash.router, prefix="/api", tags=["flash"])
 app.include_router(files.router, prefix="/api/files", tags=["files"])
+app.include_router(commander.router, prefix="/api", tags=["commander"])
+app.include_router(rtt.router, prefix="/api", tags=["rtt"])
+app.include_router(monitor.router, prefix="/api", tags=["monitor"])
+app.include_router(system.router, prefix="/api", tags=["system"])
+app.include_router(tools.router, prefix="/api", tags=["tools"])
 
 
 # WebSocket 端点
@@ -73,7 +87,7 @@ async def health():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="DAPLink Work Backend Server")
+    parser = argparse.ArgumentParser(description="OMNI Work Backend Server")
     parser.add_argument("--port", type=int, default=0, help="监听端口 (0=自动分配)")
     parser.add_argument("--host", type=str, default="127.0.0.1", help="监听地址")
     parser.add_argument("--log-level", type=str, default="info",

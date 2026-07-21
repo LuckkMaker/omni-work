@@ -45,7 +45,13 @@ async def connect_probe(uid: str, req: ConnectRequest | None = None):
     speed = req.speed if req else None
     success = backend.connect(uid, target=target, interface=interface, speed=speed)
     if not success:
-        raise HTTPException(status_code=500, detail="Connection failed")
+        # 获取后端存储的具体错误信息，避免丢失诊断细节
+        error_detail = "Connection failed"
+        with backend._lock:
+            session = backend._sessions.get(uid)
+            if session and session.error:
+                error_detail = session.error
+        raise HTTPException(status_code=500, detail=error_detail)
 
     target = backend.get_target_info(uid)
     return {
@@ -59,6 +65,9 @@ async def connect_probe(uid: str, req: ConnectRequest | None = None):
 async def disconnect_probe(uid: str):
     """断开探针"""
     backend.disconnect(uid)
+    # 清理 Commander 命令上下文
+    from core.commander_backend import commander_backend
+    commander_backend.reset_context(uid)
     return {"disconnected": True, "uid": uid}
 
 
@@ -77,6 +86,10 @@ async def set_target(uid: str, req: SetTargetRequest):
     success = backend.set_target(uid, req.part_number)
     if not success:
         raise HTTPException(status_code=500, detail=f"Failed to set target: {req.part_number}")
+
+    # 目标切换后 session 重建，重置 Commander 上下文
+    from core.commander_backend import commander_backend
+    commander_backend.reset_context(uid)
 
     target = backend.get_target_info(uid)
     return {

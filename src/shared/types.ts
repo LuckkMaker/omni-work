@@ -93,7 +93,7 @@ export interface FlashResult {
 
 /** 固件文件信息 */
 export interface FirmwareFileInfo {
-  format: 'bin' | 'hex' | 'elf'
+  format: 'bin' | 'hex' | 'elf' | 'axf'
   size: number
   entry?: number | null
   segments?: { address: number; size: number }[]
@@ -148,7 +148,12 @@ export interface PythonStatus {
 export interface ElectronAPI {
   getPythonPort: () => Promise<number | null>
   getPythonStatus: () => Promise<PythonStatus>
-  openFileDialog: () => Promise<string | null>
+  /** 打开文件选择对话框
+   *
+   *  opts.extensions：指定过滤后缀（如 ['elf','axf']），不传时默认 bin/hex/elf/axf + 所有文件（兼容 Flash 页）。
+   *  opts.title：对话框标题，不传时由主进程根据是否指定 extensions 决定默认值。
+   */
+  openFileDialog: (opts?: { extensions?: string[]; title?: string }) => Promise<string | null>
   saveFileDialog: (defaultName?: string) => Promise<string | null>
   getPathForFile: (file: File) => string
 }

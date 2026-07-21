@@ -8,8 +8,13 @@ const api = {
   getPythonStatus: (): Promise<{ running: boolean; port: number | null }> =>
     ipcRenderer.invoke('python:status'),
 
-  /** 打开文件选择对话框，返回选中文件路径或 null */
-  openFileDialog: (): Promise<string | null> => ipcRenderer.invoke('dialog:open-file'),
+  /** 打开文件选择对话框，返回选中文件路径或 null
+   *
+   *  opts.extensions：指定过滤后缀（如 ['elf','axf']），不传时默认 bin/hex/elf/axf + 所有文件（兼容 Flash 页）。
+   *  opts.title：对话框标题，不传时由主进程根据是否指定 extensions 决定默认值。
+   */
+  openFileDialog: (opts?: { extensions?: string[]; title?: string }): Promise<string | null> =>
+    ipcRenderer.invoke('dialog:open-file', opts),
 
   /** 保存文件对话框，返回保存路径或 null */
   saveFileDialog: (defaultName?: string): Promise<string | null> => ipcRenderer.invoke('dialog:save-file', defaultName),

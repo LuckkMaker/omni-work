@@ -13,7 +13,8 @@ function createWindow(): void {
     minHeight: 600,
     show: false,
     autoHideMenuBar: true,
-    title: 'DAPLink Work',
+    title: `OMNI Work v${app.getVersion()}`,
+    icon: join(__dirname, '../../build/icon.png'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -49,6 +50,11 @@ async function startPythonBackend(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  // 设置用户数据目录环境变量，供 Python 后端数据库使用
+  // 生产模式下数据库会写入该用户可写目录（避免 Program Files 只读问题）
+  // 开发模式下若未设置该变量，Python 仍会使用源码目录下 data/devices.db
+  process.env.OMNI_DATA_DIR = app.getPath('userData')
+
   await startPythonBackend()
 
   // IPC: 获取 Python 后端端口
@@ -62,13 +68,23 @@ app.whenReady().then(async () => {
   })
 
   // IPC: 打开文件选择对话框
-  ipcMain.handle('dialog:open-file', async () => {
+  //   opts.extensions：指定过滤后缀（如 ['elf','axf']），不传时默认 bin/hex/elf/axf + 所有文件（兼容 Flash 页）
+  //   opts.title：对话框标题
+  ipcMain.handle('dialog:open-file', async (_event, opts?: { extensions?: string[]; title?: string }) => {
+    // 根据是否指定 extensions 动态构造 filters，未指定时保留原有 bin/hex/elf/axf + 所有文件
+    const filters = opts?.extensions?.length
+      ? [
+          { name: `${opts.extensions.join('/').toUpperCase()} 文件`, extensions: opts.extensions },
+          { name: '所有文件', extensions: ['*'] },
+        ]
+      : [
+          { name: '固件文件', extensions: ['bin', 'hex', 'elf', 'axf'] },
+          { name: '所有文件', extensions: ['*'] },
+        ]
+    const title = opts?.title ?? (opts?.extensions?.length ? '选择文件' : '选择固件文件')
     const result = await dialog.showOpenDialog(mainWindow!, {
-      title: '选择固件文件',
-      filters: [
-        { name: '固件文件', extensions: ['bin', 'hex', 'elf'] },
-        { name: '所有文件', extensions: ['*'] },
-      ],
+      title,
+      filters,
       properties: ['openFile'],
     })
     if (result.canceled || result.filePaths.length === 0) return null

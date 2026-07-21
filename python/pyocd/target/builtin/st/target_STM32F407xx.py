@@ -1,5 +1,5 @@
 # pyOCD debugger
-# Copyright (c) 2026 DAPLink Work
+# Copyright (c) 2026 OMNI Work
 # SPDX-License-Identifier: Apache-2.0
 #
 # Flash algorithm generated from STM32F4xx_1024.FLM using generate_flash_algo.py.
@@ -96,13 +96,13 @@ class STM32F407xG(CoreSightTarget):
     # The flash_size is 0x100000 = 1MB, and the region layout handles the rest.
     MEMORY_MAP = MemoryMap(
         FlashRegion(start=0x08000000, length=0x10000, sector_size=0x4000,
-                    page_size=0x1000, is_boot_memory=True,
+                    page_size=0x400, is_boot_memory=True,
                     erase_all_weight=CHIP_ERASE_WEIGHT, algo=FLASH_ALGO),
         FlashRegion(start=0x08010000, length=0x10000, sector_size=0x10000,
-                    page_size=0x1000,
+                    page_size=0x400,
                     erase_all_weight=CHIP_ERASE_WEIGHT, algo=FLASH_ALGO),
         FlashRegion(start=0x08020000, length=0xe0000, sector_size=0x20000,
-                    page_size=0x1000,
+                    page_size=0x400,
                     erase_all_weight=CHIP_ERASE_WEIGHT, algo=FLASH_ALGO),
         # 128KB SRAM (112KB SRAM1 + 16KB SRAM2, contiguous)
         RamRegion(start=0x20000000, length=0x20000),

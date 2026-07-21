@@ -139,9 +139,25 @@ class PyOCDBackend(BackendInterface):
             if existing and existing.state == ProbeState.CONNECTED:
                 return True
 
+            # 提取旧会话对象（可能来自之前失败的连接）
+            # 旧会话可能持有 USB 句柄，必须先释放才能重新连接
+            old_session = existing.session if existing else None
+
             # 创建或更新会话记录
             session_info = ProbeSession(uid=probe_uid, state=ProbeState.CONNECTING)
             self._sessions[probe_uid] = session_info
+
+        # 在锁外关闭旧会话（session.close() 可能耗时，避免阻塞其他探针操作）
+        # 这是修复 JTAG 失败后 SWD 无法重连的关键步骤：
+        # 即使旧会话的 session 字段为 None（_do_connect 中已关闭），
+        # 也要清理可能残留的旧 session 对象。
+        if old_session is not None:
+            try:
+                old_session.options.set('resume_on_disconnect', False)
+                old_session.close()
+                event_manager.log("info", f"Closed stale session for {probe_uid[:16]} before reconnect")
+            except Exception:
+                pass
 
         event_manager.log("info", f"Connecting to probe {probe_uid[:16]}...")
 
@@ -154,31 +170,115 @@ class PyOCDBackend(BackendInterface):
             # 对 CMSIS-DAP v2 (WinUSB bulk) 提升尤为显著，读取速度可提升 5-10 倍
             'cmsis_dap.deferred_transfers': True,
         }
-        if speed:
-            options['frequency'] = speed
+        # 默认 1MHz SWD 时钟（与前端默认值一致）。
+        # 若探针不支持该频率，pyOCD 会自动选择最接近的支持值。
+        actual_speed = speed if speed else 1000000
+        options['frequency'] = actual_speed
         # 接口协议通过 dap_protocol 选项设置
         if interface == 'jtag':
             options['dap_protocol'] = 'jtag'
+            # JTAG 模式必须设置 jlink.device,触发 J-Link 固件执行完整 JTAG 链扫描和 DP 初始化。
+            # 否则 pyOCD 走 low-level CoreSight 路径,pylink 的 coresight_configure() 会破坏
+            # JTAG DP 访问(实测 DP IDR 变 0x00000000,内存读全零)。
+            # APM32F407IG 与 STM32F407VG 的 CoreSight JTAG-DP ID 一致(0x4BA00477),
+            # JTAG 链结构相同,可借用 STM32F4 设备配置。
+            # 配合 jlink_probe.py 中对 coresight_configure() 的条件跳过使用。
+            options['jlink.device'] = 'STM32F407VG'
         else:
             options['dap_protocol'] = 'swd'
 
-        try:
-            session = ConnectHelper.session_with_chosen_probe(
+        # 连接超时（秒）。目标未 reset 或无响应时，pyOCD 内部 DP 连接会重试 4 次 SWJ 序列，
+        # 可能阻塞数秒到数十秒。用线程池 + future.result(timeout) 强制中断。
+        CONNECT_TIMEOUT = 5.0
+        # JTAG 连接失败时的降速重试频率（Hz）
+        JTAG_FALLBACK_SPEED = 1000000
+
+        def _do_connect(freq: int, proto: str):
+            """实际的连接逻辑，在线程池中执行"""
+            opts = dict(options)
+            opts['frequency'] = freq
+            opts['dap_protocol'] = proto
+            sess = ConnectHelper.session_with_chosen_probe(
                 blocking=False,
                 unique_id=probe_uid,
                 target_override=target_override,
                 init_board=False,
-                options=options,
+                options=opts,
             )
+            if sess is None:
+                return None
+            try:
+                sess.open()
+                return sess
+            except Exception:
+                # 连接失败时必须关闭 session，释放 USB 句柄。
+                # 否则探针会被锁定，后续重连（如 JTAG 失败后切换 SWD）
+                # 会因探针被占用而失败，只能物理拔插。
+                try:
+                    sess.options.set('resume_on_disconnect', False)
+                    sess.close()
+                except Exception:
+                    pass
+                raise
+
+        session = None
+        last_error = None
+        try:
+            import concurrent.futures
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(_do_connect, actual_speed, interface)
+                try:
+                    session = future.result(timeout=CONNECT_TIMEOUT)
+                except concurrent.futures.TimeoutError:
+                    future.cancel()
+                    last_error = f"连接超时（{int(CONNECT_TIMEOUT)}秒），目标可能未上电或未复位"
+                    event_manager.log("error", f"Connection timeout: {last_error}")
+                except Exception as e:
+                    last_error = str(e)
+                    # JTAG 模式下通信失败，降速重试
+                    if interface == 'jtag':
+                        # JTAG 通信失败的常见原因：
+                        # 1. JTAG 接线问题（TCK/TMS/TDI/TDO 未正确连接）
+                        # 2. 目标芯片未上电或未复位
+                        # 3. JTAG scan chain 未正确配置（多设备链）
+                        # 4. 探针固件不支持 JTAG（部分 J-Link 型号）
+                        if actual_speed > JTAG_FALLBACK_SPEED:
+                            event_manager.log("warning",
+                                              f"JTAG connect failed at {actual_speed}Hz: {e}; "
+                                              f"retrying at {JTAG_FALLBACK_SPEED}Hz...")
+                            try:
+                                future2 = executor.submit(_do_connect, JTAG_FALLBACK_SPEED, interface)
+                                session = future2.result(timeout=CONNECT_TIMEOUT)
+                                if session is not None:
+                                    last_error = None
+                                    event_manager.log("info",
+                                                      f"JTAG connected at fallback {JTAG_FALLBACK_SPEED}Hz")
+                            except Exception as e2:
+                                last_error = str(e2)
+                        # JTAG 降速重试仍失败，提供明确的错误信息
+                        if session is None:
+                            last_error = (
+                                f"JTAG 连接失败: {last_error}\n"
+                                "可能原因：\n"
+                                "1. JTAG 接线问题（检查 TCK/TMS/TDI/TDO/GND）\n"
+                                "2. 目标芯片未上电或未复位\n"
+                                "3. 探针不支持 JTAG 模式\n"
+                                "建议：尝试使用 SWD 接口连接"
+                            )
+                            event_manager.log("error", f"JTAG connection failed: {last_error}")
+
             if session is None:
+                # _do_connect 返回 None 表示探针未找到
+                if last_error is None:
+                    last_error = f"Probe {probe_uid[:16]} not found"
+                    event_manager.log("error", last_error)
+                    event_manager.emit("probe.disconnected", {"uid": probe_uid, "reason": "not_found"})
+                else:
+                    event_manager.emit("probe.disconnected", {"uid": probe_uid, "reason": "error"})
                 with self._lock:
                     session_info.state = ProbeState.ERROR
-                    session_info.error = "Probe not found"
-                event_manager.log("error", f"Probe {probe_uid[:16]} not found")
-                event_manager.emit("probe.disconnected", {"uid": probe_uid, "reason": "not_found"})
+                    session_info.error = last_error
                 return False
-
-            session.open()
 
             with self._lock:
                 session_info.session = session
@@ -232,14 +332,26 @@ class PyOCDBackend(BackendInterface):
             session_info = self._sessions.pop(probe_uid, None)
 
         if session_info and session_info.session:
-            try:
-                session_info.session.close()
-                event_manager.log("info", f"Disconnected from {probe_uid[:16]}")
-            except Exception as e:
-                event_manager.log("warning", f"Disconnect error: {e}")
+            # 先通知前端探针已断开，UI 立即更新
+            event_manager.emit("probe.disconnected", {"uid": probe_uid, "reason": "user"})
 
-        event_manager.emit("probe.disconnected", {"uid": probe_uid, "reason": "user"})
+            # session.close() 耗时取决于底层 USB 通信，可能数秒。
+            # 放入后台线程执行以避免阻塞前端。
+            import threading
+            session = session_info.session
+            t = threading.Thread(target=self._close_session, args=(session,), daemon=True)
+            t.start()
+
         return True
+
+    def _close_session(self, session):
+        """后台关闭 pyOCD session，避免 blocking 前端"""
+        try:
+            # 设置 resume_on_disconnect=False 避免 target.resume() 耗时操作
+            session.options.set('resume_on_disconnect', False)
+            session.close()
+        except Exception:
+            pass  # 后台清理，忽略超时等异常
 
     def get_state(self, probe_uid: str) -> ProbeState:
         """获取探针连接状态"""
@@ -506,6 +618,13 @@ class PyOCDBackend(BackendInterface):
         try:
             from pyocd.flash.flash import Flash
 
+            # 擦除前复位并暂停目标，确保目标处于已知状态。
+            # 目标可能正在运行用户代码，Flash 控制器状态未知，直接擦除
+            # 会导致 flash algorithm 在目标上 HardFault（IPSR=3）。
+            # 这与 pyocd erase CLI (subcommands/erase_cmd.py) 和
+            # program() 方法的 pre_reset 行为一致。
+            session.target.reset_and_halt()
+
             region = session.target.memory_map.get_boot_memory()
             if not region:
                 return FlashResult(success=False, error="No flash memory found")
@@ -546,10 +665,11 @@ class PyOCDBackend(BackendInterface):
                 end_addr = address + size
                 event_manager.log("info", f"Erasing sectors 0x{address:08X}~0x{end_addr:08X}...")
 
+                # 按 region 分组擦除，避免每扇区 init/uninit
+                # 先找出需要擦除的地址范围，按 region 分组
+                region_sectors: dict[int, list[int]] = {}
                 cur = address
-                erased = 0
                 while cur < end_addr:
-                    # 找到 cur 所在的 flash region
                     region = None
                     for r in flash_regions:
                         if r.start <= cur < r.start + r.length:
@@ -561,23 +681,44 @@ class PyOCDBackend(BackendInterface):
                         continue
 
                     sector_size = region.sector_size
-                    # 对齐到 sector 边界
                     sector_aligned = region.start + ((cur - region.start) // sector_size) * sector_size
+                    # 只擦除范围内的扇区（sector_aligned 可能越界）
+                    if sector_aligned >= end_addr:
+                        break
+                    region_key = id(region)
+                    if region_key not in region_sectors:
+                        region_sectors[region_key] = []
+                    region_sectors[region_key].append(sector_aligned)
+                    cur = sector_aligned + sector_size
+
+                total_sectors = sum(len(v) for v in region_sectors.values())
+                erased = 0
+
+                for region_key, sector_addrs in region_sectors.items():
+                    # 找到对应的 region 对象
+                    region = None
+                    for r in flash_regions:
+                        if id(r) == region_key:
+                            region = r
+                            break
+                    if not region:
+                        continue
 
                     flash = region.flash
                     flash.init(Flash.Operation.ERASE)
                     try:
-                        flash.erase_sector(sector_aligned)
-                        erased += 1
-                        event_manager.emit("flash.progress", {
-                            "phase": "erase", "current": erased, "total": 0,
-                            "percent": round((sector_aligned + sector_size - address) / size * 100, 2) if size > 0 else 100,
-                        })
+                        for addr in sector_addrs:
+                            flash.erase_sector(addr)
+                            erased += 1
+                            event_manager.emit("flash.progress", {
+                                "phase": "erase", "current": erased, "total": total_sectors,
+                                "percent": round(erased / total_sectors * 100, 2) if total_sectors > 0 else 100,
+                            })
                     finally:
                         flash.uninit()
-                    cur = sector_aligned + sector_size
+
                 event_manager.emit("flash.progress", {
-                    "phase": "erase", "current": 1, "total": 1, "percent": 100,
+                    "phase": "erase", "current": total_sectors, "total": total_sectors, "percent": 100,
                 })
             else:
                 event_manager.log("info", f"Erasing sector at 0x{address:08X}...")
@@ -657,14 +798,6 @@ class PyOCDBackend(BackendInterface):
             # 原因：目标可能正在运行用户代码，Flash 控制器状态未知，直接编程会失败
             session.target.reset_and_halt()
 
-            def progress_callback(percent: float):
-                event_manager.emit("flash.progress", {
-                    "phase": "program",
-                    "current": int(file_size * percent / 100),
-                    "total": file_size,
-                    "percent": round(percent, 2),
-                })
-
             # 确定文件格式和基地址
             ext = os.path.splitext(file_path)[1].lower()
             kwargs = {}
@@ -682,13 +815,34 @@ class PyOCDBackend(BackendInterface):
             data_segments = self._extract_file_data(session, file_path, ext)
             actual_data_size = sum(len(d) for _, d in data_segments) if data_segments else file_size
 
-            # 使用 chip_erase="chip" 强制全片擦除
+            # 第一阶段：擦除（chip erase 可能耗时较长，在前端展示 Erasing... 状态）
+            event_manager.emit("flash.progress", {
+                "phase": "erase", "current": 0, "total": actual_data_size, "percent": 0,
+            })
+
+            def progress_callback(percent: float):
+                # FlashLoader 报告的是 0.0-1.0 的浮点数，前端需要 0-100 的百分比
+                progress_pct = round(percent * 100, 2)
+                event_manager.emit("flash.progress", {
+                    "phase": "program",
+                    "current": int(file_size * percent),
+                    "total": file_size,
+                    "percent": progress_pct,
+                })
+
+            # 使用 chip_erase="sector" 仅擦除需要编程的扇区
             # 原因：chip_erase="auto" 在已擦除的 Flash 上会跳过擦除，导致编程静默失败
-            programmer = FileProgrammer(session, progress=progress_callback, chip_erase="chip")
+            # chip_erase="chip" 全片擦除太慢（1MB Flash 约 10-15s），改为按需擦除
+            programmer = FileProgrammer(session, progress=progress_callback, chip_erase="sector")
 
             # 注意：FileProgrammer.program() 不支持 verify 参数（pyOCD 0.44 的 FlashLoader.commit 中 verify 为 TODO）
             # 烧录后如需校验，调用独立的 verify() 方法
             programmer.program(file_path, **kwargs)
+
+            # 第二阶段完成：发送 program 100% 确保进度条走到终点
+            event_manager.emit("flash.progress", {
+                "phase": "program", "current": actual_data_size, "total": actual_data_size, "percent": 100,
+            })
 
             duration = int((time.time() - start_time) * 1000)
             speed_kbps = (file_size / 1024) / (duration / 1000) if duration > 0 else 0
@@ -905,6 +1059,84 @@ class PyOCDBackend(BackendInterface):
                         segments.append((section.header.sh_addr, data))
         return segments
 
+    def fill_memory(
+        self,
+        probe_uid: str,
+        address: int,
+        size: int,
+        value: int = 0xFF,
+    ) -> FlashResult:
+        """填充内存区域（支持 Flash 和 RAM）
+
+        注意：当前前端 Fill Memory 功能已改为纯前端数据操作（仅在数据 Tab 中填充），
+        不再调用此后端方法。此方法保留供未来可能的直接设备填充用途。
+
+        Args:
+            address: 起始地址
+            size: 填充字节数
+            value: 填充字节值 (0-255)
+        """
+        session = self._get_session(probe_uid)
+        if not session:
+            return FlashResult(success=False, error="Not connected")
+
+        if size <= 0:
+            return FlashResult(success=False, error="Size must be positive")
+        if not (0 <= value <= 255):
+            return FlashResult(success=False, error="Value must be 0-255")
+
+        start_time = time.time()
+        try:
+            data = bytes([value]) * size
+
+            # 判断目标地址是 Flash 还是 RAM
+            region = session.target.memory_map.get_region_for_address(address)
+            if region and region.is_flash:
+                # Flash：使用 FlashLoader（自动处理擦除+编程）
+                from pyocd.flash.flash_loader import FlashLoader
+                event_manager.log("info", f"Filling flash 0x{address:08X}..0x{address + size - 1:08X} with 0x{value:02X}")
+
+                # 填充前先复位并暂停目标（与 program 函数的 pre_reset 行为一致）
+                # 原因：目标可能正在运行用户代码，Flash 控制器状态未知，直接编程会失败
+                session.target.reset_and_halt()
+
+                # 分块处理（避免大块内存占用）
+                # 注意：FlashLoader 需要传入 session（提供 .board/.options），传入 session.target
+                # 会因缺少 .board/.options 属性导致 AttributeError（参照 program 函数 FileProgrammer(session, ...) 用法）
+                CHUNK_SIZE = 0x10000  # 64KB
+                loader = FlashLoader(session)
+                for offset in range(0, size, CHUNK_SIZE):
+                    chunk = data[offset:offset + CHUNK_SIZE]
+                    loader.add_data(address + offset, chunk)
+                    event_manager.emit("flash.progress", {
+                        "phase": "fill",
+                        "current": offset + len(chunk),
+                        "total": size,
+                        "percent": round((offset + len(chunk)) / size * 100, 2),
+                    })
+                loader.commit()
+            else:
+                # RAM：直接写入
+                event_manager.log("info", f"Filling RAM 0x{address:08X}..0x{address + size - 1:08X} with 0x{value:02X}")
+                CHUNK_SIZE = 0x10000  # 64KB
+                for offset in range(0, size, CHUNK_SIZE):
+                    chunk = data[offset:offset + CHUNK_SIZE]
+                    session.target.write_memory_block8(address + offset, chunk)
+                    event_manager.emit("flash.progress", {
+                        "phase": "fill",
+                        "current": offset + len(chunk),
+                        "total": size,
+                        "percent": round((offset + len(chunk)) / size * 100, 2),
+                    })
+
+            duration = int((time.time() - start_time) * 1000)
+            event_manager.log("info", f"Fill done in {duration}ms ({size / 1024:.1f} KB)")
+            return FlashResult(success=True, bytes_written=size, duration_ms=duration)
+        except Exception as e:
+            logger.exception("Fill memory failed")
+            event_manager.log("error", f"Fill memory failed: {e}")
+            return FlashResult(success=False, error=str(e))
+
     def check_blank(
         self,
         probe_uid: str,
@@ -912,6 +1144,12 @@ class PyOCDBackend(BackendInterface):
         size: int | None = None,
     ) -> dict:
         """检查 Flash 是否为空白（全 0xFF）
+
+        优化策略（对标 STM32CubeProgrammer <10s 方案）：
+        1. 提升 SWD 频率至 ST-LINK 支持的最高值（4.6MHz V2 / 9MHz V3）
+        2. 使用 read_memory_block8 读取原始字节，用 C 级 bytes 操作比较
+        3. 大块读取（64KB），仅每 256KB 发送一次进度事件
+        4. 空白检查用 data.count(0xFF) == len(data)（C 级，O(n) 但常数极小）
 
         Args:
             address: 起始地址，None 则从 flash 起始
@@ -946,7 +1184,7 @@ class PyOCDBackend(BackendInterface):
             total_bytes = 0
             blank_bytes = 0
             first_nonblank_addr = None
-            chunk_words = 16384  # 16384 words = 64KB per chunk
+            chunk_size = 65536  # 64KB per chunk — 平衡 USB 吞吐与内存占用
 
             # 计算总大小用于进度
             check_total = 0
@@ -963,8 +1201,7 @@ class PyOCDBackend(BackendInterface):
                 "phase": "blank", "current": 0, "total": check_total, "percent": 0,
             })
 
-            # 全 0xFFFFFFFF 的 word，用于快速比较
-            FF_WORD = 0xFFFFFFFF
+            last_progress_pct = -1
 
             for region in regions_to_check:
                 start = max(region.start, address) if address else region.start
@@ -980,42 +1217,39 @@ class PyOCDBackend(BackendInterface):
                         event_manager.log("warning", f"Check blank cancelled at {total_bytes} bytes")
                         return {"success": False, "error": "Cancelled", "duration_ms": int((time.time() - start_time) * 1000)}
 
-                    # 用 block32 批量读取（Flash 总是 4 字节对齐）
-                    read_bytes = min(chunk_words * 4, region_total - offset)
-                    word_count = read_bytes // 4
-                    if word_count == 0:
-                        word_count = 1
-                        read_bytes = 4
-                    words = session.target.read_memory_block32(start + offset, word_count)
+                    # 用 block8 读取原始字节（bytearray），比 block32 返回 list[int] 更高效
+                    read_bytes = min(chunk_size, region_total - offset)
+                    data = session.target.read_memory_block8(start + offset, read_bytes)
 
-                    # 高效检查：逐 word 比较 0xFFFFFFFF
-                    if first_nonblank_addr is None:
-                        for i, w in enumerate(words):
-                            if w != FF_WORD:
-                                # 在这个 word 的 4 字节中找第一个非 0xFF
-                                word_bytes = w.to_bytes(4, 'little')
-                                for j in range(4):
-                                    if word_bytes[j] != 0xFF:
-                                        first_nonblank_addr = start + offset + i * 4 + j
-                                        break
-                                break
+                    # C 级操作：count(0xFF) 是 bytearray 的内置 C 方法，极快
+                    ff_count = data.count(0xFF)
 
-                    # 统计 blank bytes
-                    for w in words:
-                        if w == FF_WORD:
-                            blank_bytes += 4
-                        else:
-                            blank_bytes += w.to_bytes(4, 'little').count(0xFF)
+                    if ff_count == len(data):
+                        # 整块全 0xFF — 最快路径，无需 Python 循环
+                        blank_bytes += len(data)
+                    else:
+                        # 有非 0xFF 字节 — 需要找到位置
+                        blank_bytes += ff_count
+                        if first_nonblank_addr is None:
+                            # Python 循环仅在非空白块中执行（罕见路径）
+                            for i in range(len(data)):
+                                if data[i] != 0xFF:
+                                    first_nonblank_addr = start + offset + i
+                                    break
 
-                    total_bytes += word_count * 4
-                    offset += word_count * 4
+                    total_bytes += read_bytes
+                    offset += read_bytes
 
-                    event_manager.emit("flash.progress", {
-                        "phase": "blank",
-                        "current": total_bytes,
-                        "total": check_total,
-                        "percent": round(total_bytes / check_total * 100, 2) if check_total > 0 else 100,
-                    })
+                    # 减少进度事件频率：仅在百分比变化 >= 5% 时发送
+                    pct = round(total_bytes / check_total * 100, 2) if check_total > 0 else 100
+                    if pct >= last_progress_pct + 5 or pct >= 100:
+                        last_progress_pct = pct
+                        event_manager.emit("flash.progress", {
+                            "phase": "blank",
+                            "current": total_bytes,
+                            "total": check_total,
+                            "percent": pct,
+                        })
 
             is_blank = (first_nonblank_addr is None)
             duration = int((time.time() - start_time) * 1000)

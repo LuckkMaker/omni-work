@@ -6,3 +6,31 @@ __pycache__/
 *.pyc
 .env
 *.log
+*.pack
+release/
+python/build/
+
+# SQLite WAL 临时文件
+python/data/devices.db-wal
+python/data/devices.db-shm
+
+# macOS 系统文件
+.DS_Store
+
+# Windows 系统文件
+Thumbs.db
+Desktop.ini
+
+# electron-vite 临时构建配置文件
+electron.vite.config.*.mjs
+
+# PyInstaller 产物
+python/dist/
+
+# IDE 文件
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# 打包产物已在 release/ 中，确保覆盖

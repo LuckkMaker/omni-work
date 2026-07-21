@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Usb, ChevronsUpDown, RefreshCw, Cpu, Plug, Unlink } from 'lucide-react'
+import { Usb, ChevronsUpDown, RefreshCw, Cpu, PlugZap, Unplug } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import {
@@ -164,9 +164,9 @@ export function DeviceSwitcher() {
             {connecting || selectedProbe.state === 'connecting' ? (
               <RefreshCw className="size-4 animate-spin" />
             ) : isConnected ? (
-              <Unlink className="size-4" />
+              <Unplug className="size-4" />
             ) : (
-              <Plug className="size-4" />
+              <PlugZap className="size-4" />
             )}
           </button>
         )}
@@ -225,7 +225,12 @@ export function DeviceSwitcher() {
           {/* 接口 + 速度 */}
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-2">
-              <span className="text-sm font-medium">接口</span>
+              <div className="flex items-center gap-1">
+                <span className="text-sm font-medium">接口</span>
+                <span className="text-[10px] text-muted-foreground cursor-help" title="SWD：2 线调试（SWCLK+SWDIO），推荐；JTAG：传统 4 线调试，需探针和目标均支持。连接失败时可降低速度重试。">
+                  ⓘ
+                </span>
+              </div>
               <Select value={pendingInterface} onValueChange={(v) => setPendingInterface(v as 'swd' | 'jtag')}>
                 <SelectTrigger className="h-9" disabled={isConnected}>
                   <SelectValue />
@@ -237,7 +242,12 @@ export function DeviceSwitcher() {
               </Select>
             </div>
             <div className="space-y-2">
-              <span className="text-sm font-medium">速度</span>
+              <div className="flex items-center gap-1">
+                <span className="text-sm font-medium">速度</span>
+                <span className="text-[10px] text-muted-foreground cursor-help" title="时钟频率，越高传输越快但越易出错。探针不支持时会自动选最接近值。连接不稳定时请降低速度。">
+                  ⓘ
+                </span>
+              </div>
               <Select value={String(pendingSpeed)} onValueChange={(v) => setPendingSpeed(Number(v))}>
                 <SelectTrigger className="h-9" disabled={isConnected}>
                   <SelectValue />

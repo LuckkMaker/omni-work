@@ -1,6 +1,10 @@
 import { resolve } from 'path'
+import { readFileSync } from 'fs'
 import { defineConfig, externalizeDepsPlugin } from 'electron-vite'
 import react from '@vitejs/plugin-react'
+
+// 构建期读取 package.json 版本号，注入到 renderer 全局变量 __APP_VERSION__
+const pkg = JSON.parse(readFileSync(resolve(__dirname, 'package.json'), 'utf-8'))
 
 export default defineConfig({
   main: {
@@ -31,7 +35,11 @@ export default defineConfig({
         '@shared': resolve(__dirname, 'src/shared')
       }
     },
+    define: {
+      __APP_VERSION__: JSON.stringify(pkg.version)
+    },
     build: {
+      emptyOutDir: false,
       rollupOptions: {
         input: {
           index: resolve(__dirname, 'src/index.html')

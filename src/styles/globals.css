@@ -37,3 +37,48 @@
     -webkit-font-smoothing: antialiased;
   }
 }
+
+/* ── xterm.js 终端样式修正 ────────────── */
+/* 确保终端容器完全填充父级，消除底部间隙 */
+.xterm {
+  height: 100%;
+  padding: 0;
+}
+
+/* 终端 viewport 填满容器，消除底部滚动条缺口，滚动条贴右边框 */
+.xterm .xterm-viewport {
+  height: 100% !important;
+  padding: 0;
+}
+
+/* 终端屏幕区域确保完整渲染，文字四周留间距但不影响滚动条贴边 */
+.xterm .xterm-screen {
+  height: 100%;
+}
+
+/* 文字行容器：不设置 padding。
+ * 之前 `.xterm-rows { padding: 4px 0 }` 的垂直 padding 会导致选中区域与字符 cell
+ * 位置错位——selection 矩形按 N*lineHeight 定位，但字符 cell 实际位置因 padding
+ * 向下偏移，使 selection 顶部覆盖上一行字符的下半截。
+ * 修复后：selection 与字符 cell 严格对齐；垂直留白改由终端容器层处理。 */
+.xterm .xterm-rows {
+  padding: 0;
+}
+
+/* 选中区域完全不透明，避免半透明背景遮挡文字。
+ * xterm.js v5 默认给 selectionBackground 加 alpha 导致选中文字模糊，
+ * 强制不透明后，选中文字由 selectionForeground 重新着色，清晰可读。 */
+.xterm .xterm-selection div {
+  opacity: 1 !important;
+}
+
+/* 终端辅助文本框定位 */
+.xterm .xterm-helper-textarea {
+  position: absolute;
+  opacity: 0;
+}
+
+/* react-resizable-panels: 折叠时隐藏面板溢出内容 */
+[data-panel] {
+  overflow: hidden;
+}

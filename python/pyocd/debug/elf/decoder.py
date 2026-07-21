@@ -26,7 +26,7 @@ import logging
 LOG = logging.getLogger(__name__)
 
 FunctionInfo = namedtuple('FunctionInfo', 'name subprogram low_pc high_pc')
-LineInfo = namedtuple('LineInfo', 'cu filename dirname line')
+LineInfo = namedtuple('LineInfo', 'cu filename dirname line comp_dir')
 SymbolInfo = namedtuple('SymbolInfo', 'name address size type')
 
 class ElfSymbolDecoder(object):
@@ -165,6 +165,17 @@ class DwarfAddressDecoder(object):
     def _build_line_search_tree(self):
         for cu in self.dwarfinfo.iter_CUs():
             lineprog = self.dwarfinfo.line_program_for_CU(cu)
+            if lineprog is None:
+                continue
+
+            # 获取 CU 的编译目录（DW_AT_comp_dir），用于构造完整源文件路径
+            comp_dir = ""
+            top_die = cu.get_top_DIE()
+            if top_die:
+                comp_dir_attr = top_die.attributes.get('DW_AT_comp_dir')
+                if comp_dir_attr:
+                    comp_dir = comp_dir_attr.value.decode() if isinstance(comp_dir_attr.value, bytes) else comp_dir_attr.value
+
             prevstate = None
             skipThisSequence = False
             for entry in lineprog.get_entries():
@@ -185,15 +196,17 @@ class DwarfAddressDecoder(object):
                 if prevstate and not skipThisSequence:
                     try:
                         fileinfo = lineprog['file_entry'][prevstate.file - 1]
-                        filename = fileinfo.name
+                        filename_bytes = fileinfo.name
+                        filename = filename_bytes.decode() if isinstance(filename_bytes, bytes) else filename_bytes
                         try:
                             dirname = lineprog['include_directory'][fileinfo.dir_index - 1]
+                            dirname = dirname.decode() if isinstance(dirname, bytes) else dirname
                         except IndexError:
                             dirname = ""
                     except IndexError:
                         filename = ""
                         dirname = ""
-                    info = LineInfo(cu=cu, filename=filename, dirname=dirname, line=prevstate.line)
+                    info = LineInfo(cu=cu, filename=filename, dirname=dirname, line=prevstate.line, comp_dir=comp_dir)
                     fromAddr = prevstate.address
                     toAddr = entry.state.address
                     try:

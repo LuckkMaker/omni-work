@@ -5,6 +5,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from core.pyocd_backend import backend
 from core.events import event_manager
+from core.monitor_backend import monitor_backend
 
 router = APIRouter()
 
@@ -46,19 +47,27 @@ class ReadBackRequest(BaseModel):
     output_path: str = ""
 
 
+class FillMemoryRequest(BaseModel):
+    address: int
+    size: int
+    value: int = 0xFF  # 填充字节 (0-255)
+
+
 @router.post("/probes/{uid}/flash/erase")
 async def erase_flash(uid: str, req: EraseRequest):
     """擦除 Flash"""
-    result = await asyncio.to_thread(backend.erase, uid, req.type, req.address, req.size)
+    with monitor_backend.pause_during(uid):
+        result = await asyncio.to_thread(backend.erase, uid, req.type, req.address, req.size)
     return result.__dict__
 
 
 @router.post("/probes/{uid}/flash/program")
 async def program_flash(uid: str, req: ProgramRequest):
     """烧录固件（支持文件路径或 base64 数据）"""
-    result = await asyncio.to_thread(
-        backend.program, uid, req.file_path, req.verify, req.reset, req.base_address, req.data
-    )
+    with monitor_backend.pause_during(uid):
+        result = await asyncio.to_thread(
+            backend.program, uid, req.file_path, req.verify, req.reset, req.base_address, req.data
+        )
     event_manager.emit("flash.complete", result.__dict__)
     return result.__dict__
 
@@ -66,30 +75,34 @@ async def program_flash(uid: str, req: ProgramRequest):
 @router.post("/probes/{uid}/flash/verify")
 async def verify_flash(uid: str, req: VerifyRequest):
     """校验 Flash 内容（支持文件路径或 base64 数据）"""
-    result = await asyncio.to_thread(backend.verify, uid, req.file_path, req.data, req.base_address)
+    with monitor_backend.pause_during(uid):
+        result = await asyncio.to_thread(backend.verify, uid, req.file_path, req.data, req.base_address)
     return result.__dict__
 
 
 @router.post("/probes/{uid}/flash/blank-check")
 async def blank_check(uid: str, req: BlankCheckRequest):
     """检查 Flash 是否为空白"""
-    result = await asyncio.to_thread(backend.check_blank, uid, req.address, req.size)
+    with monitor_backend.pause_during(uid):
+        result = await asyncio.to_thread(backend.check_blank, uid, req.address, req.size)
     return result
 
 
 @router.post("/probes/{uid}/flash/read")
 async def read_flash(uid: str, req: ReadBackRequest):
     """读取 Flash 内容，返回 base64 数据"""
-    result = await asyncio.to_thread(
-        backend.read_back, uid, req.type, req.address, req.size, req.output_path
-    )
+    with monitor_backend.pause_during(uid):
+        result = await asyncio.to_thread(
+            backend.read_back, uid, req.type, req.address, req.size, req.output_path
+        )
     return result
 
 
 @router.post("/probes/{uid}/reset")
 async def reset_target(uid: str, req: ResetRequest):
     """复位目标"""
-    success = await asyncio.to_thread(backend.reset, uid, req.type, req.run)
+    with monitor_backend.pause_during(uid):
+        success = await asyncio.to_thread(backend.reset, uid, req.type, req.run)
     return {"success": success}
 
 
@@ -98,3 +111,18 @@ async def cancel_flash_operation(uid: str):
     """取消正在进行的 Flash 操作"""
     backend.cancel_operation()
     return {"success": True}
+
+
+@router.post("/probes/{uid}/flash/fill")
+async def fill_memory(uid: str, req: FillMemoryRequest):
+    """填充内存区域（支持 Flash 和 RAM）
+
+    注意：当前前端 Fill Memory 功能已改为纯前端数据操作（仅在数据 Tab 中填充），
+    不再调用此后端接口。此路由保留供未来可能的直接设备填充用途。
+    """
+    with monitor_backend.pause_during(uid):
+        result = await asyncio.to_thread(
+            backend.fill_memory, uid, req.address, req.size, req.value
+        )
+    event_manager.emit("flash.complete", result.__dict__)
+    return result.__dict__

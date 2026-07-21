@@ -13,11 +13,13 @@ import { useProbeStore } from '@/stores/probe.store'
 
 export function BinAddressDialog() {
   const { showBinAddrDialog, confirmBinAddress, setShowBinAddrDialog } = useFlashStore()
-  const { getDeviceInfo, pendingTarget, connectedTarget } = useProbeStore()
+  const { getDeviceInfo, pendingTarget, getSelectedTarget } = useProbeStore()
 
   const [inputValue, setInputValue] = useState('')
   const [error, setError] = useState('')
 
+  // 优先使用已连接目标的 part_number，其次用 pendingTarget
+  const connectedTarget = getSelectedTarget()?.part_number || ''
   const targetKey = connectedTarget || pendingTarget || ''
   const devInfo = getDeviceInfo(targetKey)
   const defaultAddr = devInfo?.flash_base_address
