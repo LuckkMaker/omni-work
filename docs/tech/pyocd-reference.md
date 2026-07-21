@@ -6,6 +6,8 @@
 2. **Commander REPL 命令** — 交互式调试器中的命令
 3. **Python API** — 在代码中直接调用的类和方法
 
+本项目后端 REST/WebSocket API 见 [api.md](api.md)。
+
 ---
 
 ## 目录
@@ -32,7 +34,6 @@
   - [FileProgrammer — 烧录](#fileprogrammer)
   - [DAPAccessCMSISDAP — 底层探针访问](#dapaccesscmsisdap)
   - [MemoryMap / MemoryRegion — 内存映射](#memorymap)
-- [本项目后端 API](#本项目后端-api)
 
 ---
 
@@ -692,107 +693,6 @@ region = session.target.memory_map.get_region_for_address(0x08000000)
 | `is_flash` | 是否为 Flash |
 | `is_ram` | 是否为 RAM |
 | `is_boot_memory` | 是否为启动存储器 |
-
----
-
-## 本项目后端 API
-
-本项目通过 FastAPI 封装了 pyOCD 的常用操作，HTTP API 基础路径为 `http://127.0.0.1:8765/api`。
-
-### 探针管理
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/probes` | 列出所有探针（含连接状态） |
-| GET | `/probes/states` | 获取探针状态（轻量级） |
-| POST | `/probes/{uid}/connect` | 连接探针 |
-| POST | `/probes/{uid}/disconnect` | 断开探针 |
-| GET | `/probes/{uid}/target` | 获取目标信息 |
-| POST | `/probes/{uid}/target` | 设置目标型号 |
-| GET | `/probes/{uid}/status` | 获取探针状态 |
-| POST | `/probes/refresh` | 刷新探针列表 |
-
-**连接请求体：**
-```json
-{
-  "target": "apm32f407xg",
-  "interface": "swd",
-  "speed": 10000000
-}
-```
-
-### Flash 操作
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/probes/{uid}/flash/erase` | 擦除 Flash |
-| POST | `/probes/{uid}/flash/program` | 烧录固件 |
-| POST | `/probes/{uid}/flash/verify` | 校验 Flash |
-| POST | `/probes/{uid}/flash/blank-check` | 检查空白 |
-| POST | `/probes/{uid}/flash/read` | 读取 Flash |
-| POST | `/probes/{uid}/reset` | 复位目标 |
-| POST | `/probes/{uid}/flash/cancel` | 取消 Flash 操作 |
-
-**擦除请求体：**
-```json
-{
-  "type": "chip",
-  "address": 0,
-  "size": 0
-}
-```
-`type` 可选值：`chip`（整片）、`sector`（扇区）、`sector_range`（范围）
-
-**烧录请求体：**
-```json
-{
-  "file_path": "D:/firmware.bin",
-  "verify": true,
-  "reset": true,
-  "base_address": null
-}
-```
-
-**读取请求体：**
-```json
-{
-  "type": "chip",
-  "address": 0,
-  "size": 0,
-  "output_path": ""
-}
-```
-返回 `{ "success": true, "base64_data": "...", "base_address": ..., "bytes_read": ..., "duration_ms": ... }`
-
-### 文件操作
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| POST | `/files/parse` | 解析固件文件 |
-| POST | `/files/read` | 读取文件数据 |
-| POST | `/files/save` | 保存数据到文件 |
-
-### 目标与设备
-
-| 方法 | 路径 | 说明 |
-|------|------|------|
-| GET | `/targets` | 列出所有支持的 MCU 型号 |
-| GET | `/targets/{part_number}` | 获取 MCU 信息 |
-| GET | `/devices` | 列出设备目录 |
-| GET | `/devices/{part_number}` | 获取设备详情 |
-
-### WebSocket 事件
-
-连接 `ws://127.0.0.1:8765/ws` 接收实时事件：
-
-| 事件 | 说明 |
-|------|------|
-| `probe.connected` | 探针已连接 |
-| `probe.disconnected` | 探针已断开 |
-| `probe.list` | 探针列表更新 |
-| `flash.progress` | Flash 操作进度 |
-| `flash.complete` | Flash 操作完成 |
-| `log` | 日志消息 |
 
 ---
 

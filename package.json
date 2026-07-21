@@ -1,7 +1,9 @@
 {
   "name": "omni-work",
-  "version": "0.3.3",
+  "version": "0.3.4",
   "description": "嵌入式开发工具集",
+  "license": "MIT",
+  "author": "LuckkMaker",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
@@ -44,7 +46,7 @@
           ]
         }
       ],
-      "icon": "build/icon.ico",
+      "icon": "assets/images/icon.ico",
       "artifactName": "${productName}-${version}-${arch}-setup.exe"
     },
     "nsis": {

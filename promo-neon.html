@@ -1,0 +1,698 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OMNI Work · 嵌入式开发工具集</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700;800&family=Rajdhani:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  /* =========================================================
+     基础变量 / Reset
+  ========================================================= */
+  :root{
+    --bg:#0a0a0f;
+    --bg-2:#0e0e18;
+    --cyan:#00ffd5;
+    --magenta:#ff2d95;
+    --purple:#a855f7;
+    --orange:#ff7a3d;
+    --ink:#e8eef5;
+    --ink-dim:#8a90a3;
+    --line:rgba(0,255,213,.07);
+    --line-2:rgba(255,45,149,.06);
+  }
+
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:'Rajdhani',system-ui,sans-serif;
+    font-weight:400;
+    overflow-x:hidden;
+    line-height:1.5;
+    position:relative;
+  }
+
+  /* =========================================================
+     背景：网格 + 扫描线 + 霓虹光晕
+  ========================================================= */
+  .bg-grid,.bg-scan,.bg-glow{position:fixed;inset:0;pointer-events:none;z-index:0}
+  .bg-grid{
+    background-image:
+      linear-gradient(var(--line) 1px,transparent 1px),
+      linear-gradient(90deg,var(--line) 1px,transparent 1px);
+    background-size:48px 48px;
+    background-position:0 0;
+    animation:gridShift 24s linear infinite;
+    mask-image:radial-gradient(ellipse at 50% 40%,#000 30%,transparent 90%);
+    -webkit-mask-image:radial-gradient(ellipse at 50% 40%,#000 30%,transparent 90%);
+  }
+  .bg-grid::after{
+    content:"";position:absolute;inset:0;
+    background-image:
+      linear-gradient(var(--line-2) 1px,transparent 1px),
+      linear-gradient(90deg,var(--line-2) 1px,transparent 1px);
+    background-size:240px 240px;
+    opacity:.6;
+  }
+  @keyframes gridShift{
+    from{background-position:0 0,0 0}
+    to{background-position:48px 48px,48px 48px}
+  }
+  .bg-scan{
+    background:repeating-linear-gradient(0deg,rgba(255,255,255,.018) 0 1px,transparent 1px 3px);
+    mix-blend-mode:overlay;
+    opacity:.7;
+  }
+  .bg-glow{
+    background:
+      radial-gradient(600px 400px at 15% 20%,rgba(0,255,213,.10),transparent 60%),
+      radial-gradient(700px 500px at 85% 30%,rgba(255,45,149,.10),transparent 65%),
+      radial-gradient(800px 600px at 50% 100%,rgba(168,85,247,.08),transparent 60%);
+    animation:glowPulse 8s ease-in-out infinite alternate;
+  }
+  @keyframes glowPulse{
+    from{opacity:.65}
+    to{opacity:1}
+  }
+
+  .wrap{position:relative;z-index:2;max-width:1500px;margin:0 auto;padding:48px 24px 80px}
+
+  /* =========================================================
+     顶部 Header
+  ========================================================= */
+  header.hero{text-align:center;padding:40px 0 24px;position:relative}
+
+  .icon-orb{
+    width:128px;height:128px;margin:0 auto 22px;border-radius:22px;
+    position:relative;
+    background:radial-gradient(circle at 30% 25%,#1a1a2a,#070710 80%);
+    border:1px solid rgba(0,255,213,.4);
+    box-shadow:
+      0 0 0 1px rgba(0,255,213,.15) inset,
+      0 0 24px rgba(0,255,213,.45),
+      0 0 60px rgba(255,45,149,.30),
+      0 18px 50px rgba(0,0,0,.6);
+    overflow:hidden;
+    animation:orbFloat 5s ease-in-out infinite;
+  }
+  .icon-orb img{width:100%;height:100%;object-fit:cover;mix-blend-mode:normal;opacity:.96}
+  .icon-orb::before{
+    content:"";position:absolute;inset:-2px;border-radius:24px;
+    background:conic-gradient(from 0deg,var(--cyan),var(--magenta),var(--purple),var(--cyan));
+    filter:blur(14px);opacity:.5;z-index:-1;
+    animation:ringSpin 8s linear infinite;
+  }
+  @keyframes ringSpin{to{transform:rotate(360deg)}}
+  @keyframes orbFloat{
+    0%,100%{transform:translateY(0)}
+    50%{transform:translateY(-8px)}
+  }
+
+  .badge-row{display:flex;justify-content:center;gap:10px;flex-wrap:wrap;margin-bottom:18px}
+  .pill{
+    font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:500;
+    letter-spacing:.12em;text-transform:uppercase;
+    padding:5px 12px;border-radius:4px;
+    color:var(--cyan);background:rgba(0,255,213,.06);
+    border:1px solid rgba(0,255,213,.25);
+  }
+  .pill.m{color:var(--magenta);background:rgba(255,45,149,.06);border-color:rgba(255,45,149,.3)}
+  .pill.p{color:var(--purple);background:rgba(168,85,247,.07);border-color:rgba(168,85,247,.3)}
+  .pill.o{color:var(--orange);background:rgba(255,122,61,.07);border-color:rgba(255,122,61,.32)}
+
+  .glitch-title{
+    font-family:'JetBrains Mono',monospace;
+    font-weight:800;
+    font-size:clamp(48px,9vw,108px);
+    line-height:.95;letter-spacing:.04em;
+    color:#fff;position:relative;display:inline-block;
+    text-shadow:
+      0 0 8px rgba(0,255,213,.65),
+      0 0 24px rgba(0,255,213,.45),
+      0 0 48px rgba(255,45,149,.35);
+  }
+  .glitch-title::before,.glitch-title::after{
+    content:attr(data-text);
+    position:absolute;top:0;left:0;width:100%;height:100%;
+    overflow:hidden;
+  }
+  .glitch-title::before{
+    color:var(--cyan);
+    text-shadow:-2px 0 var(--magenta);
+    clip-path:polygon(0 0,100% 0,100% 45%,0 45%);
+    animation:glitchTop 3.2s infinite steps(2,end);
+  }
+  .glitch-title::after{
+    color:var(--magenta);
+    text-shadow:2px 0 var(--cyan);
+    clip-path:polygon(0 60%,100% 60%,100% 100%,0 100%);
+    animation:glitchBot 2.6s infinite steps(2,end);
+  }
+  @keyframes glitchTop{
+    0%,92%,100%{transform:translate(0,0)}
+    93%{transform:translate(-3px,-2px)}
+    95%{transform:translate(4px,1px)}
+    97%{transform:translate(-2px,2px)}
+  }
+  @keyframes glitchBot{
+    0%,90%,100%{transform:translate(0,0)}
+    91%{transform:translate(3px,2px)}
+    94%{transform:translate(-4px,-1px)}
+    96%{transform:translate(2px,-2px)}
+  }
+
+  .subtitle{
+    margin-top:14px;
+    font-family:'JetBrains Mono',monospace;
+    font-size:clamp(14px,1.6vw,18px);
+    color:var(--ink-dim);letter-spacing:.18em;
+  }
+  .subtitle b{color:var(--cyan);font-weight:500}
+  .subtitle em{color:var(--magenta);font-style:normal;font-weight:500}
+
+  .meta-line{
+    margin-top:18px;display:flex;justify-content:center;gap:18px;flex-wrap:wrap;
+    font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--ink-dim);
+    letter-spacing:.1em;
+  }
+  .meta-line span b{color:var(--orange);font-weight:500}
+  .meta-line .dot{color:var(--cyan)}
+
+  /* =========================================================
+     分区标题
+  ========================================================= */
+  .section-title{
+    margin:72px auto 32px;text-align:center;
+    font-family:'JetBrains Mono',monospace;
+    font-size:14px;letter-spacing:.4em;text-transform:uppercase;
+    color:var(--ink-dim);
+  }
+  .section-title::before,.section-title::after{
+    content:"//";color:var(--cyan);margin:0 12px;
+  }
+  .section-title b{color:#fff;font-weight:700}
+
+  /* =========================================================
+     倾斜错落瀑布流 - 核心区
+  ========================================================= */
+  .waterfall{
+    position:relative;
+    display:flex;flex-wrap:wrap;justify-content:center;
+    gap:36px 28px;
+    perspective:1400px;
+    margin-top:24px;
+  }
+  .card-wrap{
+    /* 入场动画容器：负责 opacity + translateY */
+    opacity:0;
+    transform:translateY(60px);
+    animation:cardIn .9s cubic-bezier(.2,.8,.2,1) forwards;
+    width:440px;
+    flex:0 0 440px;
+  }
+  .card-wrap:nth-child(1){animation-delay:.10s}
+  .card-wrap:nth-child(2){animation-delay:.22s}
+  .card-wrap:nth-child(3){animation-delay:.34s}
+  .card-wrap:nth-child(4){animation-delay:.46s}
+  .card-wrap:nth-child(5){animation-delay:.58s}
+  .card-wrap:nth-child(6){animation-delay:.70s}
+  @keyframes cardIn{
+    to{opacity:1;transform:translateY(0)}
+  }
+
+  .card{
+    --rot:0deg;
+    --ty:0px;
+    position:relative;
+    width:100%;
+    height:275px;
+    border-radius:14px;
+    background:#0c0c16;
+    border:1px solid rgba(0,255,213,.25);
+    overflow:hidden;
+    cursor:pointer;
+    transform:rotate(var(--rot)) translateY(var(--ty));
+    transition:transform .55s cubic-bezier(.2,.8,.2,1),
+               box-shadow .55s ease,
+               border-color .35s ease;
+    box-shadow:
+      0 0 0 1px rgba(0,255,213,.08) inset,
+      0 6px 24px rgba(0,0,0,.55),
+      0 0 22px rgba(0,255,213,.18),
+      0 0 40px rgba(255,45,149,.10);
+    will-change:transform;
+  }
+  .card img{
+    width:100%;height:100%;object-fit:cover;display:block;
+    transition:filter .5s ease,transform .8s ease;
+    filter:saturate(.85) brightness(.82) contrast(1.05);
+  }
+  /* 双色霓虹边光 */
+  .card::before{
+    content:"";position:absolute;inset:0;border-radius:14px;pointer-events:none;
+    background:linear-gradient(135deg,rgba(0,255,213,.0) 0%,rgba(0,255,213,.0) 40%,rgba(255,45,149,.0) 100%);
+    transition:background .4s ease;
+  }
+  .card::after{
+    content:"";position:absolute;inset:-1px;border-radius:14px;pointer-events:none;
+    padding:1px;
+    background:linear-gradient(135deg,rgba(0,255,213,.55),rgba(255,45,149,.0) 50%,rgba(168,85,247,.55));
+    -webkit-mask:linear-gradient(#000 0 0) content-box,linear-gradient(#000 0 0);
+    -webkit-mask-composite:xor;mask-composite:exclude;
+    opacity:.55;
+    transition:opacity .4s ease,filter .4s ease;
+  }
+
+  /* 卡片底部条：序号 + 功能名 */
+  .card-tag{
+    position:absolute;left:14px;bottom:14px;
+    display:flex;align-items:center;gap:10px;
+    padding:7px 12px;border-radius:6px;
+    background:rgba(8,8,16,.78);
+    backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);
+    border:1px solid rgba(0,255,213,.3);
+    font-family:'JetBrains Mono',monospace;
+    font-size:12px;letter-spacing:.1em;
+    color:var(--cyan);
+    transform:translateY(8px);opacity:0;
+    transition:transform .4s ease,opacity .4s ease;
+  }
+  .card-tag .idx{
+    color:#000;background:var(--cyan);
+    font-weight:700;padding:1px 6px;border-radius:3px;font-size:10px;
+  }
+  .card-tag .name{color:#fff;font-weight:600;letter-spacing:.15em}
+  .card-tag .desc{color:var(--ink-dim);font-size:11px}
+
+  /* 卡片右上角角标 */
+  .corner-mark{
+    position:absolute;top:12px;right:12px;
+    font-family:'JetBrains Mono',monospace;font-size:10px;
+    color:var(--magenta);
+    padding:3px 8px;border:1px solid rgba(255,45,149,.4);
+    border-radius:4px;background:rgba(20,5,15,.6);
+    backdrop-filter:blur(6px);-webkit-backdrop-filter:blur(6px);
+    letter-spacing:.15em;
+    opacity:.85;
+  }
+
+  /* 悬停：回正 + 放大 + 光晕增强 */
+  .card-wrap:hover{z-index:50}
+  .card-wrap:hover .card{
+    transform:rotate(0deg) translateY(0) scale(1.05);
+    border-color:rgba(0,255,213,.6);
+    box-shadow:
+      0 0 0 1px rgba(0,255,213,.25) inset,
+      0 16px 50px rgba(0,0,0,.7),
+      0 0 30px rgba(0,255,213,.55),
+      0 0 70px rgba(255,45,149,.40),
+      0 0 110px rgba(168,85,247,.25);
+  }
+  .card-wrap:hover .card::after{opacity:1;filter:hue-rotate(20deg)}
+  .card-wrap:hover .card img{
+    filter:saturate(1.1) brightness(1) contrast(1.05);
+    transform:scale(1.02);
+  }
+  .card-wrap:hover .card-tag{transform:translateY(0);opacity:1}
+
+  /* =========================================================
+     底部功能特性卡 - 紧凑霓虹列表
+  ========================================================= */
+  .features{
+    display:grid;grid-template-columns:repeat(3,1fr);gap:18px;
+    margin-top:24px;
+  }
+  .feat{
+    position:relative;
+    padding:20px 22px 22px;
+    background:linear-gradient(180deg,rgba(14,14,24,.92),rgba(8,8,16,.92));
+    border:1px solid rgba(0,255,213,.18);
+    border-radius:10px;
+    overflow:hidden;
+    transition:border-color .35s ease,transform .35s ease,box-shadow .35s ease;
+  }
+  .feat::before{
+    content:"";position:absolute;left:0;top:0;bottom:0;width:3px;
+    background:linear-gradient(180deg,var(--cyan),var(--magenta));
+    box-shadow:0 0 12px var(--cyan);
+  }
+  .feat::after{
+    content:"";position:absolute;inset:0;border-radius:10px;pointer-events:none;
+    background:radial-gradient(220px 80px at 100% 0%,rgba(168,85,247,.08),transparent 70%);
+  }
+  .feat:hover{
+    transform:translateY(-4px);
+    border-color:rgba(0,255,213,.5);
+    box-shadow:0 0 24px rgba(0,255,213,.18),0 0 40px rgba(255,45,149,.12);
+  }
+  .feat .head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+  .feat .num{
+    font-family:'JetBrains Mono',monospace;font-size:11px;font-weight:700;
+    color:#000;background:var(--cyan);
+    padding:2px 7px;border-radius:3px;letter-spacing:.05em;
+  }
+  .feat .name{
+    font-family:'JetBrains Mono',monospace;font-size:17px;font-weight:700;
+    color:#fff;letter-spacing:.04em;
+    text-shadow:0 0 10px rgba(0,255,213,.4);
+  }
+  .feat .name .accent{color:var(--cyan)}
+  .feat p{
+    color:var(--ink-dim);font-size:14px;line-height:1.55;
+    font-weight:400;
+  }
+  .feat p b{color:var(--orange);font-weight:600}
+  .feat p code{
+    font-family:'JetBrains Mono',monospace;font-size:12px;
+    color:var(--magenta);background:rgba(255,45,149,.08);
+    padding:1px 5px;border-radius:3px;
+  }
+
+  /* =========================================================
+     Footer
+  ========================================================= */
+  footer{
+    margin-top:72px;padding-top:28px;
+    border-top:1px solid rgba(0,255,213,.15);
+    display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:14px;
+    font-family:'JetBrains Mono',monospace;font-size:12px;color:var(--ink-dim);
+    letter-spacing:.08em;
+  }
+  footer .left{display:flex;align-items:center;gap:10px}
+  footer .left .core{color:var(--cyan)}
+  footer .right{display:flex;gap:18px;flex-wrap:wrap}
+  footer .right span b{color:var(--orange);font-weight:500}
+  footer .blink{display:inline-block;width:8px;height:14px;background:var(--cyan);vertical-align:-2px;margin-right:6px;animation:blink 1.1s steps(2) infinite;box-shadow:0 0 10px var(--cyan)}
+  @keyframes blink{50%{opacity:0}}
+
+  /* =========================================================
+     响应式
+  ========================================================= */
+  @media (max-width:1380px){
+    .waterfall{gap:28px 24px}
+    .card-wrap{width:420px;flex-basis:420px}
+    .card{height:263px}
+  }
+  @media (max-width:1180px){
+    .features{grid-template-columns:repeat(2,1fr)}
+    .card-wrap{width:440px;flex-basis:440px}
+    .card{height:275px}
+  }
+  @media (max-width:980px){
+    .card-wrap{width:100%;flex-basis:100%;max-width:520px}
+    .card{height:auto;aspect-ratio:440/275}
+  }
+  @media (max-width:680px){
+    .wrap{padding:32px 14px 60px}
+    .features{grid-template-columns:1fr}
+    .icon-orb{width:96px;height:96px;border-radius:18px}
+    .card{aspect-ratio:16/10}
+    .card-tag{font-size:11px}
+    .corner-mark{font-size:9px}
+    footer{flex-direction:column;text-align:center}
+  }
+
+  /* 减弱动画偏好 */
+  @media (prefers-reduced-motion:reduce){
+    *,*::before,*::after{animation:none!important;transition:none!important}
+  }
+</style>
+</head>
+<body>
+  <div class="bg-grid"></div>
+  <div class="bg-scan"></div>
+  <div class="bg-glow"></div>
+
+  <div class="wrap">
+
+    <!-- ===================== HERO ===================== -->
+    <header class="hero">
+      <div class="icon-orb">
+        <img src="assets/images/icon.png" alt="OMNI Work 应用图标 - 宇航员拿电路板">
+      </div>
+
+      <div class="badge-row">
+        <span class="pill">v0.3.4</span>
+        <span class="pill m">DAPLink / CMSIS-DAP</span>
+        <span class="pill p">SWD 10MHz</span>
+        <span class="pill o">Windows Desktop</span>
+        <span class="pill">MIT License</span>
+      </div>
+
+      <h1 class="glitch-title" data-text="OMNI WORK">OMNI WORK</h1>
+
+      <p class="subtitle">
+        ARM Cortex-M <b>一站式开发调试工作台</b> &nbsp;//&nbsp; <em>嵌入式开发工具集</em>
+      </p>
+
+      <div class="meta-line">
+        <span><span class="dot">&gt;_</span> AUTHOR: <b>LuckkMaker</b></span>
+        <span>·</span>
+        <span>BASED ON pyOCD / CMSIS-DAP</span>
+        <span>·</span>
+        <span>6 CORE MODULES</span>
+      </div>
+    </header>
+
+    <!-- ===================== 瀑布流截图 ===================== -->
+    <div class="section-title">
+      <b>SCREENSHOTS</b> // 倾斜错落瀑布流
+    </div>
+
+    <section class="waterfall" id="waterfall">
+
+      <div class="card-wrap">
+        <div class="card" style="--rot:-7deg;--ty:8px">
+          <img src="assets/images/flash_page.png" alt="Flash 固件烧录页">
+          <span class="corner-mark">01 / FLASH</span>
+          <div class="card-tag">
+            <span class="idx">01</span>
+            <span class="name">FLASH</span>
+            <span class="desc">一键编程 · 擦除 · 校验 · 回读</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card-wrap">
+        <div class="card" style="--rot:5deg;--ty:-14px">
+          <img src="assets/images/commander_page.png" alt="Commander pyOCD 命令调试页">
+          <span class="corner-mark">02 / CMD</span>
+          <div class="card-tag">
+            <span class="idx">02</span>
+            <span class="name">COMMANDER</span>
+            <span class="desc">pyOCD 交互调试 · 反汇编 · 断点</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card-wrap">
+        <div class="card" style="--rot:-3deg;--ty:18px">
+          <img src="assets/images/rtt_viewer_page.png" alt="RTT Viewer 实时传输页">
+          <span class="corner-mark">03 / RTT</span>
+          <div class="card-tag">
+            <span class="idx">03</span>
+            <span class="name">RTT VIEWER</span>
+            <span class="desc">SEGGER RTT 双向通信 · ASCII/HEX</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card-wrap">
+        <div class="card" style="--rot:8deg;--ty:-10px">
+          <img src="assets/images/monitor_page.png" alt="Monitor 变量波形监视页">
+          <span class="corner-mark">04 / MON</span>
+          <div class="card-tag">
+            <span class="idx">04</span>
+            <span class="name">MONITOR</span>
+            <span class="desc">ELF 符号解析 · 实时波形 100kHz</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card-wrap">
+        <div class="card" style="--rot:-6deg;--ty:12px">
+          <img src="assets/images/map_analyzer_page.png" alt="Map Analyzer 内存映射分析页">
+          <span class="corner-mark">05 / MAP</span>
+          <div class="card-tag">
+            <span class="idx">05</span>
+            <span class="name">MAP ANALYZER</span>
+            <span class="desc">链接映射可视化 · ROM/RAM 占用</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="card-wrap">
+        <div class="card" style="--rot:4deg;--ty:-18px">
+          <img src="assets/images/number_converter_page.png" alt="Number Converter 数值转换页">
+          <span class="corner-mark">06 / NUM</span>
+          <div class="card-tag">
+            <span class="idx">06</span>
+            <span class="name">NUMBER CONVERTER</span>
+            <span class="desc">32位多进制 · 位域可视化</span>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    <!-- ===================== 功能特性 ===================== -->
+    <div class="section-title">
+      <b>FEATURES</b> // 六大核心模块
+    </div>
+
+    <section class="features">
+      <div class="feat">
+        <div class="head">
+          <span class="num">01</span>
+          <span class="name"><span class="accent">[</span>FLASH<span class="accent">]</span></span>
+        </div>
+        <p>一键完成固件 <b>编程、擦除、校验、回读</b>，支持 <code>复位运行</code> 与 <code>空白检查</code>。基于 CMSIS-DAP 高速 SWD 通道，烧录流程稳定可靠。</p>
+      </div>
+
+      <div class="feat">
+        <div class="head">
+          <span class="num">02</span>
+          <span class="name"><span class="accent">[</span>COMMANDER<span class="accent">]</span></span>
+        </div>
+        <p>基于 <b>pyOCD</b> 的交互式命令调试，支持 <code>反汇编</code>、<code>断点</code>、<code>单步</code>、寄存器与内存读写，命令行式精准调试体验。</p>
+      </div>
+
+      <div class="feat">
+        <div class="head">
+          <span class="num">03</span>
+          <span class="name"><span class="accent">[</span>RTT VIEWER<span class="accent">]</span></span>
+        </div>
+        <p><b>SEGGER RTT</b> 实时双向通信，<code>ASCII/HEX</code> 双模式显示，集成 <b>Omnishell</b> 交互，零延迟日志输出与命令下发。</p>
+      </div>
+
+      <div class="feat">
+        <div class="head">
+          <span class="num">04</span>
+          <span class="name"><span class="accent">[</span>MONITOR<span class="accent">]</span></span>
+        </div>
+        <p><b>ELF 符号解析</b>，变量实时波形采样最高 <code>100kHz</code>，多通道同步采集，支持 <b>CSV 导出</b> 用于离线分析。</p>
+      </div>
+
+      <div class="feat">
+        <div class="head">
+          <span class="num">05</span>
+          <span class="name"><span class="accent">[</span>MAP ANALYZER<span class="accent">]</span></span>
+        </div>
+        <p>链接映射文件 <code>.map</code> 可视化分析，<b>ROM/RAM</b> 占用一目了然，按 <b>模块分类</b> 统计大小，快速定位内存瓶颈。</p>
+      </div>
+
+      <div class="feat">
+        <div class="head">
+          <span class="num">06</span>
+          <span class="name"><span class="accent">[</span>NUMBER CONVERTER<span class="accent">]</span></span>
+        </div>
+        <p>32 位多进制转换工具，<b>位域可视化</b>，<code>字节拆解</code>、有/无符号、浮点解读一站式完成，嵌入式开发必备小工具。</p>
+      </div>
+    </section>
+
+    <!-- ===================== Footer ===================== -->
+    <footer>
+      <div class="left">
+        <span class="blink"></span>
+        <span>OMNI WORK <span class="core">v0.3.4</span> // 嵌入式开发工具集</span>
+      </div>
+      <div class="right">
+        <span>by <b>LuckkMaker</b></span>
+        <span>MIT License</span>
+        <span>DAPLink · CMSIS-DAP · pyOCD</span>
+        <span>Windows Desktop</span>
+      </div>
+    </footer>
+
+  </div>
+
+<script>
+/* ============================================================
+   交互脚本：
+   1. 卡片进入视口时触发入场动画（IntersectionObserver）
+   2. 鼠标视差：根据鼠标位置微调卡片倾斜（增加动感）
+   3. 入场后给每张卡片一个轻微的呼吸光晕
+============================================================ */
+(function(){
+  const cards = document.querySelectorAll('.card-wrap');
+  const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  // --- 1. 入场动画：先用 IntersectionObserver 延迟触发
+  if ('IntersectionObserver' in window && !reduced) {
+    cards.forEach(c=>{
+      c.style.animationPlayState='paused';
+    });
+    const io = new IntersectionObserver((entries)=>{
+      entries.forEach(e=>{
+        if(e.isIntersecting){
+          const el = e.target;
+          // 恢复动画播放
+          el.style.animationPlayState='running';
+          io.unobserve(el);
+        }
+      });
+    },{threshold:0.15});
+    cards.forEach(c=>io.observe(c));
+  } else {
+    // 降级：直接显示
+    cards.forEach(c=>{c.style.opacity=1;c.style.transform='none'});
+  }
+
+  // --- 2. 鼠标视差微动（仅桌面）
+  if (!reduced && window.matchMedia('(hover:hover)').matches) {
+    const waterfall = document.getElementById('waterfall');
+    let rafId = null;
+    let mx = 0, my = 0;
+
+    waterfall.addEventListener('mousemove', (ev)=>{
+      const rect = waterfall.getBoundingClientRect();
+      mx = (ev.clientX - rect.left) / rect.width - 0.5;   // -0.5 ~ 0.5
+      my = (ev.clientY - rect.top)  / rect.height - 0.5;
+      if(!rafId){
+        rafId = requestAnimationFrame(applyParallax);
+      }
+    });
+    waterfall.addEventListener('mouseleave', ()=>{
+      mx = 0; my = 0;
+      if(!rafId) rafId = requestAnimationFrame(applyParallax);
+    });
+
+    function applyParallax(){
+      rafId = null;
+      cards.forEach((wrap, i)=>{
+        const card = wrap.querySelector('.card');
+        if(wrap.matches(':hover')) {
+          // 悬停时保持回正放大，不做视差
+          return;
+        }
+        const baseRot = parseFloat(getComputedStyle(card).getPropertyValue('--rot')) || 0;
+        const baseTy  = parseFloat(getComputedStyle(card).getPropertyValue('--ty'))  || 0;
+        // 视差影响：鼠标偏移 * 强度
+        const tiltX = my * 3;
+        const tiltY = -mx * 3;
+        const offX  = mx * 6;
+        const offY  = my * 4;
+        card.style.transform =
+          `rotate(${baseRot}deg) translateY(${baseTy}px) ` +
+          `perspective(900px) rotateX(${tiltX}deg) rotateY(${tiltY}deg) ` +
+          `translate(${offX}px, ${offY}px)`;
+      });
+    }
+  }
+
+  // --- 3. 控制台彩蛋
+  const styles = [
+    'color:#00ffd5','font-size:14px','font-weight:bold',
+    'text-shadow:0 0 8px #00ffd5','font-family:monospace'
+  ].join(';');
+  console.log('%c> OMNI WORK v0.3.4 :: BOOT COMPLETE', styles);
+  console.log('%c> 6 modules online // ARM Cortex-M ready', 'color:#ff2d95;font-family:monospace');
+  console.log('%c> by LuckkMaker // MIT License', 'color:#a855f7;font-family:monospace');
+})();
+</script>
+</body>
+</html>

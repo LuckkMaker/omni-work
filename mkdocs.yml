@@ -1,0 +1,57 @@
+site_name: OMNI Work
+site_description: Embedded development toolkit
+site_author: LuckkMaker
+
+theme:
+  name: readthedocs
+  favicon: assets/images/favicon.png
+  logo: assets/images/favicon.png
+  collapse_navigation: true
+  sticky_navigation: true
+  navigation_depth: 4
+  highlightjs: true
+  hljs_languages:
+    - yaml
+    - c
+    - cpp
+
+extra_css:
+  - css/extra.css
+
+repo_name: omni-work
+repo_url: https://github.com/LuckkMaker/omni-work
+
+plugins:
+  - search
+
+markdown_extensions:
+  - toc:
+      permalink: true
+      toc_depth: 4
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+      use_pygments: true
+      pygments_style: "github-dark"
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - admonition
+  - pymdownx.arithmatex:
+      generic: true
+  - footnotes
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.mark
+  - attr_list
+  - md_in_html
+
+nav:
+  - 首页: index.md
+  - 快速开始: getting-started.md
+  - 用户指南:
+      - Flash: guide/flash.md
+      - Commander: guide/commander.md
+      - RTT_Viewer: guide/rtt-viewer.md
+      - Monitor: guide/monitor.md
+  - 贡献指南: contributing.md

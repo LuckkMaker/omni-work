@@ -1,3 +1,7 @@
+// OMNI Work
+// Copyright (c) 2026 LuckkMaker
+// SPDX-License-Identifier: MIT
+
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { HashRouter } from 'react-router-dom'
