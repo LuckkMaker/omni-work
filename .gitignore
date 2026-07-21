@@ -27,9 +27,6 @@ electron.vite.config.*.mjs
 # PyInstaller 产物
 python/dist/
 
-# MkDocs 构建产物
-site/
-
 # IDE 文件
 .idea/
 .vscode/
