@@ -9,7 +9,6 @@ import { ChannelPanel } from './components/ChannelPanel'
 import { WatchPanel } from './components/WatchPanel'
 import { WaveformChart, type CursorMeasurement } from './components/WaveformChart'
 import { ResizeHandle } from '@/components/LogConsole'
-import { cn } from '@/lib/utils'
 
 const SIDEBAR_DEFAULT_WIDTH = 360
 const SIDEBAR_MAX_RATIO = 0.4
@@ -120,6 +119,12 @@ export default function MonitorPage() {
       const payload = data as { uid: string; error: string }
       if (payload.uid !== uid) return
       setError(payload.error)
+      pushNotification({
+        type: 'error',
+        title: 'Monitor 错误',
+        message: payload.error,
+        autoClose: false,
+      })
     })
 
     const offInfo = wsClient.on('monitor.info', (data: unknown) => {
@@ -129,7 +134,7 @@ export default function MonitorPage() {
     })
 
     return () => { offSample(); offStarted(); offStopped(); offError(); offInfo() }
-  }, [uid, appendSamples, setRunning, setPaused, setStarting, setError, updateNotification])
+  }, [uid, appendSamples, setRunning, setPaused, setStarting, setError, updateNotification, pushNotification])
 
   // ── 启动/停止采样 ──
   const handleToggleSampling = useCallback(async () => {
@@ -146,7 +151,14 @@ export default function MonitorPage() {
           autoCloseDelay: 2000,
         })
       } catch (e) {
-        setError(e instanceof Error ? e.message : String(e))
+        const msg = e instanceof Error ? e.message : String(e)
+        setError(msg)
+        pushNotification({
+          type: 'error',
+          title: '停止采样失败',
+          message: msg,
+          autoClose: false,
+        })
       }
     } else {
       if (variables.length === 0) {
@@ -248,12 +260,9 @@ export default function MonitorPage() {
         {/* 左：波形/数据流区 */}
         <div className="flex min-w-0 flex-1 flex-col overflow-hidden">
           {/* 状态条 */}
-          {(error || paused) && (
-            <div className={cn(
-              'flex items-center gap-2 px-3 py-1.5 text-xs',
-              error ? 'bg-destructive/10 text-destructive' : 'bg-amber-500/10 text-amber-600'
-            )}>
-              {error ? `错误: ${error}` : '采样已暂停（Flash/Commander 操作中）'}
+          {paused && !error && (
+            <div className="flex items-center gap-2 px-3 py-1.5 text-xs bg-amber-500/10 text-amber-600">
+              采样已暂停（Flash/Commander 操作中）
             </div>
           )}
 

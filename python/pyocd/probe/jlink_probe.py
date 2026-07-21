@@ -254,7 +254,14 @@ class JLinkProbe(DebugProbe):
             if device_name is not None:
                 self._link.connect(device_name)
 
-            self._link.coresight_configure()
+            # pylink 1.7.0 的 coresight_configure() 在 JTAG 模式下会破坏 DP 访问通道
+            # (DP IDR 由 0x4BA00477 变为 0x00000000)。已用 J-Link DLL V7.70a 和 V9.22
+            # 两个版本实测验证,问题在 pylink 层而非 DLL 层。
+            # 当 JTAG + 已设 jlink.device 时,J-Link 固件已通过 connect() 完成完整 JTAG 链
+            # 扫描和 DP 初始化,coresight_configure() 既多余又有害,跳过即可。
+            # SWD 模式不受影响,仍需调用以初始化 DP/AP 访问路径。
+            if protocol != DebugProbe.Protocol.JTAG or device_name is None:
+                self._link.coresight_configure()
             self._protocol = protocol
         except JLinkException as exc:
             raise self._convert_exception(exc) from exc

@@ -177,6 +177,13 @@ class PyOCDBackend(BackendInterface):
         # 接口协议通过 dap_protocol 选项设置
         if interface == 'jtag':
             options['dap_protocol'] = 'jtag'
+            # JTAG 模式必须设置 jlink.device,触发 J-Link 固件执行完整 JTAG 链扫描和 DP 初始化。
+            # 否则 pyOCD 走 low-level CoreSight 路径,pylink 的 coresight_configure() 会破坏
+            # JTAG DP 访问(实测 DP IDR 变 0x00000000,内存读全零)。
+            # APM32F407IG 与 STM32F407VG 的 CoreSight JTAG-DP ID 一致(0x4BA00477),
+            # JTAG 链结构相同,可借用 STM32F4 设备配置。
+            # 配合 jlink_probe.py 中对 coresight_configure() 的条件跳过使用。
+            options['jlink.device'] = 'STM32F407VG'
         else:
             options['dap_protocol'] = 'swd'
 
@@ -228,20 +235,37 @@ class PyOCDBackend(BackendInterface):
                     event_manager.log("error", f"Connection timeout: {last_error}")
                 except Exception as e:
                     last_error = str(e)
-                    # JTAG 模式下通信失败，降速到 1MHz 重试一次
-                    if interface == 'jtag' and actual_speed > JTAG_FALLBACK_SPEED:
-                        event_manager.log("warning",
-                                          f"JTAG connect failed at {actual_speed}Hz: {e}; "
-                                          f"retrying at {JTAG_FALLBACK_SPEED}Hz...")
-                        try:
-                            future2 = executor.submit(_do_connect, JTAG_FALLBACK_SPEED, interface)
-                            session = future2.result(timeout=CONNECT_TIMEOUT)
-                            if session is not None:
-                                last_error = None
-                                event_manager.log("info",
-                                                  f"JTAG connected at fallback {JTAG_FALLBACK_SPEED}Hz")
-                        except Exception as e2:
-                            last_error = str(e2)
+                    # JTAG 模式下通信失败，降速重试
+                    if interface == 'jtag':
+                        # JTAG 通信失败的常见原因：
+                        # 1. JTAG 接线问题（TCK/TMS/TDI/TDO 未正确连接）
+                        # 2. 目标芯片未上电或未复位
+                        # 3. JTAG scan chain 未正确配置（多设备链）
+                        # 4. 探针固件不支持 JTAG（部分 J-Link 型号）
+                        if actual_speed > JTAG_FALLBACK_SPEED:
+                            event_manager.log("warning",
+                                              f"JTAG connect failed at {actual_speed}Hz: {e}; "
+                                              f"retrying at {JTAG_FALLBACK_SPEED}Hz...")
+                            try:
+                                future2 = executor.submit(_do_connect, JTAG_FALLBACK_SPEED, interface)
+                                session = future2.result(timeout=CONNECT_TIMEOUT)
+                                if session is not None:
+                                    last_error = None
+                                    event_manager.log("info",
+                                                      f"JTAG connected at fallback {JTAG_FALLBACK_SPEED}Hz")
+                            except Exception as e2:
+                                last_error = str(e2)
+                        # JTAG 降速重试仍失败，提供明确的错误信息
+                        if session is None:
+                            last_error = (
+                                f"JTAG 连接失败: {last_error}\n"
+                                "可能原因：\n"
+                                "1. JTAG 接线问题（检查 TCK/TMS/TDI/TDO/GND）\n"
+                                "2. 目标芯片未上电或未复位\n"
+                                "3. 探针不支持 JTAG 模式\n"
+                                "建议：尝试使用 SWD 接口连接"
+                            )
+                            event_manager.log("error", f"JTAG connection failed: {last_error}")
 
             if session is None:
                 # _do_connect 返回 None 表示探针未找到
