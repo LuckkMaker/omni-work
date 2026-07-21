@@ -419,17 +419,24 @@ class CommanderBackend:
                 }
 
     def _handle_erase_command(self, ctx, buf, lock, command: str) -> dict:
-        """完全复用 pyocd erase CLI 的实现路径处理 erase 命令。
+        """处理 erase 命令，复用 pyocd erase CLI 的擦除前置流程。
 
         对应 pyocd subcommands/erase_cmd.py 中的 invoke() 流程：
         1. 次级核 set_reset_catch
         2. 主核 reset_and_halt
         3. 次级核 clear_reset_catch
-        4. FlashEraser 执行擦除
+        4. 直接调用 Flash API 执行擦除（与 core/pyocd_backend.py erase() 一致）
 
         不走 REPL 的 EraseCommand（缺少 reset_and_halt 前置步骤）。
+
+        性能优化：chip erase 不再使用 FlashEraser（其 _chip_erase() 会遍历所有
+        Flash region，STM32F407 有 3 个，导致 3 次 algo 加载 + 后 2 次冗余
+        erase_all）。改为直接操作 boot_memory 的 Flash 实例，只加载 1 次 algo，
+        与 Flash 页 erase（core/pyocd_backend.py erase）保持一致。sector erase 按
+        region 分组，每组只 init/uninit 一次，不再每个扇区单独调用。
         """
         from pyocd.flash.eraser import FlashEraser
+        from pyocd.flash.flash import Flash
         from pyocd.core.memory_map import MemoryType
 
         parts = command.split()
@@ -469,6 +476,7 @@ class CommanderBackend:
                 }
 
             # ── 与 pyocd erase CLI 完全一致的擦除前置流程 ──
+            # 次级核 set_reset_catch 对单核目标是 no-op，可安全保留
             secondary_cores = [
                 c for c in session.target.cores.values()
                 if c != session.target.primary_core
@@ -481,25 +489,46 @@ class CommanderBackend:
                 for core in secondary_cores:
                     core.clear_reset_catch()
 
-            # ── FlashEraser 执行擦除（与 CLI 模式一致） ──
-            eraser = FlashEraser(session, erase_mode)
-
             if erase_mode == FlashEraser.Mode.CHIP:
-                eraser.erase()
-                # 统计所有 flash 区域总大小（复用 REPL EraseCommand 的输出格式）
-                pname = session.target.selected_core.node_name
-                total_bytes = sum(
-                    r.length
-                    for r in session.target.memory_map.iter_matching_regions(
-                        type=MemoryType.FLASH, pname=pname
+                # chip erase：直接操作 boot_memory 的 Flash 实例，只加载 1 次 algo
+                # （与 core/pyocd_backend.py erase() 的 chip 分支保持一致，避免
+                # FlashEraser._chip_erase() 遍历所有 Flash region 导致冗余 algo 加载）
+                region = session.target.memory_map.get_boot_memory()
+                if not region:
+                    output = "No boot flash memory found\n"
+                else:
+                    flash = region.flash
+                    flash.init(Flash.Operation.ERASE)
+                    try:
+                        if flash.is_erase_all_supported:
+                            flash.erase_all()
+                        else:
+                            # 不支持 erase_all 时，逐扇区擦除 boot_memory
+                            sector_size = getattr(region, 'sector_size', 0) or 16384
+                            total_sectors = region.length // sector_size
+                            for i in range(total_sectors):
+                                flash.erase_sector(region.start + i * sector_size)
+                    finally:
+                        # 用 uninit 而非 cleanup，保留 algo 以便后续复用
+                        flash.uninit()
+                    # 统计所有 flash 区域总大小（复用 REPL EraseCommand 的输出格式）
+                    pname = session.target.selected_core.node_name
+                    total_bytes = sum(
+                        r.length
+                        for r in session.target.memory_map.iter_matching_regions(
+                            type=MemoryType.FLASH, pname=pname
+                        )
                     )
-                )
-                output = f"Erased chip ({total_bytes} bytes)\n"
+                    output = f"Erased chip ({total_bytes} bytes)\n"
             else:
-                # 扇区擦除：逐扇区处理
+                # sector erase：按 region 分组，每组只 init/uninit 一次
+                # 第一阶段：收集每个 region 对应的扇区地址
+                region_sectors: dict[int, list[int]] = {}
+                region_map: dict[int, object] = {}
                 remaining = count
                 total_erased = 0
                 cur_addr = addr
+                output = None
                 while remaining:
                     region = session.target.memory_map.get_region_for_address(cur_addr)
                     if not region:
@@ -508,11 +537,27 @@ class CommanderBackend:
                     if not region.is_flash:
                         output = f"address 0x{cur_addr:08x} is not in flash\n"
                         break
-                    eraser.erase([cur_addr])
+                    region_key = id(region)
+                    if region_key not in region_sectors:
+                        region_sectors[region_key] = []
+                        region_map[region_key] = region
+                    region_sectors[region_key].append(cur_addr)
                     total_erased += region.blocksize
                     remaining -= 1
                     cur_addr += region.blocksize
-                output = f"Erased {count - remaining} sector(s) ({total_erased} bytes)\n"
+                # 第二阶段：按 region 分组执行 erase（每个 region 只 init/uninit 一次，
+                # 不再每个扇区单独调用 eraser.erase()）
+                if output is None:
+                    for region_key, sector_addrs in region_sectors.items():
+                        region = region_map[region_key]
+                        flash = region.flash
+                        flash.init(Flash.Operation.ERASE)
+                        try:
+                            for sector_addr in sector_addrs:
+                                flash.erase_sector(sector_addr)
+                        finally:
+                            flash.uninit()
+                    output = f"Erased {count - remaining} sector(s) ({total_erased} bytes)\n"
 
             return {
                 "success": True,

@@ -164,6 +164,13 @@ class CommandExecutionContext:
         self._peripherals = {}
         self._loaded_peripherals = False
 
+        # Source-level debugging state: source search directories and path prefix
+        # substitutions (corresponding to GDB's `directory` and `set substitute-path`
+        # commands). Used by StepCommand to locate C/C++ source files when the DWARF
+        # compilation directory (comp_dir) does not exist on this machine.
+        self.source_directories = []  # List[str]
+        self.source_substitutions = []  # List[Tuple[str, str]]
+
         # Add in the standard commands.
         self._command_set.add_command_group('standard')
 

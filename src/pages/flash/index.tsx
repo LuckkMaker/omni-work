@@ -250,11 +250,8 @@ export default function FlashPage() {
             </div>
           </div>
           <DialogFooter>
-            {!isConnected && (
-              <span className="text-xs text-amber-600 mr-auto">⚠ 未连接探针，连接后才能执行填充</span>
-            )}
             <Button variant="ghost" onClick={() => setShowFillDialog(false)}>取消</Button>
-            <Button disabled={!isConnected || busy} onClick={() => {
+            <Button disabled={busy} onClick={() => {
               const addr = parseInt(fillAddress, fillAddress.startsWith('0x') ? 16 : 10)
               const sz = parseInt(fillSize, fillSize.startsWith('0x') ? 16 : 10)
               const val = parseInt(fillValue, fillValue.startsWith('0x') ? 16 : 10)

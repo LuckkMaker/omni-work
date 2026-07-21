@@ -1044,6 +1044,9 @@ class PyOCDBackend(BackendInterface):
     ) -> FlashResult:
         """填充内存区域（支持 Flash 和 RAM）
 
+        注意：当前前端 Fill Memory 功能已改为纯前端数据操作（仅在数据 Tab 中填充），
+        不再调用此后端方法。此方法保留供未来可能的直接设备填充用途。
+
         Args:
             address: 起始地址
             size: 填充字节数
@@ -1069,9 +1072,15 @@ class PyOCDBackend(BackendInterface):
                 from pyocd.flash.flash_loader import FlashLoader
                 event_manager.log("info", f"Filling flash 0x{address:08X}..0x{address + size - 1:08X} with 0x{value:02X}")
 
+                # 填充前先复位并暂停目标（与 program 函数的 pre_reset 行为一致）
+                # 原因：目标可能正在运行用户代码，Flash 控制器状态未知，直接编程会失败
+                session.target.reset_and_halt()
+
                 # 分块处理（避免大块内存占用）
+                # 注意：FlashLoader 需要传入 session（提供 .board/.options），传入 session.target
+                # 会因缺少 .board/.options 属性导致 AttributeError（参照 program 函数 FileProgrammer(session, ...) 用法）
                 CHUNK_SIZE = 0x10000  # 64KB
-                loader = FlashLoader(session.target)
+                loader = FlashLoader(session)
                 for offset in range(0, size, CHUNK_SIZE):
                     chunk = data[offset:offset + CHUNK_SIZE]
                     loader.add_data(address + offset, chunk)

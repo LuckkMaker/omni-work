@@ -176,15 +176,15 @@ export function WatchPanel({ uid, onCollapse }: Props) {
 
       {/* 表格（列多，横向滚动） */}
       <div className="min-h-0 flex-1 overflow-auto">
-        <table className="w-full border-collapse text-xs whitespace-nowrap">
+        <table className="w-full table-fixed border-collapse text-xs whitespace-nowrap">
           <thead className="sticky top-0 z-10 bg-muted/60">
             <tr>
               <th className="border border-border px-1.5 py-1 text-left font-medium w-10">Color</th>
-              <th className="border border-border px-2 py-1 text-left font-medium">Name</th>
+              <th className="border border-border px-2 py-1 text-left font-medium w-32">Name</th>
               <th className="border border-border px-2 py-1 text-left font-medium w-24">Address</th>
               <th className="border border-border px-1.5 py-1 text-center font-medium w-10">Size</th>
               <th className="border border-border px-1.5 py-1 text-left font-medium w-14">Type</th>
-              <th className="border border-border px-2 py-1 text-right font-medium w-24">Value</th>
+              <th className="border border-border px-2 py-1 text-right font-medium w-32">Value</th>
               <th className="border border-border px-1.5 py-1 text-center font-medium w-16">Min</th>
               <th className="border border-border px-1.5 py-1 text-center font-medium w-16">Max</th>
               <th className="border border-border px-1.5 py-1 text-center font-medium w-12">Moving Avg</th>
@@ -260,7 +260,7 @@ export function WatchPanel({ uid, onCollapse }: Props) {
                   {/* Value（双击编辑） */}
                   <td
                     className={cn(
-                      'border border-border px-2 py-1 text-right font-mono tabular-nums transition-colors',
+                      'border border-border px-2 py-1 text-right font-mono tabular-nums transition-colors overflow-hidden',
                       changed && 'bg-primary/10',
                       editingId === v.id && 'p-0',
                     )}

@@ -49,6 +49,11 @@ async function startPythonBackend(): Promise<void> {
 }
 
 app.whenReady().then(async () => {
+  // 设置用户数据目录环境变量，供 Python 后端数据库使用
+  // 生产模式下数据库会写入该用户可写目录（避免 Program Files 只读问题）
+  // 开发模式下若未设置该变量，Python 仍会使用源码目录下 data/devices.db
+  process.env.OMNI_DATA_DIR = app.getPath('userData')
+
   await startPythonBackend()
 
   // IPC: 获取 Python 后端端口

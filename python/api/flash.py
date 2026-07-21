@@ -115,7 +115,11 @@ async def cancel_flash_operation(uid: str):
 
 @router.post("/probes/{uid}/flash/fill")
 async def fill_memory(uid: str, req: FillMemoryRequest):
-    """填充内存区域（支持 Flash 和 RAM）"""
+    """填充内存区域（支持 Flash 和 RAM）
+
+    注意：当前前端 Fill Memory 功能已改为纯前端数据操作（仅在数据 Tab 中填充），
+    不再调用此后端接口。此路由保留供未来可能的直接设备填充用途。
+    """
     with monitor_backend.pause_during(uid):
         result = await asyncio.to_thread(
             backend.fill_memory, uid, req.address, req.size, req.value

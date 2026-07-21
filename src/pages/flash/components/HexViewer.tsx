@@ -363,20 +363,11 @@ export function HexViewer({ base64Data, baseAddress, byteWidth, diffBase64, diff
                   </span>
                 ))}
               </span>
-              {/* ASCII（按 byteWidth 分组对齐 hex 列） */}
+              {/* ASCII（16 个等宽字符，与 hex 列字宽设置无关，参照 JLink 标准） */}
               <span className="text-muted-foreground flex items-center leading-5 font-mono">
-                {Array.from({ length: 16 / byteWidth }, (_, gi) => (
-                  <span key={gi} className="flex items-center">
-                    {gi > 0 && <span className={gi === 8 / byteWidth ? 'w-[1.5ch]' : 'w-[0.5ch]'} />}
-                    {Array.from({ length: byteWidth }, (_, ci) => {
-                      const idx = gi * byteWidth + ci
-                      const a = row.ascii[idx]
-                      return (
-                        <span key={ci} className={cn('w-[0.625ch] text-center', a?.diff && 'bg-red-500/30 text-red-600 dark:text-red-400 rounded')}>
-                          {a?.ch ?? ' '}
-                        </span>
-                      )
-                    })}
+                {row.ascii.map((a, idx) => (
+                  <span key={idx} className={cn('w-[1ch] text-center', a?.diff && 'bg-red-500/30 text-red-600 dark:text-red-400 rounded')}>
+                    {a?.ch ?? ' '}
                   </span>
                 ))}
               </span>

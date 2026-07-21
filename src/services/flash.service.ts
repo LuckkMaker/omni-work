@@ -117,7 +117,12 @@ export async function cancelOperation(uid: string): Promise<{ success: boolean }
   return data
 }
 
-/** 填充内存区域（支持 Flash 和 RAM） */
+/**
+ * 填充内存区域（支持 Flash 和 RAM）
+ *
+ * 注意：当前前端 Fill Memory 功能已改为纯前端数据操作（仅在数据 Tab 中填充），
+ * 不再调用此后端接口。此函数保留供未来可能的直接设备填充用途。
+ */
 export async function fillMemory(
   uid: string,
   address: number,

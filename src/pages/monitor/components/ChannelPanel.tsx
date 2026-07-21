@@ -649,7 +649,6 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
                           <th className="px-1 py-0.5 font-medium text-left w-20">Address</th>
                           <th className="px-1 py-0.5 font-medium text-left w-16">Type</th>
                           <th className="px-1 py-0.5 font-medium text-center w-10">Size</th>
-                          <th className="px-1 py-0.5 font-medium text-right w-16">Value</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -658,9 +657,6 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
                           const isExp = expandedArrays.has(sym.name)
                           const partSet = addedElems[sym.name]
                           const isChecked = checked.has(sym.name)  // 待添加勾选状态
-                          // 已添加变量的最新值（从 lastValues 获取）
-                          const addedVar = variables.find((v) => v.name === sym.name || v.name === `${sym.name}[0]`)
-                          const val = addedVar ? lastValues.get(addedVar.id) : undefined
                           return (
                             <Fragment key={sym.name}>
                               <tr
@@ -699,16 +695,13 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
                                   {sym.is_array ? `${sym.elem_type}[${sym.elem_count}]` : sym.type}
                                 </td>
                                 <td className="px-1 py-0.5 font-mono text-[10px] text-center w-10">{sym.size}</td>
-                                <td className="px-1 py-0.5 font-mono text-[10px] text-right w-16">
-                                  {val != null ? val : ''}
-                                </td>
                               </tr>
                               {/* 数组元素二级列表（展开） */}
                               {sym.is_array && isExp && (
                                 <>
                                   {partSet && partSet.size > 0 && !isSel && (
                                     <tr className="bg-primary/5">
-                                      <td colSpan={6} className="px-2 py-0.5 text-[10px] text-primary">
+                                      <td colSpan={5} className="px-2 py-0.5 text-[10px] text-primary">
                                         已监视 {partSet.size}/{sym.elem_count} 个元素
                                       </td>
                                     </tr>
@@ -739,13 +732,6 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
                                         </td>
                                         <td className="px-1 py-0.5 font-mono text-[10px] w-16">{sym.elem_type}</td>
                                         <td className="px-1 py-0.5 font-mono text-[10px] text-center w-10">{sym.elem_size}</td>
-                                        <td className="px-1 py-0.5 font-mono text-[10px] text-right w-16">
-                                          {(() => {
-                                            const ev = variables.find((v) => v.name === `${sym.name}[${i}]`)
-                                            const eval_ = ev ? lastValues.get(ev.id) : undefined
-                                            return eval_ != null ? eval_ : ''
-                                          })()}
-                                        </td>
                                       </tr>
                                     )
                                   })}

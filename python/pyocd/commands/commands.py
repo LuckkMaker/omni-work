@@ -1001,6 +1001,84 @@ class ElfCommand(CommandBase):
         # 输出 ELF 的 CPU 信息（可选，帮助确认正确加载）
         if elf and hasattr(elf, 'decoder'):
             pass  # ELF 对象创建成功即可
+        # 提示用户配置源码路径：DWARF 中的 comp_dir 指向编译时目录，本机可能不存在，
+        # 此时 step 命令无法显示 C 源代码，需用 source 命令配置搜索路径或替换规则
+        self.context.write("Tip: if 'step' does not show C source, use "
+                           "'source PATH' to add source directories, or "
+                           "'source substitute FROM TO' to remap the build path.")
+
+class SourceCommand(CommandBase):
+    INFO = {
+            'names': ['source'],
+            'group': 'standard',
+            'category': 'symbols',
+            'nargs': '*',
+            'usage': "[PATH | substitute FROM TO | list | clear]",
+            'help': "Manage source file search paths for source-level debugging.",
+            'extra_help': "Configures how 'step' locates C/C++ source files when the "
+                    "DWARF compilation directory (comp_dir) does not exist on this "
+                    "machine, corresponding to GDB's 'directory' and "
+                    "'set substitute-path' commands.\n"
+                    "Subcommands:\n"
+                    "  source PATH                Add PATH to the source search directories.\n"
+                    "  source substitute FROM TO  Add a path prefix substitution rule.\n"
+                    "  source list               List configured directories and substitutions.\n"
+                    "  source clear              Clear all directories and substitutions.",
+            }
+
+    def parse(self, args):
+        self.args = args
+
+    def execute(self):
+        args = self.args
+        if len(args) == 0:
+            self.context.write("Usage: source [PATH | substitute FROM TO | list | clear]")
+            return
+
+        subcmd = args[0]
+
+        if subcmd == 'substitute':
+            if len(args) != 3:
+                self.context.write("Usage: source substitute FROM TO")
+                return
+            frm = os.path.normpath(args[1])
+            to = os.path.normpath(args[2])
+            # 避免重复添加相同规则
+            for existing in self.context.source_substitutions:
+                if existing[0] == frm and existing[1] == to:
+                    self.context.writei("Substitution already exists: %s -> %s", frm, to)
+                    return
+            self.context.source_substitutions.append((frm, to))
+            self.context.writei("Added substitution: %s -> %s", frm, to)
+
+        elif subcmd == 'list':
+            dirs = self.context.source_directories
+            subs = self.context.source_substitutions
+            if not dirs and not subs:
+                self.context.write("No source directories or substitutions configured.")
+                return
+            if dirs:
+                self.context.write("Source directories:")
+                for d in dirs:
+                    self.context.writei("  %s", d)
+            if subs:
+                self.context.write("Path substitutions:")
+                for frm, to in subs:
+                    self.context.writei("  %s -> %s", frm, to)
+
+        elif subcmd == 'clear':
+            self.context.source_directories = []
+            self.context.source_substitutions = []
+            self.context.write("Cleared all source directories and substitutions.")
+
+        else:
+            # 将第一个参数视为要添加的源码搜索目录
+            path = os.path.normpath(os.path.expanduser(args[0]))
+            if not os.path.isdir(path):
+                self.context.writei("Warning: '%s' is not an existing directory", path)
+            if path not in self.context.source_directories:
+                self.context.source_directories.append(path)
+            self.context.writei("Added source directory: %s", path)
 
 class ContinueCommand(CommandBase):
     INFO = {
@@ -1071,13 +1149,47 @@ class StepCommand(CommandBase):
                 if self.context.elf is not None:
                     line_info = self.context.elf.address_decoder.get_line_for_address(addr)
                     if line_info is not None:
-                        base = line_info.dirname or getattr(line_info, 'comp_dir', '')
-                        path = os.path.normpath(os.path.join(base, line_info.filename))
-                        fname = os.path.basename(path)
+                        dirname = line_info.dirname or ''
+                        comp_dir = getattr(line_info, 'comp_dir', '') or ''
+                        filename = line_info.filename
+                        fname = os.path.basename(filename)
                         code = ''
+                        # 构建候选路径列表（参考 GDB source path 解析机制）：
+                        #   1. dirname 若为绝对路径：直接 dirname + filename
+                        #   2. dirname 为相对路径且 comp_dir 存在：comp_dir + dirname + filename
+                        #      （ARM Compiler 常见：dirname="boards/xxx/startup", comp_dir="D:\project"）
+                        #   3. comp_dir + filename（dirname 为空时的回退）
+                        #   4. filename 本身为绝对路径
+                        #   5. substitute-path 前缀替换（对应 GDB set substitute-path）
+                        #   6. source_directories 按 basename 搜索（对应 GDB directory）
+                        candidates = []
+                        if os.path.isabs(dirname):
+                            candidates.append(os.path.normpath(os.path.join(dirname, filename)))
+                        elif dirname and comp_dir:
+                            candidates.append(os.path.normpath(os.path.join(comp_dir, dirname, filename)))
+                        elif comp_dir:
+                            candidates.append(os.path.normpath(os.path.join(comp_dir, filename)))
+                        elif dirname:
+                            candidates.append(os.path.normpath(os.path.join(dirname, filename)))
+                        if os.path.isabs(filename):
+                            candidates.append(os.path.normpath(filename))
+                        # substitute-path 对所有已有候选做前缀替换
+                        existing = list(candidates)
+                        for frm, to in self.context.source_substitutions:
+                            for p in existing:
+                                if p.startswith(frm):
+                                    candidates.append(
+                                        os.path.normpath(to + p[len(frm):]))
+                        for d in self.context.source_directories:
+                            candidates.append(os.path.normpath(os.path.join(d, fname)))
+                        resolved = None
+                        for cand in candidates:
+                            if os.path.isfile(cand):
+                                resolved = cand
+                                break
                         try:
-                            if os.path.isfile(path):
-                                with open(path, 'r', encoding='utf-8', errors='replace') as f:
+                            if resolved is not None:
+                                with open(resolved, 'r', encoding='utf-8', errors='replace') as f:
                                     for _ in range(line_info.line - 1):
                                         next(f, None)
                                     code = next(f, '').rstrip()

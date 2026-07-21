@@ -526,15 +526,83 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
   },
 
   doFillMemory: async (address, size, value) => {
-    const uid = useProbeStore.getState().selectedUid
-    if (!uid) return
+    // 纯前端操作：在当前激活 Tab 的数据数组中填充指定值，不调用后端。
+    // 用户可随后通过 Program 将填充结果烧录到目标设备。
+    const tab = get().getActiveTab()
+    const notif = useNotificationStore.getState()
     const addrStr = formatHex(address)
     const endStr = formatHex(address + size - 1)
     const valStr = `0x${value.toString(16).toUpperCase().padStart(2, '0')}`
-    await wrapOperation(set, get, '填充内存', `正在填充 ${addrStr}..${endStr} (${valStr})...`, async () => {
-      const result = await flashService.fillMemory(uid, address, size, value)
-      return { success: result.success, bytes_written: result.bytes_written ?? 0, duration_ms: result.duration_ms ?? 0, error: result.error }
-    }, (r) => `填充 ${formatSize(r.bytes_written)} · 耗时 ${(r.duration_ms / 1000).toFixed(2)}s`)
+
+    // 校验：必须有激活的可编辑 Tab 且有数据
+    if (!tab) {
+      notif.push({ type: 'warning', title: '填充内存', message: '没有激活的数据 Tab', autoClose: true, autoCloseDelay: 5000 })
+      return
+    }
+    if (tab.type === 'compare') {
+      notif.push({ type: 'warning', title: '填充内存', message: '比较 Tab 不支持填充操作，请切换到文件或设备 Tab', autoClose: true, autoCloseDelay: 5000 })
+      return
+    }
+    if (!tab.data) {
+      notif.push({ type: 'warning', title: '填充内存', message: '当前 Tab 没有数据，请先打开文件或读回 Flash', autoClose: true, autoCloseDelay: 5000 })
+      return
+    }
+
+    // 校验：填充地址范围必须在 tab.data 覆盖的地址范围内，超出范围时提示用户
+    const dataStart = tab.baseAddress
+    const dataEnd = tab.baseAddress + tab.size - 1
+    const fillStart = address
+    const fillEnd = address + size - 1
+    if (fillStart < dataStart || fillEnd > dataEnd) {
+      notif.push({
+        type: 'warning',
+        title: '填充内存',
+        message: `地址范围超出数据范围。数据范围: ${formatHex(dataStart)}..${formatHex(dataEnd)}，请求范围: ${addrStr}..${endStr}`,
+        autoClose: true,
+        autoCloseDelay: 5000,
+      })
+      return
+    }
+
+    // UI 反馈：progress 通知 → success/error（沿用 wrapOperation 的反馈模式）
+    const notifId = notif.push({ type: 'progress', title: '填充内存', message: `正在填充 ${addrStr}..${endStr} (${valStr})...`, progress: 0 })
+    try {
+      // base64 解码为字节数组
+      const binary = atob(tab.data)
+      const bytes = new Uint8Array(binary.length)
+      for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+
+      // 在指定地址范围内填充值（同步前端操作）
+      const offset = address - tab.baseAddress
+      bytes.fill(value, offset, offset + size)
+
+      // 重新编码为 base64（分块处理避免调用栈溢出）
+      let newBinary = ''
+      const chunkSize = 0x8000
+      for (let i = 0; i < bytes.length; i += chunkSize) {
+        newBinary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunkSize)) as unknown as number[])
+      }
+      const newBase64 = btoa(newBinary)
+
+      // 更新 tab 数据（触发 HexViewer 刷新）
+      get().updateTab(tab.id, { data: newBase64, size: bytes.length })
+
+      notif.update(notifId, {
+        type: 'success',
+        title: '填充内存完成',
+        message: `已填充 ${addrStr}..${endStr} (${valStr})`,
+        autoClose: true,
+        autoCloseDelay: 3000,
+      })
+    } catch (err) {
+      notif.update(notifId, {
+        type: 'error',
+        title: '填充内存失败',
+        message: err instanceof Error ? err.message : '未知错误',
+        autoClose: true,
+        autoCloseDelay: 5000,
+      })
+    }
   },
 
   cancelOperation: async () => {
