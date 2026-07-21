@@ -14,6 +14,7 @@ function createWindow(): void {
     show: false,
     autoHideMenuBar: true,
     title: `OMNI Work v${app.getVersion()}`,
+    icon: join(__dirname, '../../build/icon.png'),
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,

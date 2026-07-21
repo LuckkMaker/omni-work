@@ -2,7 +2,7 @@ import { Fragment, useState, useEffect, useCallback, useMemo } from 'react'
 import {
   Plus, Eye, EyeOff, FileUp, Search, Loader2,
   Radio, Zap, AlertTriangle, Trash2, Play, Square, Gauge,
-  ChevronRight, ChevronDown,
+  ChevronRight, ChevronDown, SlidersHorizontal,
 } from 'lucide-react'
 import { useMonitorStore } from '@/stores/monitor.store'
 import { useNotificationStore } from '@/stores/notification.store'
@@ -10,6 +10,10 @@ import {
   monitorService, type MonitorSymbol, type MonitorVarType,
 } from '@/services/monitor.service'
 import { cn } from '@/lib/utils'
+import { Button } from '@/components/ui/button'
+import {
+  Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter,
+} from '@/components/ui/dialog'
 
 interface Props {
   uid: string | null
@@ -124,7 +128,7 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set())
 
   // 手动地址输入
-  const [showManual, setShowManual] = useState(false)
+  const [showManualDialog, setShowManualDialog] = useState(false)
   const [manualName, setManualName] = useState('')
   const [manualAddr, setManualAddr] = useState('')
   const [manualType, setManualType] = useState<MonitorVarType>('uint32')
@@ -203,6 +207,7 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
     if (!uid || checked.size === 0) return
     setLoading(true)
     let okCount = 0
+    const failures: { name: string; error: string }[] = []
     for (const sym of symbols) {
       if (!checked.has(sym.name)) continue
       if (sym.is_array) {
@@ -218,18 +223,26 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
               baseAddress: sym.address, elemSize: sym.elem_size, firstElemId: res.variable.id,
             })
             okCount++
+            setAdded((s) => { const n = new Set(s); n.add(sym.name); return n })
           }
-        } catch { /* ignore */ }
+        } catch (e) {
+          failures.push({ name: sym.name, error: (e as any)?.response?.data?.detail || (e as Error)?.message || '未知错误' })
+        }
         setAddedElems((m) => { const c = { ...m }; c[sym.name] = new Set([0]); return c })
       } else {
         try {
           const res = await monitorService.addVariable(uid, {
             name: sym.name, address: sym.address, type: sym.type,
           })
-          if (res.success) { addVariable(res.variable); okCount++ }
-        } catch { /* ignore */ }
+          if (res.success) {
+            addVariable(res.variable)
+            okCount++
+            setAdded((s) => { const n = new Set(s); n.add(sym.name); return n })
+          }
+        } catch (e) {
+          failures.push({ name: sym.name, error: (e as any)?.response?.data?.detail || (e as Error)?.message || '未知错误' })
+        }
       }
-      setAdded((s) => { const n = new Set(s); n.add(sym.name); return n })
     }
     setChecked(new Set())
     setLoading(false)
@@ -238,6 +251,13 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
         type: 'success', title: '已添加到监视',
         message: `${okCount} 个变量`,
         autoClose: true, autoCloseDelay: 2000,
+      })
+    }
+    if (failures.length > 0) {
+      pushNotification({
+        type: 'error', title: `${failures.length} 个变量添加失败`,
+        message: failures.map((f) => `${f.name}: ${f.error}`).join('\n'),
+        autoClose: false,
       })
     }
   }, [uid, checked, symbols, addVariable, registerArrayGroup, pushNotification])
@@ -471,7 +491,7 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
           message: `${manualName.trim()} @ 0x${(v.addr! >>> 0).toString(16).toUpperCase().padStart(8, '0')}`,
           autoClose: true, autoCloseDelay: 3000,
         })
-        setManualName(''); setManualAddr(''); setShowManual(false)
+        setManualName(''); setManualAddr(''); setShowManualDialog(false)
       } else {
         setManualErr('地址不可读（探针已连接时后端会探测）')
       }
@@ -753,68 +773,85 @@ export function ChannelPanel({ uid, isConnected, onToggleSampling }: Props) {
             )}
           </div>
 
-          {/* 手动地址输入 */}
-          {showManual && (
-            <div className="space-y-1 border-t border-border bg-muted/20 p-2">
+          {/* 底部操作栏：两个按钮平均分布 */}
+          <div className="flex gap-1.5 border-t border-border p-1.5">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 flex-1 gap-1.5"
+              onClick={() => setShowManualDialog(true)}
+              disabled={!uid}
+              title="手动输入地址和类型添加变量"
+            >
+              <SlidersHorizontal className="size-4" />
+              自定义变量
+            </Button>
+            <Button
+              variant="default"
+              size="sm"
+              className="h-8 flex-1 gap-1.5"
+              onClick={handleBatchAdd}
+              disabled={checked.size === 0 || loading || !uid}
+              title={checked.size === 0 ? '请先勾选变量' : `将 ${checked.size} 个勾选变量添加到 Watch`}
+            >
+              {loading ? <Loader2 className="size-4 animate-spin" /> : <Plus className="size-4" />}
+              添加到 Watch{checked.size > 0 && ` (${checked.size})`}
+            </Button>
+          </div>
+        </div>
+      )}
+
+      {/* 自定义变量弹窗 */}
+      <Dialog open={showManualDialog} onOpenChange={setShowManualDialog}>
+        <DialogContent className="max-w-sm">
+          <DialogHeader>
+            <DialogTitle>自定义变量</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3 py-2">
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground">变量名</label>
               <input
-                className="h-6 w-full rounded border border-border bg-background px-2 text-[11px]"
-                placeholder="变量名"
+                className="h-8 w-full rounded border border-border bg-background px-2 text-sm"
+                placeholder="例如 myVar"
                 value={manualName}
                 onChange={(e) => { setManualName(e.target.value); setManualErr(null) }}
+                onKeyDown={(e) => { if (e.key === 'Enter') handleAddManual() }}
               />
-              <div className="flex gap-1">
+            </div>
+            <div className="space-y-1">
+              <label className="text-xs font-medium text-muted-foreground">地址</label>
+              <div className="flex gap-1.5">
                 <input
-                  className="h-6 flex-1 rounded border border-border bg-background px-2 text-[11px] font-mono"
+                  className="h-8 flex-1 rounded border border-border bg-background px-2 text-sm font-mono"
                   placeholder="0x20000000"
                   value={manualAddr}
                   onChange={(e) => { setManualAddr(e.target.value); setManualErr(null) }}
+                  onKeyDown={(e) => { if (e.key === 'Enter') handleAddManual() }}
                 />
                 <select
-                  className="h-6 rounded border border-border bg-background px-1 text-[11px]"
+                  className="h-8 rounded border border-border bg-background px-2 text-sm"
                   value={manualType}
                   onChange={(e) => setManualType(e.target.value as MonitorVarType)}
                 >
                   {VAR_TYPES.map((t) => <option key={t} value={t}>{t}</option>)}
                 </select>
               </div>
-              {manualErr && (
-                <div className="flex items-center gap-1 text-[10px] text-red-500">
-                  <AlertTriangle className="size-3" /> {manualErr}
-                </div>
-              )}
-              <button
-                className="h-6 w-full rounded bg-primary text-[11px] text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-                onClick={handleAddManual}
-                disabled={!manualName.trim() || !manualAddr.trim()}
-              >
-                添加手动变量
-              </button>
             </div>
-          )}
-
-          {/* 底部操作栏 */}
-          <div className="flex items-center gap-1 border-t border-border p-1.5">
-            <button
-              className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground"
-              onClick={() => setShowManual((s) => !s)}
-            >
-              <Plus className="size-3" /> 手动地址
-            </button>
-            <button
-              className="flex items-center gap-1 text-[10px] text-primary hover:underline disabled:opacity-40 disabled:no-underline"
-              onClick={handleBatchAdd}
-              disabled={checked.size === 0 || loading || !uid}
-              title={checked.size === 0 ? '请先勾选变量' : `将 ${checked.size} 个勾选变量添加到监视`}
-            >
-              {loading ? <Loader2 className="size-3 animate-spin" /> : <Plus className="size-3" />}
-              添加到监视{checked.size > 0 && `(${checked.size})`}
-            </button>
-            <span className="ml-auto text-[10px] text-muted-foreground">
-              勾选变量后点击「添加到监视」
-            </span>
+            {manualErr && (
+              <div className="flex items-center gap-1 text-xs text-red-500">
+                <AlertTriangle className="size-3.5" /> {manualErr}
+              </div>
+            )}
           </div>
-        </div>
-      )}
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setShowManualDialog(false)}>取消</Button>
+            <Button onClick={handleAddManual} disabled={!manualName.trim() || !manualAddr.trim()}>
+              <Plus className="size-4" />
+              添加
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       {/* 监视变量/通道配置已移至下方 Watch 面板：每行可展开配置偏移/缩放/触发 */}
     </div>
