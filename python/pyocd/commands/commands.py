@@ -1094,8 +1094,19 @@ class ContinueCommand(CommandBase):
             }
 
     def execute(self):
-        self.context.selected_core.resume()
-        status = self.context.selected_core.get_state()
+        core = self.context.selected_core
+        # 如果 PC 正好在断点上，先临时移除断点并 step 一次跳过断点指令，
+        # 否则 resume 后 FPB 会立刻匹配当前 PC 导致瞬间 halt。
+        pc = core.read_core_register('pc')
+        bp = core.find_breakpoint(pc) or core.find_breakpoint(pc | 1)
+        if bp is not None:
+            core.remove_breakpoint(bp.addr)
+            core.bp_manager.flush()
+            core.step(disable_interrupts=True)
+            core.set_breakpoint(bp.addr, bp.type)
+            core.bp_manager.flush()
+        core.resume()
+        status = core.get_state()
         if status == Target.State.RUNNING:
             self.context.write("Successfully resumed device")
         elif status == Target.State.SLEEPING:
@@ -1130,9 +1141,19 @@ class StepCommand(CommandBase):
             self.context.write("Core is not halted; cannot step")
             return
 
+        core = self.context.selected_core
+        # 临时移除当前 PC 处的断点，避免 step 后被同一断点重新捕获。
+        # 虽然 Cortex-M 的 C_STEP 模式下 FPB 理论上不触发，但某些实现
+        # （如通过 J-Link 连接时）可能不完全遵循此规范。
+        pc = core.read_core_register('pc')
+        bp = core.find_breakpoint(pc) or core.find_breakpoint(pc | 1)
+        if bp is not None:
+            core.remove_breakpoint(bp.addr)
+            core.bp_manager.flush()
+
         for i in range(self.count):
-            self.context.selected_core.step(disable_interrupts=not self.context.session.options['step_into_interrupt'])
-            addr = self.context.selected_core.read_core_register('pc')
+            core.step(disable_interrupts=not self.context.session.options['step_into_interrupt'])
+            addr = core.read_core_register('pc')
             if IS_CAPSTONE_AVAILABLE:
                 addr &= ~1
                 data = self.context.selected_ap.read_memory_block8(addr, 4)
@@ -1204,6 +1225,11 @@ class StepCommand(CommandBase):
                     args=op_str, src=src_tag)
             else:
                 self.context.writei("PC = 0x%08x", addr)
+
+        # 恢复临时移除的断点
+        if bp is not None:
+            core.set_breakpoint(bp.addr, bp.type)
+            core.bp_manager.flush()
 
 class HaltCommand(CommandBase):
     INFO = {
