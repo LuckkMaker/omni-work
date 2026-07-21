@@ -1,9 +1,8 @@
 # OMNI Work
 
-基于 DAPLink 仿真器的嵌入式开发工具集，提供类似 SEGGER J-Link 工具链的完整体验，以开源 DAPLink 硬件为基础，降低嵌入式开发者的工具成本。
+嵌入式开发工具集，提供类似 SEGGER J-Link 工具链的完整体验，以开源 pyOCD + DAPLink 硬件为基础，降低嵌入式开发者的工具成本。
 
-- 当前版本：**0.3.1**（前端 `package.json` 与后端 `python/server.py` 同步）
-- 后端基于 pyOCD，源码内置在 `python/pyocd/`，不通过 pip 安装
+- 当前版本：**0.3.3**
 
 ## 功能概览
 

@@ -146,6 +146,17 @@ if (-not $SkipFrontend) {
         npm install --save-dev electron-builder
     }
 
+    # Clean release/ directory to avoid stale build artifacts (e.g. win-unpacked.tmp
+    # from interrupted builds, or old installer exe with previous version number).
+    # electron-builder does not always clean up its temp dirs, and stale win-unpacked.tmp
+    # can cause it to skip re-unpacking the Electron framework, leading to inconsistent
+    # builds where the version number does not update.
+    $releaseDir = "$ProjectRoot\release"
+    if (Test-Path $releaseDir) {
+        Write-Host "[build] Cleaning release/ directory..." -ForegroundColor DarkGray
+        Remove-Item $releaseDir -Recurse -Force
+    }
+
     Push-Location $ProjectRoot
     npx electron-builder --win 2>&1 | Tee-Object -Variable buildOutput
     Pop-Location
