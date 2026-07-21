@@ -1,4 +1,8 @@
-"""OMNI Work - Python 后端入口
+# OMNI Work
+# Copyright (c) 2026 LuckkMaker
+# SPDX-License-Identifier: MIT
+"""
+OMNI Work - Python 后端入口
 
 启动 FastAPI 服务器，通过 stdout 输出端口信息供 Electron 主进程读取。
 启动时自动初始化探针热插拔监控。

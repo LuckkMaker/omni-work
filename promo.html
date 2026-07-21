@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>OMNI Work · 嵌入式开发工具集</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=Rajdhani:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg-deep:#050811;
+    --bg-mid:#0a1124;
+    --cyan:#00e5ff;
+    --cyan-soft:#5ce1ff;
+    --cyan-dim:rgba(0,229,255,.18);
+    --orange:#ff7a3d;
+    --orange-soft:#ffb088;
+    --text:#e8f1ff;
+    --text-dim:#8295b8;
+    --card-bg:rgba(14,22,42,.72);
+    --border:rgba(0,229,255,.22);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html,body{height:100%}
+  body{
+    font-family:'Rajdhani',sans-serif;
+    background:var(--bg-deep);
+    color:var(--text);
+    overflow-x:hidden;
+    min-height:100vh;
+    position:relative;
+  }
+
+  /* ===== 深空背景 ===== */
+  .space-bg{
+    position:fixed;inset:0;z-index:0;overflow:hidden;
+    background:
+      radial-gradient(ellipse 80% 60% at 20% 15%, rgba(0,90,140,.22), transparent 60%),
+      radial-gradient(ellipse 70% 50% at 85% 80%, rgba(120,40,10,.18), transparent 60%),
+      radial-gradient(ellipse 100% 80% at 50% 50%, var(--bg-mid), var(--bg-deep) 75%);
+  }
+  .stars,.stars::after{
+    position:absolute;inset:-50%;
+    background-image:
+      radial-gradient(1px 1px at 20px 30px, #fff, transparent),
+      radial-gradient(1px 1px at 60px 120px, #cce8ff, transparent),
+      radial-gradient(1.5px 1.5px at 130px 80px, #fff, transparent),
+      radial-gradient(1px 1px at 200px 200px, #aef, transparent),
+      radial-gradient(1px 1px at 280px 50px, #fff, transparent),
+      radial-gradient(2px 2px at 350px 260px, #fdd, transparent),
+      radial-gradient(1px 1px at 420px 150px, #fff, transparent),
+      radial-gradient(1px 1px at 500px 320px, #cfeaff, transparent);
+    background-size:550px 380px;
+    animation:drift 120s linear infinite;
+    opacity:.7;
+  }
+  .stars::after{content:"";background-size:380px 420px;animation-duration:200s;animation-direction:reverse;opacity:.5}
+  @keyframes drift{from{transform:translate(0,0)}to{transform:translate(-550px,-380px)}}
+
+  .glow-orb{
+    position:absolute;border-radius:50%;filter:blur(80px);pointer-events:none;
+    animation:floatOrb 14s ease-in-out infinite;
+  }
+  .glow-orb.cyan{width:480px;height:480px;background:radial-gradient(circle,rgba(0,229,255,.28),transparent 70%);top:-120px;left:-100px}
+  .glow-orb.orange{width:420px;height:420px;background:radial-gradient(circle,rgba(255,122,61,.22),transparent 70%);bottom:-140px;right:-80px;animation-delay:-7s}
+  @keyframes floatOrb{0%,100%{transform:translate(0,0) scale(1)}50%{transform:translate(40px,-30px) scale(1.08)}}
+
+  /* ===== 主容器 ===== */
+  .wrap{
+    position:relative;z-index:2;
+    max-width:1280px;margin:0 auto;
+    padding:48px 32px 60px;
+    min-height:100vh;
+    display:flex;flex-direction:column;align-items:center;
+  }
+
+  /* ===== 顶部品牌区 ===== */
+  .brand{
+    display:flex;flex-direction:column;align-items:center;
+    text-align:center;margin-bottom:14px;
+    animation:fadeDown 1s ease both;
+  }
+  @keyframes fadeDown{from{opacity:0;transform:translateY(-24px)}to{opacity:1;transform:translateY(0)}}
+
+  .icon-wrap{
+    position:relative;width:108px;height:108px;margin-bottom:22px;
+    animation:iconFloat 6s ease-in-out infinite;
+  }
+  @keyframes iconFloat{0%,100%{transform:translateY(0)}50%{transform:translateY(-12px)}}
+  .icon-wrap::before{
+    content:"";position:absolute;inset:-22px;border-radius:50%;
+    background:radial-gradient(circle,rgba(0,229,255,.45),transparent 65%);
+    filter:blur(18px);animation:pulse 4s ease-in-out infinite;
+  }
+  @keyframes pulse{0%,100%{opacity:.6;transform:scale(1)}50%{opacity:1;transform:scale(1.12)}}
+  .icon-wrap img{
+    position:relative;width:100%;height:100%;border-radius:24px;
+    box-shadow:0 0 0 1.5px rgba(0,229,255,.35), 0 24px 50px -12px rgba(0,229,255,.4);
+  }
+  .icon-ring{
+    position:absolute;inset:-10px;border-radius:32px;
+    border:1.5px solid rgba(0,229,255,.18);
+    animation:spin 18s linear infinite;
+  }
+  .icon-ring::before{
+    content:"";position:absolute;top:-4px;left:50%;width:7px;height:7px;
+    border-radius:50%;background:var(--cyan);box-shadow:0 0 12px var(--cyan);
+    transform:translateX(-50%);
+  }
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+  .brand h1{
+    font-family:'Orbitron',sans-serif;
+    font-weight:900;font-size:clamp(40px,6vw,72px);
+    letter-spacing:.06em;line-height:1;
+    background:linear-gradient(135deg,#fff 20%,var(--cyan-soft) 55%,var(--cyan) 90%);
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+    margin-bottom:10px;
+  }
+  .brand .sub{
+    font-size:clamp(16px,2vw,22px);font-weight:500;
+    color:var(--text-dim);letter-spacing:.18em;text-transform:uppercase;
+    display:flex;align-items:center;gap:14px;
+  }
+  .brand .sub .dot{width:5px;height:5px;border-radius:50%;background:var(--orange);box-shadow:0 0 10px var(--orange)}
+  .ver-tag{
+    display:inline-flex;align-items:center;gap:6px;margin-top:14px;
+    padding:5px 16px;border-radius:999px;
+    background:rgba(0,229,255,.08);border:1px solid var(--border);
+    font-family:'Orbitron',sans-serif;font-size:13px;font-weight:700;
+    color:var(--cyan-soft);letter-spacing:.1em;
+  }
+  .ver-tag::before{content:"";width:6px;height:6px;border-radius:50%;background:var(--cyan);box-shadow:0 0 8px var(--cyan)}
+
+  .tagline{
+    margin-top:20px;font-size:17px;color:var(--text-dim);
+    max-width:560px;line-height:1.6;font-weight:400;
+  }
+  .tagline b{color:var(--cyan-soft);font-weight:600}
+
+  /* ===== 3D 堆叠展示区 ===== */
+  .stage{
+    position:relative;width:100%;
+    display:flex;justify-content:center;align-items:center;
+    margin:30px 0 10px;padding:60px 0 40px;
+    animation:fadeUp 1.2s .3s ease both;
+  }
+  @keyframes fadeUp{from{opacity:0;transform:translateY(30px)}to{opacity:1;transform:translateY(0)}}
+
+  .scene{
+    perspective:2000px;
+    perspective-origin:50% 38%;
+  }
+  .stack{
+    position:relative;width:560px;height:350px;
+    transform-style:preserve-3d;
+    transform:rotateX(8deg) rotateY(-6deg);
+    transition:transform 1s cubic-bezier(.2,.85,.25,1);
+  }
+  .stack:hover{transform:rotateX(2deg) rotateY(0deg)}
+
+  .card{
+    position:absolute;inset:0;
+    border-radius:16px;overflow:hidden;
+    transform-origin:bottom center;
+    transition:transform .9s cubic-bezier(.2,.85,.25,1),
+               box-shadow .5s, opacity .5s, filter .5s;
+    box-shadow:0 30px 70px -24px rgba(0,0,0,.85),
+               0 0 0 1px rgba(255,255,255,.06);
+    cursor:pointer;
+    backface-visibility:hidden;
+  }
+  .card img{
+    width:100%;height:100%;object-fit:cover;
+    display:block;
+    pointer-events:none;
+  }
+  .card .glare{
+    position:absolute;inset:0;pointer-events:none;
+    background:linear-gradient(135deg,rgba(255,255,255,.1),transparent 40%);
+  }
+  .card .label{
+    position:absolute;left:0;right:0;bottom:0;
+    padding:14px 18px 12px;
+    background:linear-gradient(transparent, rgba(5,8,17,.92));
+    display:flex;align-items:center;justify-content:space-between;
+    opacity:0;transform:translateY(8px);
+    transition:opacity .5s, transform .5s;
+  }
+  .card .label .name{
+    font-family:'Orbitron',sans-serif;font-weight:700;font-size:15px;
+    color:#fff;letter-spacing:.05em;
+  }
+  .card .label .desc{
+    font-size:13px;color:var(--cyan-soft);font-weight:500;
+  }
+
+  /* 默认堆叠：3D 厚度层次 */
+  .card:nth-child(1){transform:translateZ(0) translateY(0) scale(1);z-index:6}
+  .card:nth-child(2){transform:translateZ(-18px) translateY(10px) scale(.975);z-index:5;opacity:.96}
+  .card:nth-child(3){transform:translateZ(-36px) translateY(20px) scale(.95);z-index:4;opacity:.9}
+  .card:nth-child(4){transform:translateZ(-54px) translateY(30px) scale(.925);z-index:3;opacity:.84}
+  .card:nth-child(5){transform:translateZ(-72px) translateY(40px) scale(.9);z-index:2;opacity:.78}
+  .card:nth-child(6){transform:translateZ(-90px) translateY(50px) scale(.875);z-index:1;opacity:.72}
+
+  /* 悬停展开：扇形散开 */
+  .stack:hover .card:nth-child(1){transform:rotate(-30deg) translateX(-230px) translateY(30px) translateZ(40px);z-index:6}
+  .stack:hover .card:nth-child(2){transform:rotate(-18deg) translateX(-138px) translateY(14px) translateZ(24px);z-index:5}
+  .stack:hover .card:nth-child(3){transform:rotate(-6deg) translateX(-46px) translateY(2px) translateZ(8px);z-index:4}
+  .stack:hover .card:nth-child(4){transform:rotate(6deg) translateX(46px) translateY(2px) translateZ(8px);z-index:3}
+  .stack:hover .card:nth-child(5){transform:rotate(18deg) translateX(138px) translateY(14px) translateZ(24px);z-index:2}
+  .stack:hover .card:nth-child(6){transform:rotate(30deg) translateX(230px) translateY(30px) translateZ(40px);z-index:1}
+
+  .stack:hover .card{opacity:1}
+  .stack:hover .card .label{opacity:1;transform:translateY(0)}
+  .stack:hover .card .label{transition-delay:.35s}
+
+  /* 单卡悬停高亮 */
+  .stack .card:hover{
+    box-shadow:0 36px 80px -20px rgba(0,0,0,.9),
+               0 0 0 1.5px var(--cyan),
+               0 0 40px rgba(0,229,255,.35);
+    filter:brightness(1.08);
+  }
+
+  .stage-hint{
+    position:absolute;bottom:6px;left:50%;transform:translateX(-50%);
+    font-size:13px;color:var(--text-dim);letter-spacing:.12em;
+    display:flex;align-items:center;gap:8px;
+    text-transform:uppercase;font-weight:500;
+    animation:hintPulse 2.4s ease-in-out infinite;
+  }
+  @keyframes hintPulse{0%,100%{opacity:.45}50%{opacity:.9}}
+  .stage-hint .cursor{
+    width:14px;height:14px;border:1.5px solid var(--cyan);border-radius:4px;
+    position:relative;
+  }
+  .stage-hint .cursor::after{
+    content:"";position:absolute;inset:2px;background:var(--cyan);border-radius:2px;
+    animation:cursorBlink 1.6s ease-in-out infinite;
+  }
+  @keyframes cursorBlink{0%,100%{opacity:0}50%{opacity:1}}
+
+  /* ===== 功能特性区 ===== */
+  .features{
+    width:100%;max-width:1080px;margin-top:48px;
+    animation:fadeUp 1s .5s ease both;
+  }
+  .features-title{
+    text-align:center;font-family:'Orbitron',sans-serif;
+    font-size:14px;font-weight:700;letter-spacing:.3em;
+    color:var(--text-dim);text-transform:uppercase;margin-bottom:24px;
+    display:flex;align-items:center;justify-content:center;gap:16px;
+  }
+  .features-title::before,.features-title::after{
+    content:"";height:1px;width:80px;
+    background:linear-gradient(90deg,transparent,var(--border),transparent);
+  }
+  .feat-grid{
+    display:grid;grid-template-columns:repeat(3,1fr);gap:16px;
+  }
+  .feat{
+    position:relative;padding:22px 20px;border-radius:14px;
+    background:var(--card-bg);
+    border:1px solid rgba(255,255,255,.06);
+    backdrop-filter:blur(10px);
+    transition:transform .4s, border-color .4s, box-shadow .4s;
+    overflow:hidden;
+  }
+  .feat::before{
+    content:"";position:absolute;top:0;left:0;width:100%;height:2px;
+    background:linear-gradient(90deg,var(--cyan),transparent);
+    transform:scaleX(0);transform-origin:left;transition:transform .5s;
+  }
+  .feat:hover{
+    transform:translateY(-5px);
+    border-color:var(--border);
+    box-shadow:0 20px 40px -16px rgba(0,229,255,.2);
+  }
+  .feat:hover::before{transform:scaleX(1)}
+  .feat .ic{
+    width:42px;height:42px;border-radius:11px;
+    display:flex;align-items:center;justify-content:center;
+    margin-bottom:14px;font-size:22px;
+    background:linear-gradient(135deg,rgba(0,229,255,.15),rgba(0,229,255,.05));
+    border:1px solid var(--border);
+  }
+  .feat h3{
+    font-family:'Orbitron',sans-serif;font-weight:700;font-size:16px;
+    color:#fff;margin-bottom:6px;letter-spacing:.03em;
+  }
+  .feat p{font-size:14px;color:var(--text-dim);line-height:1.5;font-weight:400}
+  .feat .num{
+    position:absolute;top:16px;right:18px;
+    font-family:'Orbitron',sans-serif;font-size:13px;font-weight:700;
+    color:rgba(0,229,255,.3);letter-spacing:.05em;
+  }
+
+  /* ===== 底部 ===== */
+  .foot{
+    margin-top:48px;text-align:center;
+    animation:fadeUp 1s .7s ease both;
+  }
+  .foot .meta{
+    display:flex;justify-content:center;gap:28px;flex-wrap:wrap;
+    font-size:14px;color:var(--text-dim);font-weight:500;
+  }
+  .foot .meta span{display:flex;align-items:center;gap:7px}
+  .foot .meta .mk{width:6px;height:6px;border-radius:50%;background:var(--cyan);box-shadow:0 0 8px var(--cyan)}
+  .foot .meta .mk.o{background:var(--orange);box-shadow:0 0 8px var(--orange)}
+  .foot .copy{
+    margin-top:18px;font-size:12px;color:rgba(130,149,184,.6);
+    letter-spacing:.1em;font-weight:400;
+  }
+
+  @media (max-width:860px){
+    .feat-grid{grid-template-columns:repeat(2,1fr)}
+    .stack{transform:rotateX(8deg) rotateY(-6deg) scale(.8)}
+  }
+  @media (max-width:560px){
+    .feat-grid{grid-template-columns:1fr}
+    .wrap{padding:36px 18px 50px}
+    .stack{transform:rotateX(8deg) rotateY(-6deg) scale(.62)}
+    .stage{padding:30px 0}
+  }
+</style>
+</head>
+<body>
+  <div class="space-bg">
+    <div class="stars"></div>
+    <div class="glow-orb cyan"></div>
+    <div class="glow-orb orange"></div>
+  </div>
+
+  <div class="wrap">
+    <!-- 顶部品牌 -->
+    <div class="brand">
+      <div class="icon-wrap">
+        <div class="icon-ring"></div>
+        <img src="assets/images/icon.png" alt="OMNI Work">
+      </div>
+      <h1>OMNI WORK</h1>
+      <div class="sub"><span class="dot"></span>嵌入式开发工具集<span class="dot"></span></div>
+      <div class="ver-tag">VERSION 0.3.4</div>
+      <p class="tagline">
+        一站式 <b>ARM Cortex-M</b> 开发调试工作台 —— 烧录、调试、实时监视、内存分析，
+        以 <b>DAPLink</b> 为桥梁，让嵌入式开发如太空漫步般从容。
+      </p>
+    </div>
+
+    <!-- 3D 堆叠展示 -->
+    <div class="stage">
+      <div class="scene">
+        <div class="stack" id="stack">
+          <div class="card" data-i="0">
+            <img src="assets/images/monitor_page.png" alt="Monitor">
+            <div class="glare"></div>
+            <div class="label"><span class="name">Monitor</span><span class="desc">实时变量波形监视</span></div>
+          </div>
+          <div class="card" data-i="1">
+            <img src="assets/images/commander_page.png" alt="Commander">
+            <div class="glare"></div>
+            <div class="label"><span class="name">Commander</span><span class="desc">pyOCD 命令行调试</span></div>
+          </div>
+          <div class="card" data-i="2">
+            <img src="assets/images/rtt_viewer_page.png" alt="RTT Viewer">
+            <div class="glare"></div>
+            <div class="label"><span class="name">RTT Viewer</span><span class="desc">实时传输 · Omnishell</span></div>
+          </div>
+          <div class="card" data-i="3">
+            <img src="assets/images/flash_page.png" alt="Flash">
+            <div class="glare"></div>
+            <div class="label"><span class="name">Flash</span><span class="desc">固件烧录与回读</span></div>
+          </div>
+          <div class="card" data-i="4">
+            <img src="assets/images/map_analyzer_page.png" alt="Map Analyzer">
+            <div class="glare"></div>
+            <div class="label"><span class="name">Map Analyzer</span><span class="desc">内存映射可视化分析</span></div>
+          </div>
+          <div class="card" data-i="5">
+            <img src="assets/images/number_converter_page.png" alt="Number Converter">
+            <div class="glare"></div>
+            <div class="label"><span class="name">Number Converter</span><span class="desc">多进制位域转换</span></div>
+          </div>
+        </div>
+      </div>
+      <div class="stage-hint">
+        <span class="cursor"></span>悬停展开 · 探索六大模块
+      </div>
+    </div>
+
+    <!-- 功能特性 -->
+    <div class="features">
+      <div class="features-title">Core Modules</div>
+      <div class="feat-grid">
+        <div class="feat">
+          <span class="num">01</span>
+          <div class="ic">⚡</div>
+          <h3>Flash</h3>
+          <p>一键编程、擦除、校验、回读，支持复位运行与空白检查。</p>
+        </div>
+        <div class="feat">
+          <span class="num">02</span>
+          <div class="ic">⌘</div>
+          <h3>Commander</h3>
+          <p>基于 pyOCD 的交互式命令调试，反汇编、断点、单步一应俱全。</p>
+        </div>
+        <div class="feat">
+          <span class="num">03</span>
+          <div class="ic">📡</div>
+          <h3>RTT Viewer</h3>
+          <p>SEGGER RTT 实时双向通信，ASCII / HEX 显示，Omnishell 交互。</p>
+        </div>
+        <div class="feat">
+          <span class="num">04</span>
+          <div class="ic">📈</div>
+          <h3>Monitor</h3>
+          <p>ELF 符号解析，变量实时波形采样，最高 100kHz，CSV 导出。</p>
+        </div>
+        <div class="feat">
+          <span class="num">05</span>
+          <div class="ic">🗺️</div>
+          <h3>Map Analyzer</h3>
+          <p>链接映射文件可视化，ROM / RAM 占用、模块分类一图掌握。</p>
+        </div>
+        <div class="feat">
+          <span class="num">06</span>
+          <div class="ic">🔢</div>
+          <h3>Number Converter</h3>
+          <p>32 位多进制转换，位域可视化，字节拆解，寄存器配置利器。</p>
+        </div>
+      </div>
+    </div>
+
+    <!-- 底部 -->
+    <div class="foot">
+      <div class="meta">
+        <span><i class="mk"></i>DAPLink / CMSIS-DAP</span>
+        <span><i class="mk"></i>ARM Cortex-M 全系列</span>
+        <span><i class="mk o"></i>SWD · 10 MHz</span>
+        <span><i class="mk"></i>Windows 桌面应用</span>
+      </div>
+      <div class="copy">OMNI WORK · OPEN SOURCE · MIT LICENSE · BY LUCKKMAKER</div>
+    </div>
+  </div>
+
+<script>
+  // 触摸设备：点击切换展开
+  const stack = document.getElementById('stack');
+  let expanded = false;
+  const isTouch = matchMedia('(hover:none)').matches;
+  if(isTouch){
+    stack.style.cursor='pointer';
+    stack.addEventListener('click',()=>{
+      expanded = !expanded;
+      stack.classList.toggle('expanded', expanded);
+    });
+    // 用类名触发与 hover 相同效果
+    const style = document.createElement('style');
+    style.textContent = `
+      .stack.expanded{transform:rotateX(2deg) rotateY(0deg)!important}
+      .stack.expanded .card:nth-child(1){transform:rotate(-30deg) translateX(-230px) translateY(30px) translateZ(40px);z-index:6}
+      .stack.expanded .card:nth-child(2){transform:rotate(-18deg) translateX(-138px) translateY(14px) translateZ(24px);z-index:5}
+      .stack.expanded .card:nth-child(3){transform:rotate(-6deg) translateX(-46px) translateY(2px) translateZ(8px);z-index:4}
+      .stack.expanded .card:nth-child(4){transform:rotate(6deg) translateX(46px) translateY(2px) translateZ(8px);z-index:3}
+      .stack.expanded .card:nth-child(5){transform:rotate(18deg) translateX(138px) translateY(14px) translateZ(24px);z-index:2}
+      .stack.expanded .card:nth-child(6){transform:rotate(30deg) translateX(230px) translateY(30px) translateZ(40px);z-index:1}
+      .stack.expanded .card{opacity:1}
+      .stack.expanded .card .label{opacity:1;transform:translateY(0);transition-delay:.35s}
+    `;
+    document.head.appendChild(style);
+  }
+
+  // 鼠标视差：场景随光标轻微倾斜
+  if(!isTouch){
+    const stage = document.querySelector('.stage');
+    stage.addEventListener('mousemove', e=>{
+      const r = stage.getBoundingClientRect();
+      const x = (e.clientX - r.left)/r.width - .5;
+      const y = (e.clientY - r.top)/r.height - .5;
+      stack.style.transform = `rotateX(${8 - y*6}deg) rotateY(${-6 + x*8}deg)`;
+    });
+    stage.addEventListener('mouseleave',()=>{
+      stack.style.transform='';
+    });
+  }
+</script>
+</body>
+</html>

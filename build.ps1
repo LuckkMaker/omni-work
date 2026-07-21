@@ -158,6 +158,12 @@ if (-not $SkipFrontend) {
     }
 
     Push-Location $ProjectRoot
+
+    # electron-builder 打包时需要从 GitHub 下载 winCodeSign / nsis 等工具，
+    # 国内网络访问 GitHub 容易超时（ETIMEDOUT），使用 npmmirror 镜像加速。
+    # 如需恢复官方源，删除此环境变量即可。
+    $env:ELECTRON_BUILDER_BINARIES_MIRROR = "https://npmmirror.com/mirrors/electron-builder-binaries/"
+
     npx electron-builder --win 2>&1 | Tee-Object -Variable buildOutput
     Pop-Location
 
