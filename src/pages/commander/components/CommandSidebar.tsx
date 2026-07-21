@@ -23,6 +23,7 @@ import {
   Pause,
   Zap,
   FileSpreadsheet,
+  CircleDot,
 } from 'lucide-react'
 import { useNotificationStore } from '@/stores/notification.store'
 import { cn } from '@/lib/utils'
@@ -56,12 +57,13 @@ const QUICK_COMMANDS: QuickCommand[] = [
   { label: 'halt', cmd: 'halt', icon: Square, group: 'Run Control' },
   { label: 'continue', cmd: 'continue', icon: Play, group: 'Run Control' },
   { label: 'step', cmd: 'step', icon: SkipForward, group: 'Run Control' },
+  { label: 'break', cmd: 'break ', icon: CircleDot, group: 'Run Control' },
+  { label: 'where', cmd: 'where', icon: TerminalIcon, group: 'Run Control' },
   { label: 'reset', cmd: 'reset', icon: RotateCcw, group: 'Run Control' },
   { label: 'reset -h', cmd: 'reset -h', icon: Pause, group: 'Run Control' },
   { label: 'status', cmd: 'status', icon: Search, group: 'Run Control' },
   // Registers
   { label: 'reg', cmd: 'reg', icon: Cpu, group: 'Registers' },
-  { label: 'where', cmd: 'where', icon: TerminalIcon, group: 'Registers' },
   // Memory
   { label: 'read32', cmd: 'read32 ', icon: MemoryStick, group: 'Memory' },
   { label: 'write32', cmd: 'write32 ', icon: MemoryStick, group: 'Memory' },
@@ -488,6 +490,26 @@ export function CommandSidebar({
                 <WorkflowStep cmd="elf " connected={connected} onRun={onRunCommand} />
                 <WorkflowArrow />
                 <WorkflowStep cmd="step" connected={connected} onRun={onRunCommand} />
+              </div>
+            </div>
+            {/* 断点调试 */}
+            <div className="rounded-md border border-border/50 bg-muted/30 p-2">
+              <div className="mb-1 flex items-center gap-1 text-[11px] font-medium text-muted-foreground/70">
+                <Zap className="size-3 text-muted-foreground" />
+                断点调试
+              </div>
+              <div className="flex flex-wrap items-center gap-0.5 text-[11px] font-mono">
+                <WorkflowStep cmd="elf " connected={connected} onRun={onRunCommand} />
+                <WorkflowArrow />
+                <WorkflowStep cmd="break " connected={connected} onRun={onRunCommand} />
+                <WorkflowArrow />
+                <WorkflowStep cmd="reset -h" connected={connected} onRun={onRunCommand} />
+                <WorkflowArrow />
+                <WorkflowStep cmd="continue" connected={connected} onRun={onRunCommand} />
+                <WorkflowArrow />
+                <WorkflowStep cmd="step" connected={connected} onRun={onRunCommand} />
+                <WorkflowArrow />
+                <WorkflowStep cmd="where" connected={connected} onRun={onRunCommand} />
               </div>
             </div>
             {/* 解锁并烧录 */}

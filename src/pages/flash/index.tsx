@@ -9,7 +9,6 @@ import {
   ScanSearch,
   ChevronDown,
   ShieldCheck,
-  PaintBucket,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
@@ -179,13 +178,6 @@ export default function FlashPage() {
         <Button variant="ghost" size="sm" disabled={!isConnected || busy} onClick={doCheckBlank} className="h-8 gap-1.5">
           <ScanSearch className="size-3.5" />
           Check Blank
-        </Button>
-
-        <Separator orientation="vertical" className="mx-1 h-5" />
-
-        <Button variant="ghost" size="sm" disabled={busy} onClick={() => setShowFillDialog(true)} className="h-8 gap-1.5" title={busy ? '操作进行中，请稍候' : '填充内存'}>
-          <PaintBucket className="size-3.5" />
-          Fill Memory
         </Button>
       </div>
 
