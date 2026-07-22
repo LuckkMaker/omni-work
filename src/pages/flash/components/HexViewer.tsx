@@ -17,6 +17,14 @@ interface HexViewerProps {
   onScrollSync?: (scrollTop: number) => void
   /** 可选：外部控制的 scrollTop，用于同步滚动 */
   syncScrollTop?: number | null
+  /** 可选：外部持久化的高亮偏移（按 tab 保存） */
+  highlightOffset?: number | null
+  /** 可选：高亮变化回调（持久化到 tab） */
+  onHighlightChange?: (offset: number | null) => void
+  /** 可选：外部持久化的 scrollTop（切换 tab 后恢复） */
+  persistedScrollTop?: number
+  /** 可选：滚动位置持久化回调 */
+  onScrollPersist?: (scrollTop: number) => void
 }
 
 // 虚拟滚动常量
@@ -64,13 +72,20 @@ export function HexToolbar({
   onByteWidthChange,
   baseAddress,
   dataLength,
+  jumpAddr: extJumpAddr,
+  onJumpAddrChange,
 }: {
   byteWidth: ByteWidth
   onByteWidthChange: (w: ByteWidth) => void
   baseAddress: number
   dataLength: number
+  /** 外部持久化的跳转地址（按 tab 保存），不传则用局部 state */
+  jumpAddr?: string
+  onJumpAddrChange?: (v: string) => void
 }) {
-  const [jumpAddr, setJumpAddr] = useState('')
+  const [localJumpAddr, setLocalJumpAddr] = useState('')
+  const jumpAddr = extJumpAddr ?? localJumpAddr
+  const setJumpAddr = onJumpAddrChange ?? setLocalJumpAddr
 
   const endAddress = baseAddress + dataLength - 1
 
@@ -163,13 +178,18 @@ interface VirtualRow {
   ascii: { ch: string; diff: boolean }[]
 }
 
-export function HexViewer({ base64Data, baseAddress, byteWidth, diffBase64, diffBaseAddress, onScrollSync, syncScrollTop }: HexViewerProps) {
+export function HexViewer({ base64Data, baseAddress, byteWidth, diffBase64, diffBaseAddress, onScrollSync, syncScrollTop, highlightOffset: extHighlightOffset, onHighlightChange, persistedScrollTop, onScrollPersist }: HexViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [scrollTop, setScrollTop] = useState(0)
   const [viewportHeight, setViewportHeight] = useState(0)
-  const [highlightOffset, setHighlightOffset] = useState<number | null>(null)
+  const [localHighlightOffset, setLocalHighlightOffset] = useState<number | null>(null)
+  const highlightOffset = extHighlightOffset !== undefined ? extHighlightOffset : localHighlightOffset
   const onScrollSyncRef = useRef(onScrollSync)
   onScrollSyncRef.current = onScrollSync
+  const onHighlightChangeRef = useRef(onHighlightChange)
+  onHighlightChangeRef.current = onHighlightChange
+  const onScrollPersistRef = useRef(onScrollPersist)
+  onScrollPersistRef.current = onScrollPersist
 
   // 每行固定 16 字节（标准十六进制编辑器宽度），byteWidth 控制字分组方式
   const bytesPerRow = 16
@@ -267,13 +287,18 @@ export function HexViewer({ base64Data, baseAddress, byteWidth, diffBase64, diff
     return result
   }, [data, diffData, baseAddress, diffBaseAddress, byteWidth, bytesPerRow, visibleStart, visibleEnd])
 
-  // 数据或字节宽度变化时重置滚动
+  // 数据或字节宽度变化时恢复滚动位置（切换 tab 时从持久化值恢复）
   useEffect(() => {
+    const targetScroll = persistedScrollTop ?? 0
     if (containerRef.current) {
-      containerRef.current.scrollTop = 0
+      containerRef.current.scrollTop = targetScroll
     }
-    setScrollTop(0)
-    setHighlightOffset(null)
+    setScrollTop(targetScroll)
+    // 仅清局部高亮（CompareView 模式）；持久化模式由 tab 数据控制
+    if (extHighlightOffset === undefined) {
+      setLocalHighlightOffset(null)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base64Data, byteWidth])
 
   // 地址跳转：直接设置 scrollTop
@@ -288,8 +313,13 @@ export function HexViewer({ base64Data, baseAddress, byteWidth, diffBase64, diff
         // 居中显示
         const centerOffset = Math.max(0, targetTop - el.clientHeight / 2 + ROW_HEIGHT / 2)
         el.scrollTop = centerOffset
-        setHighlightOffset(rowIndex * bytesPerRow)
-        setTimeout(() => setHighlightOffset(null), 3000)
+        setScrollTop(centerOffset)
+        // 更新高亮（持久化模式通过回调，CompareView 模式用局部 state）
+        if (onHighlightChangeRef.current) {
+          onHighlightChangeRef.current(rowIndex * bytesPerRow)
+        } else {
+          setLocalHighlightOffset(rowIndex * bytesPerRow)
+        }
       }
     }
     window.addEventListener('hexviewer:jump', handler)
@@ -298,12 +328,29 @@ export function HexViewer({ base64Data, baseAddress, byteWidth, diffBase64, diff
 
   // 滚动同步
   const isSyncingRef = useRef(false)
+  const scrollPersistTimerRef = useRef<number | null>(null)
 
   const handleScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
     const st = e.currentTarget.scrollTop
     setScrollTop(st)
+    // 节流持久化滚动位置（捕获当前回调，避免 tab 切换后写错 tab）
+    const persistCb = onScrollPersistRef.current
+    if (persistCb) {
+      if (scrollPersistTimerRef.current) clearTimeout(scrollPersistTimerRef.current)
+      scrollPersistTimerRef.current = window.setTimeout(() => {
+        scrollPersistTimerRef.current = null
+        persistCb(st)
+      }, 500)
+    }
     if (isSyncingRef.current) return
     onScrollSyncRef.current?.(st)
+  }, [])
+
+  // 卸载时清理定时器
+  useEffect(() => {
+    return () => {
+      if (scrollPersistTimerRef.current) clearTimeout(scrollPersistTimerRef.current)
+    }
   }, [])
 
   // 外部同步滚动

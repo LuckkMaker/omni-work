@@ -21,6 +21,10 @@ export interface FlashTab {
   eraseBefore: boolean
   verifyAfter: boolean
   resetAfter: boolean
+  // HexViewer 状态（按 tab 持久化，切换 tab 后保留）
+  jumpAddr?: string
+  highlightOffset?: number | null
+  scrollTop?: number
   // compare tab 专用
   rightData?: string | null   // base64 encoded right side data
   rightBaseAddress?: number
@@ -427,13 +431,16 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
       try {
         const result = await flashService.readBack(uid, mode, address ?? 0, size ?? 0)
         if (result.success && result.base64_data) {
-          // 数据直接存入当前 tab
+          // 数据直接存入当前 tab，重置 HexViewer 持久化状态
           get().updateTab(tab.id, {
             data: result.base64_data,
             baseAddress: result.base_address ?? 0,
             size: result.bytes_read ?? 0,
             loading: false,
             format: 'bin',
+            jumpAddr: '',
+            highlightOffset: null,
+            scrollTop: 0,
           })
           return { success: true, duration_ms: result.duration_ms, bytes_written: result.bytes_read ?? 0 }
         }
@@ -495,6 +502,9 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
           size: totalSize,
           loading: false,
           format: 'bin',
+          jumpAddr: '',
+          highlightOffset: null,
+          scrollTop: 0,
         })
         return { success: true, duration_ms: 0, bytes_written: totalSize }
       } catch (err) {
