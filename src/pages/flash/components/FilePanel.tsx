@@ -21,6 +21,7 @@ export function FilePanel() {
     tabs,
     activeTabId,
     setTabOption,
+    updateTab,
     saveTabAs,
     setShowCompareDialog,
     setShowFillDialog,
@@ -70,6 +71,8 @@ export function FilePanel() {
               onByteWidthChange={setByteWidth}
               baseAddress={activeTab.baseAddress}
               dataLength={activeTab.size}
+              jumpAddr={activeTab.jumpAddr ?? ''}
+              onJumpAddrChange={(v) => updateTab(activeTab.id, { jumpAddr: v })}
             />
 
             {/* 分隔线 */}
@@ -123,6 +126,10 @@ export function FilePanel() {
               base64Data={activeTab.data}
               baseAddress={activeTab.baseAddress}
               byteWidth={byteWidth}
+              highlightOffset={activeTab.highlightOffset ?? null}
+              onHighlightChange={(offset) => updateTab(activeTab.id, { highlightOffset: offset })}
+              persistedScrollTop={activeTab.scrollTop}
+              onScrollPersist={(st) => updateTab(activeTab.id, { scrollTop: st })}
             />
           </div>
         </>
