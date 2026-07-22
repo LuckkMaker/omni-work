@@ -1,235 +1,270 @@
-"""SQLite 数据库管理
+"""XML 设备目录管理
 
-提供设备目录数据的持久化存储，替代 device_info.json。
+提供设备目录数据的持久化存储，使用人类可读的 XML 格式，替代 SQLite。
 
-首次运行时优先从打包内种子库 devices.db 复制到用户可写目录；
-若种子库不存在则回退从 device_info.json 导入初始数据。
-后续可通过 API 进行 CRUD 操作。
+用户可直接编辑 XML 文件来自定义芯片列表。支持三种来源：
+- builtin：内置芯片（有 pyOCD Python 驱动）
+- pack：CMSIS-Pack 导入的芯片（运行时动态注册）
+- flm：FLM 自定义芯片（FLM 文件 + 元数据）
+
+支持 overrides 覆盖层，用于修正 Pack 导入芯片的默认行为。
 
 路径解析：
-- 开发模式：使用源码目录下 data/devices.db（可被 OMNI_DATA_DIR 覆盖）
-- 生产模式（PyInstaller frozen）：数据库写入 OMNI_DATA_DIR 指向的用户目录，
-  种子库来自 sys._MEIPASS 或 exe 目录下 data/devices.db（随 --add-data 打包）
+- 开发模式：使用源码目录下 data/devices.xml（可被 OMNI_DATA_DIR 覆盖）
+- 生产模式（PyInstaller frozen）：XML 写入 OMNI_DATA_DIR 指向的用户目录，
+  种子文件来自 sys._MEIPASS 或 exe 目录下 data/devices.xml（随 --add-data 打包）
 """
 
 import json
 import os
 import shutil
-import sqlite3
 import sys
 import threading
+import xml.etree.ElementTree as ET
 from typing import Optional
+from xml.dom import minidom
 
-# 线程锁（sqlite3 连接默认不可跨线程，用锁保护）
+# 线程锁（保护 XML 文件读写）
 _lock = threading.Lock()
-_conn: Optional[sqlite3.Connection] = None
+
+# XML schema 版本
+_XML_VERSION = 1
 
 
 def _resolve_paths() -> tuple[str, str, str]:
-    """解析数据库、种子库、JSON 文件的路径。
+    """解析 XML、种子 XML、JSON 文件的路径。
 
-    返回 (db_path, seed_db_path, json_path)：
-    - db_path：实际使用的数据库路径（必须可写）
-    - seed_db_path：打包内/源码内的种子库路径（仅首次复制用，只读）
-    - json_path：device_info.json 路径（JSON 导入回退用，只读）
+    返回 (xml_path, seed_xml_path, json_path)：
+    - xml_path：实际使用的 XML 文件路径（必须可写）
+    - seed_xml_path：打包内/源码内的种子 XML 路径（仅首次复制用，只读）
+    - json_path：device_info.json 路径（旧格式导入回退用，只读）
 
     优先级：
     1. 生产模式（getattr(sys, 'frozen', False) 为 True）：
-       - db_path = OMNI_DATA_DIR 环境变量指向目录下 devices.db（用户可写目录）
-       - seed_db_path / json_path = sys._MEIPASS 下 data/ 子目录（PyInstaller 临时解压目录）
+       - xml_path = OMNI_DATA_DIR 环境变量指向目录下 devices.xml
+       - seed_xml_path / json_path = sys._MEIPASS 下 data/ 子目录
          若 _MEIPASS 不可用或文件不存在，回退到 exe 同级目录下 data/
     2. 开发模式（非 frozen）：
-       - 保持原有逻辑，db_path = 源码目录下 data/devices.db
-       - 若设置了 OMNI_DATA_DIR，则 db_path 指向该目录（可选覆盖）
-       - seed_db_path / json_path 始终指向源码目录下 data/
+       - xml_path = 源码目录下 data/devices.xml
+       - 若设置了 OMNI_DATA_DIR，则 xml_path 指向该目录
+       - seed_xml_path / json_path 始终指向源码目录下 data/
     """
-    # 源码目录下的 data 子目录（开发模式基点与种子库共同基点）
     src_dir = os.path.dirname(os.path.abspath(__file__))
     src_data_dir = os.path.normpath(os.path.join(src_dir, "..", "data"))
 
     if getattr(sys, "frozen", False):
-        # 生产模式：种子库与 JSON 来自打包内目录
         meipass = getattr(sys, "_MEIPASS", None)
         bundled_data_dir = (
             os.path.join(meipass, "data")
-            if meipass and os.path.exists(os.path.join(meipass, "data", "devices.db"))
+            if meipass and os.path.exists(os.path.join(meipass, "data", "devices.xml"))
             else os.path.join(os.path.dirname(sys.executable), "data")
         )
-        seed_db_path = os.path.join(bundled_data_dir, "devices.db")
+        seed_xml_path = os.path.join(bundled_data_dir, "devices.xml")
         json_path = os.path.join(bundled_data_dir, "device_info.json")
 
-        # 实际数据库路径：用户可写目录（由 Electron 通过环境变量注入）
         data_dir = os.environ.get("OMNI_DATA_DIR") or os.path.dirname(sys.executable)
-        db_path = os.path.join(data_dir, "devices.db")
+        xml_path = os.path.join(data_dir, "devices.xml")
     else:
-        # 开发模式：种子库与 JSON 始终在源码 data 目录
-        seed_db_path = os.path.join(src_data_dir, "devices.db")
+        seed_xml_path = os.path.join(src_data_dir, "devices.xml")
         json_path = os.path.join(src_data_dir, "device_info.json")
 
-        # 开发模式可选覆盖：若设置了 OMNI_DATA_DIR，数据库写入该目录
         omni_data_dir = os.environ.get("OMNI_DATA_DIR")
-        db_path = (
-            os.path.join(omni_data_dir, "devices.db")
+        xml_path = (
+            os.path.join(omni_data_dir, "devices.xml")
             if omni_data_dir
-            else os.path.join(src_data_dir, "devices.db")
+            else os.path.join(src_data_dir, "devices.xml")
         )
 
-    return db_path, seed_db_path, json_path
+    return xml_path, seed_xml_path, json_path
 
 
-# 路径在导入时解析一次（后续不可变）
-_DB_PATH, _SEED_DB_PATH, _JSON_PATH = _resolve_paths()
+_XML_PATH, _SEED_XML_PATH, _JSON_PATH = _resolve_paths()
 
 
-def _init_database() -> None:
-    """首次启动时初始化数据库文件。
+def _init_xml_file() -> None:
+    """首次启动时初始化 XML 文件。
 
-    优先策略：若 db_path 不存在且种子库存在，用 shutil.copy2 复制种子库
-              （保留 schema、数据与 user_version，避免重新迁移）。
-    回退策略：若种子库不存在或复制失败，则不创建文件，由 _migrate_from_json
-              从 device_info.json 导入（_init_schema 会建表）。
-    同时确保用户数据目录存在。
+    优先从种子 XML 复制；若种子不存在则从 device_info.json 转换生成。
     """
-    if os.path.exists(_DB_PATH):
+    if os.path.exists(_XML_PATH):
         return
 
-    # 确保用户数据目录存在
-    db_dir = os.path.dirname(_DB_PATH)
-    if db_dir:
-        os.makedirs(db_dir, exist_ok=True)
+    xml_dir = os.path.dirname(_XML_PATH)
+    if xml_dir:
+        os.makedirs(xml_dir, exist_ok=True)
 
-    # 优先从种子库复制
-    if _SEED_DB_PATH and os.path.exists(_SEED_DB_PATH):
+    # 优先从种子 XML 复制
+    if _SEED_XML_PATH and os.path.exists(_SEED_XML_PATH):
         try:
-            shutil.copy2(_SEED_DB_PATH, _DB_PATH)
+            shutil.copy2(_SEED_XML_PATH, _XML_PATH)
             return
         except Exception:
-            # 复制失败则回退到 JSON 导入（_migrate_from_json 会处理）
             pass
 
-
-def _get_conn() -> sqlite3.Connection:
-    """获取数据库连接（单例，线程安全）"""
-    global _conn
-    if _conn is not None:
-        return _conn
-
-    # 首次启动初始化：从种子库复制或确保目录存在
-    _init_database()
-
-    # 兜底：确保数据目录存在（_init_database 未创建文件时也需要）
-    db_dir = os.path.dirname(_DB_PATH)
-    if db_dir:
-        os.makedirs(db_dir, exist_ok=True)
-
-    _conn = sqlite3.connect(_DB_PATH, check_same_thread=False)
-    _conn.row_factory = sqlite3.Row  # 支持按列名访问
-    _conn.execute("PRAGMA journal_mode=WAL")  # 提升并发读写性能
-    _conn.execute("PRAGMA foreign_keys=ON")
-
-    _init_schema(_conn)
-    _migrate_from_json(_conn)
-
-    return _conn
-
-
-def _init_schema(conn: sqlite3.Connection) -> None:
-    """创建表结构（如果不存在）"""
-    conn.executescript("""
-        CREATE TABLE IF NOT EXISTS devices (
-            part_number      TEXT PRIMARY KEY,
-            vendor           TEXT NOT NULL,
-            display_name     TEXT NOT NULL,
-            core             TEXT NOT NULL,
-            num_cores        INTEGER NOT NULL DEFAULT 1,
-            flash_size       INTEGER NOT NULL,  -- KB
-            ram_size         INTEGER NOT NULL,  -- KB
-            flash_base_address TEXT NOT NULL,   -- 十六进制字符串
-            ram_base_address   TEXT NOT NULL,   -- 十六进制字符串
-            device_id_address   TEXT NOT NULL DEFAULT '0xE0042000',  -- DBGMCU_IDCODE 寄存器地址
-            created_at       TEXT DEFAULT (datetime('now', 'localtime')),
-            updated_at       TEXT DEFAULT (datetime('now', 'localtime'))
-        );
-
-        CREATE TABLE IF NOT EXISTS flash_regions (
-            id               INTEGER PRIMARY KEY AUTOINCREMENT,
-            part_number      TEXT NOT NULL,
-            region_index     INTEGER NOT NULL,
-            start            TEXT NOT NULL,      -- 十六进制字符串
-            length           TEXT NOT NULL,      -- 十六进制字符串
-            sector_size      TEXT NOT NULL,      -- 十六进制字符串
-            page_size        TEXT NOT NULL,      -- 十六进制字符串
-            is_boot_memory   INTEGER NOT NULL DEFAULT 0,  -- 0/1
-            FOREIGN KEY (part_number) REFERENCES devices(part_number) ON DELETE CASCADE,
-            UNIQUE (part_number, region_index)
-        );
-
-        CREATE INDEX IF NOT EXISTS idx_flash_regions_part ON flash_regions(part_number);
-    """)
-    conn.commit()
-
-    # Schema 增量迁移：为旧数据库添加新列
-    _migrate_add_column(conn, "devices", "device_id_address", "TEXT NOT NULL DEFAULT '0xE0042000'")
-
-    # 初始化数据库版本号（PRAGMA user_version）：旧库为 0 时升级到 1
-    # 用于 /api/system/info 展示当前 schema 版本，后续迁移可递增
-    try:
-        row = conn.execute("PRAGMA user_version").fetchone()
-        current_version = int(row[0]) if row else 0
-        if current_version == 0:
-            conn.execute("PRAGMA user_version = 1")
-            conn.commit()
-    except Exception:
-        pass
-
-
-def _migrate_add_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
-    """安全地为表添加列（如果列不存在）"""
-    try:
-        cols = [row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()]
-        if column not in cols:
-            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
-            conn.commit()
-    except Exception:
-        pass
-
-
-def _migrate_from_json(conn: sqlite3.Connection) -> None:
-    """首次运行时从 device_info.json 导入数据"""
-    # 检查 devices 表是否已有数据
-    count = conn.execute("SELECT COUNT(*) FROM devices").fetchone()[0]
-    if count > 0:
+    # 回退：从 device_info.json 转换
+    if os.path.exists(_JSON_PATH):
+        _convert_json_to_xml(_JSON_PATH, _XML_PATH)
         return
 
-    if not os.path.exists(_JSON_PATH):
-        return
+    # 最终兜底：创建空 XML
+    root = ET.Element("devices", {"version": str(_XML_VERSION)})
+    _write_xml(root, _XML_PATH)
 
-    with open(_JSON_PATH, "r", encoding="utf-8") as f:
+
+def _convert_json_to_xml(json_path: str, xml_path: str) -> None:
+    """将 device_info.json 转换为 devices.xml"""
+    with open(json_path, "r", encoding="utf-8") as f:
         devices = json.load(f)
 
+    root = ET.Element("devices", {"version": str(_XML_VERSION)})
     for d in devices:
-        upsert_device(conn, d)
-    conn.commit()
+        _device_dict_to_element(d, root)
+    _write_xml(root, xml_path)
+
+
+def _device_dict_to_element(device: dict, parent: ET.Element) -> ET.Element:
+    """将设备 dict 转为 XML Element，附加到 parent"""
+    attrs = {"part_number": device["part_number"]}
+    source = device.get("source", "builtin")
+    attrs["source"] = source
+    if device.get("pack"):
+        attrs["pack"] = device["pack"]
+
+    dev_elem = ET.SubElement(parent, "device", attrs)
+    ET.SubElement(dev_elem, "vendor").text = device.get("vendor", "")
+    ET.SubElement(dev_elem, "display_name").text = device.get("display_name", "")
+    ET.SubElement(dev_elem, "core").text = device.get("core", "")
+    ET.SubElement(dev_elem, "num_cores").text = str(device.get("num_cores", 1))
+    ET.SubElement(dev_elem, "flash_size").text = str(device.get("flash_size", 0))
+    ET.SubElement(dev_elem, "ram_size").text = str(device.get("ram_size", 0))
+    ET.SubElement(dev_elem, "flash_base_address").text = device.get("flash_base_address", "0x00000000")
+    ET.SubElement(dev_elem, "ram_base_address").text = device.get("ram_base_address", "0x20000000")
+    ET.SubElement(dev_elem, "device_id_address").text = device.get("device_id_address", "0xE0042000")
+
+    regions_elem = ET.SubElement(dev_elem, "flash_regions")
+    for r in device.get("flash_regions", []):
+        ET.SubElement(regions_elem, "region", {
+            "start": r["start"],
+            "length": r["length"],
+            "sector_size": r["sector_size"],
+            "page_size": r["page_size"],
+            "is_boot_memory": "true" if r.get("is_boot_memory") else "false",
+        })
+
+    # 写入 overrides（如果有）
+    overrides = device.get("overrides")
+    if overrides:
+        overrides_elem = ET.SubElement(dev_elem, "overrides")
+        for region in overrides.get("flash_regions", []):
+            region_attrs = {"start": region["start"]}
+            if "is_boot_memory" in region:
+                region_attrs["is_boot_memory"] = "true" if region["is_boot_memory"] else "false"
+            if "length" in region:
+                region_attrs["length"] = region["length"]
+            ET.SubElement(overrides_elem, "flash_region", region_attrs)
+        for seq in overrides.get("debug_sequences", []):
+            ET.SubElement(overrides_elem, "debug_sequence", {
+                "name": seq["name"],
+                "enabled": "true" if seq.get("enabled", True) else "false",
+            })
+
+    return dev_elem
+
+
+def _element_to_device_dict(elem: ET.Element) -> dict:
+    """将 XML Element 转为设备 dict"""
+    device = {
+        "part_number": elem.get("part_number", ""),
+        "source": elem.get("source", "builtin"),
+        "vendor": _get_text(elem, "vendor", ""),
+        "display_name": _get_text(elem, "display_name", ""),
+        "core": _get_text(elem, "core", ""),
+        "num_cores": int(_get_text(elem, "num_cores", "1")),
+        "flash_size": int(_get_text(elem, "flash_size", "0")),
+        "ram_size": int(_get_text(elem, "ram_size", "0")),
+        "flash_base_address": _get_text(elem, "flash_base_address", "0x00000000"),
+        "ram_base_address": _get_text(elem, "ram_base_address", "0x20000000"),
+        "device_id_address": _get_text(elem, "device_id_address", "0xE0042000"),
+    }
+
+    if elem.get("pack"):
+        device["pack"] = elem.get("pack")
+
+    # 解析 flash_regions
+    device["flash_regions"] = []
+    regions_elem = elem.find("flash_regions")
+    if regions_elem is not None:
+        for r in regions_elem.findall("region"):
+            device["flash_regions"].append({
+                "start": r.get("start", "0x00000000"),
+                "length": r.get("length", "0x0"),
+                "sector_size": r.get("sector_size", "0x400"),
+                "page_size": r.get("page_size", "0x400"),
+                "is_boot_memory": r.get("is_boot_memory", "false").lower() == "true",
+            })
+
+    # 解析 overrides
+    overrides_elem = elem.find("overrides")
+    if overrides_elem is not None:
+        overrides = {"flash_regions": [], "debug_sequences": []}
+        for r in overrides_elem.findall("flash_region"):
+            entry = {"start": r.get("start", "")}
+            if "is_boot_memory" in r.attrib:
+                entry["is_boot_memory"] = r.get("is_boot_memory", "false").lower() == "true"
+            if "length" in r.attrib:
+                entry["length"] = r.get("length", "")
+            overrides["flash_regions"].append(entry)
+        for seq in overrides_elem.findall("debug_sequence"):
+            overrides["debug_sequences"].append({
+                "name": seq.get("name", ""),
+                "enabled": seq.get("enabled", "true").lower() == "true",
+            })
+        device["overrides"] = overrides
+
+    return device
+
+
+def _get_text(elem: ET.Element, tag: str, default: str = "") -> str:
+    """安全获取子元素文本"""
+    child = elem.find(tag)
+    return child.text if child is not None and child.text is not None else default
+
+
+def _read_xml() -> list[dict]:
+    """读取 XML 文件，返回设备列表"""
+    _init_xml_file()
+    try:
+        tree = ET.parse(_XML_PATH)
+        root = tree.getroot()
+        return [_element_to_device_dict(elem) for elem in root.findall("device")]
+    except Exception:
+        return []
+
+
+def _write_xml(root: ET.Element, path: str) -> None:
+    """写入 XML 文件（pretty print）"""
+    rough = ET.tostring(root, encoding="unicode")
+    pretty = minidom.parseString(rough).toprettyxml(indent="  ", encoding="utf-8")
+    with open(path, "wb") as f:
+        f.write(pretty)
+
+
+def _save_all(devices: list[dict]) -> None:
+    """将设备列表保存到 XML 文件"""
+    root = ET.Element("devices", {"version": str(_XML_VERSION)})
+    for d in devices:
+        _device_dict_to_element(d, root)
+    _write_xml(root, _XML_PATH)
 
 
 def get_db_path() -> str:
-    """返回数据库文件路径"""
-    return _DB_PATH
+    """返回 XML 文件路径（保持向后兼容命名）"""
+    return _XML_PATH
 
 
 def get_db_version() -> int:
-    """返回数据库 schema 版本号（PRAGMA user_version）
-
-    首次初始化时 user_version 被设为 1，后续迁移可递增。
-    任何异常均回退到 0，确保不崩溃。
-    """
-    try:
-        with _lock:
-            conn = _get_conn()
-            row = conn.execute("PRAGMA user_version").fetchone()
-            return int(row[0]) if row else 0
-    except Exception:
-        return 0
+    """返回 XML schema 版本号"""
+    return _XML_VERSION
 
 
 # ── CRUD 操作 ─────────────────────────────
@@ -238,135 +273,68 @@ def get_db_version() -> int:
 def list_devices() -> list[dict]:
     """列出所有设备（含 flash_regions）"""
     with _lock:
-        conn = _get_conn()
-        rows = conn.execute("SELECT * FROM devices ORDER BY vendor, display_name").fetchall()
-        result = []
-        for row in rows:
-            device = dict(row)
-            device["flash_regions"] = _get_flash_regions(conn, device["part_number"])
-            result.append(device)
-        return result
+        devices = _read_xml()
+        devices.sort(key=lambda d: (d.get("vendor", ""), d.get("display_name", "")))
+        return devices
 
 
 def get_device(part_number: str) -> Optional[dict]:
     """获取指定设备（含 flash_regions）"""
     with _lock:
-        conn = _get_conn()
-        row = conn.execute(
-            "SELECT * FROM devices WHERE part_number = ?", (part_number,)
-        ).fetchone()
-        if row is None:
-            return None
-        device = dict(row)
-        device["flash_regions"] = _get_flash_regions(conn, part_number)
-        return device
+        devices = _read_xml()
+        for d in devices:
+            if d["part_number"] == part_number:
+                return d
+        return None
 
 
-def upsert_device(conn: sqlite3.Connection, device: dict) -> None:
+def upsert_device(device: dict) -> None:
     """插入或更新设备（含 flash_regions）"""
-    conn.execute(
-        """
-        INSERT INTO devices (part_number, vendor, display_name, core, num_cores,
-                             flash_size, ram_size, flash_base_address, ram_base_address, device_id_address)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(part_number) DO UPDATE SET
-            vendor = excluded.vendor,
-            display_name = excluded.display_name,
-            core = excluded.core,
-            num_cores = excluded.num_cores,
-            flash_size = excluded.flash_size,
-            ram_size = excluded.ram_size,
-            flash_base_address = excluded.flash_base_address,
-            ram_base_address = excluded.ram_base_address,
-            device_id_address = excluded.device_id_address,
-            updated_at = datetime('now', 'localtime')
-        """,
-        (
-            device["part_number"],
-            device["vendor"],
-            device["display_name"],
-            device["core"],
-            device.get("num_cores", 1),
-            device["flash_size"],
-            device["ram_size"],
-            device["flash_base_address"],
-            device["ram_base_address"],
-            device.get("device_id_address", "0xE0042000"),
-        ),
-    )
-
-    # 替换 flash_regions（先删后插）
-    part_number = device["part_number"]
-    conn.execute("DELETE FROM flash_regions WHERE part_number = ?", (part_number,))
-    for i, r in enumerate(device.get("flash_regions", [])):
-        conn.execute(
-            """
-            INSERT INTO flash_regions (part_number, region_index, start, length, sector_size, page_size, is_boot_memory)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                part_number,
-                i,
-                r["start"],
-                r["length"],
-                r["sector_size"],
-                r["page_size"],
-                1 if r.get("is_boot_memory") else 0,
-            ),
-        )
-    conn.commit()
-
-
-def _get_flash_regions(conn: sqlite3.Connection, part_number: str) -> list[dict]:
-    """获取指定设备的 flash_regions"""
-    rows = conn.execute(
-        "SELECT * FROM flash_regions WHERE part_number = ? ORDER BY region_index",
-        (part_number,),
-    ).fetchall()
-    return [
-        {
-            "start": row["start"],
-            "length": row["length"],
-            "sector_size": row["sector_size"],
-            "page_size": row["page_size"],
-            "is_boot_memory": bool(row["is_boot_memory"]),
-        }
-        for row in rows
-    ]
+    with _lock:
+        devices = _read_xml()
+        # 查找并替换，或追加
+        found = False
+        for i, d in enumerate(devices):
+            if d["part_number"] == device["part_number"]:
+                devices[i] = device
+                found = True
+                break
+        if not found:
+            devices.append(device)
+        _save_all(devices)
 
 
 def add_device(device: dict) -> dict:
     """新增设备"""
-    with _lock:
-        conn = _get_conn()
-        upsert_device(conn, device)
+    upsert_device(device)
     return get_device(device["part_number"])
 
 
 def update_device(part_number: str, device: dict) -> Optional[dict]:
     """更新设备（part_number 不可变）"""
     with _lock:
-        conn = _get_conn()
-        existing = conn.execute(
-            "SELECT 1 FROM devices WHERE part_number = ?", (part_number,)
-        ).fetchone()
+        devices = _read_xml()
+        existing = None
+        for d in devices:
+            if d["part_number"] == part_number:
+                existing = d
+                break
         if existing is None:
             return None
-        # 确保用 URL 中的 part_number
         device["part_number"] = part_number
-        upsert_device(conn, device)
+        upsert_device(device)
     return get_device(part_number)
 
 
 def delete_device(part_number: str) -> bool:
-    """删除设备（flash_regions 通过 ON DELETE CASCADE 自动删除）"""
+    """删除设备"""
     with _lock:
-        conn = _get_conn()
-        cursor = conn.execute(
-            "DELETE FROM devices WHERE part_number = ?", (part_number,)
-        )
-        conn.commit()
-        return cursor.rowcount > 0
+        devices = _read_xml()
+        new_devices = [d for d in devices if d["part_number"] != part_number]
+        if len(new_devices) == len(devices):
+            return False
+        _save_all(new_devices)
+        return True
 
 
 def reimport_from_json() -> int:
@@ -381,9 +349,81 @@ def reimport_from_json() -> int:
         devices = json.load(f)
 
     with _lock:
-        conn = _get_conn()
+        existing = _read_xml()
+        existing_map = {d["part_number"]: d for d in existing}
         for d in devices:
-            upsert_device(conn, d)
-        conn.commit()
+            d["source"] = "builtin"
+            existing_map[d["part_number"]] = d
+        _save_all(list(existing_map.values()))
 
     return len(devices)
+
+
+def list_devices_by_source(source: str) -> list[dict]:
+    """按来源筛选设备"""
+    with _lock:
+        devices = _read_xml()
+        return [d for d in devices if d.get("source", "builtin") == source]
+
+
+def get_source_summary() -> dict:
+    """获取各来源的设备数量统计"""
+    with _lock:
+        devices = _read_xml()
+        summary = {"builtin": 0, "pack": 0, "flm": 0, "total": len(devices)}
+        for d in devices:
+            source = d.get("source", "builtin")
+            if source in summary:
+                summary[source] += 1
+        return summary
+
+
+def is_target_registered(part_number: str) -> bool:
+    """检查设备是否可实际烧录。
+
+    根据 source 字段判断：
+    - builtin：内置芯片，有 pyOCD Python 驱动，始终可用
+    - pack：CMSIS-Pack 导入，检查 Pack 是否已安装
+    - flm：FLM 自定义芯片，检查 FLM 文件是否存在
+    """
+    device = get_device(part_number)
+    if device is None:
+        return False
+
+    source = device.get("source", "builtin")
+
+    if source == "builtin":
+        # 内置芯片有 pyOCD 驱动，始终可用
+        return True
+
+    if source == "pack":
+        # Pack 导入的芯片：检查 Pack 是否在安装清单中
+        try:
+            from core.pack_manager import load_manifest
+            manifest = load_manifest()
+            pack_name = device.get("pack", "")
+            for entry in manifest:
+                if entry.get("name") == pack_name:
+                    return entry.get("file_exists", False)
+            return False
+        except Exception:
+            return False
+
+    if source == "flm":
+        # FLM 自定义芯片：检查 FLM 文件是否存在
+        flm_path = device.get("flm_path", "")
+        return bool(flm_path) and os.path.exists(flm_path)
+
+    return False
+
+
+def get_device_availability(part_number: str) -> str:
+    """获取设备的可用状态
+
+    返回值：
+    - "available"：已注册到 TARGET，可直接烧录
+    - "metadata_only"：仅有元数据，未注册到 TARGET
+    """
+    if is_target_registered(part_number):
+        return "available"
+    return "metadata_only"

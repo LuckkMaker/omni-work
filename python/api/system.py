@@ -4,7 +4,6 @@
 """
 
 import platform
-import sqlite3
 import logging
 from fastapi import APIRouter, Request
 
@@ -27,12 +26,11 @@ def _get_pyocd_version() -> str:
 async def system_info(request: Request):
     """返回后端/数据库/运行环境版本信息
 
-    供前端设置页展示后端版本、数据库版本、Python/SQLite/pyocd 版本等。
+    供前端设置页展示后端版本、数据库版本、Python/pyocd 版本等。
     app_version/backend_version 取自 FastAPI 实例的 version
     （即 server.py 中定义的 BACKEND_VERSION）。
     所有外部属性访问均做异常兜底，确保不崩溃。
     """
-    # app_version/backend_version 取自 FastAPI 实例的 version（= server.BACKEND_VERSION）
     try:
         backend_version = request.app.version
     except Exception:
@@ -48,13 +46,18 @@ async def system_info(request: Request):
     except Exception:
         db_path = "unknown"
 
+    try:
+        source_summary = database.get_source_summary()
+    except Exception:
+        source_summary = {}
+
     return {
         "app_version": backend_version,
         "backend_version": backend_version,
         "python_version": platform.python_version(),
         "platform": platform.system(),
-        "sqlite_version": sqlite3.sqlite_version,
         "db_version": db_version,
         "db_path": db_path,
         "pyocd_version": _get_pyocd_version(),
+        "source_summary": source_summary,
     }

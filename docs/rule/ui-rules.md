@@ -319,9 +319,63 @@ icon:    'h-10 w-10'
 
 ## 8. 通知系统
 
-项目使用自研 `NotificationContainer` + `useNotificationStore`（Zustand），而非 sonner toast。
+**强制规则**：所有全局性通知（成功、失败、警告、信息提示）必须使用项目自研的 `useNotificationStore` + `NotificationContainer`，**禁止使用 `sonner` toast 或其他第三方通知库**。
 
-### 8.1 通知卡片样式
+### 8.1 为什么不用 sonner
+
+项目自研通知系统统一管理通知的显示、历史记录、进度更新。使用 sonner toast 会导致：
+- 通知不进入历史记录（铃铛无法查看）
+- 样式与全局通知卡片不一致
+- 无法更新进度（如烧录进度通知）
+
+### 8.2 使用方式
+
+```tsx
+import { useNotificationStore } from '@/stores/notification.store'
+
+// 在组件内获取 push 方法
+const notify = useNotificationStore((s) => s.push)
+
+// 成功通知
+notify({ type: 'success', title: '操作成功', message: '详细描述（可选）' })
+
+// 错误通知
+notify({ type: 'error', title: '操作失败', message: e instanceof Error ? e.message : String(e) })
+
+// 警告通知
+notify({ type: 'warning', title: '请注意' })
+
+// 信息通知
+notify({ type: 'info', title: '提示信息' })
+
+// 进度通知（不会自动关闭）
+const id = notify({ type: 'progress', title: '正在烧录...', progress: 0 })
+// 更新进度
+useNotificationStore.getState().update(id, { progress: 50, message: '擦除中...' })
+// 完成
+useNotificationStore.getState().update(id, { type: 'success', title: '烧录完成', progress: 100 })
+```
+
+### 8.3 通知 API
+
+| 方法 | 用途 |
+|------|------|
+| `push(n)` | 新增通知，返回 id |
+| `update(id, patch)` | 更新通知（类型/进度/消息） |
+| `dismiss(id)` | 关闭通知（移入历史） |
+| `clear()` | 清空所有活跃通知 |
+
+### 8.4 通知类型与颜色
+
+| 类型 | 左侧条 | 图标 | 自动关闭 |
+|------|--------|------|----------|
+| info | `border-l-primary` | `Info`（blue-400） | 是 |
+| success | `border-l-green-500` | `CheckCircle2`（green-400） | 是 |
+| warning | `border-l-yellow-500` | `AlertTriangle`（yellow-400） | 是 |
+| error | `border-l-red-500` | `XCircle`（red-400） | 是 |
+| progress | `border-l-primary` | `Loader2`（blue-400，animate-spin） | 否 |
+
+### 8.5 通知卡片样式
 
 ```tsx
 <div className="w-80 rounded-md border border-border border-l-4 bg-popover p-3 shadow-lg
@@ -329,16 +383,6 @@ icon:    'h-10 w-10'
   {/* border-l-primary / border-l-green-500 / border-l-yellow-500 / border-l-red-500 */}
 </div>
 ```
-
-### 8.2 通知类型与颜色
-
-| 类型 | 左侧条 | 图标 |
-|------|--------|------|
-| info | `border-l-primary` | `Info`（blue-400） |
-| success | `border-l-green-500` | `CheckCircle2`（green-400） |
-| warning | `border-l-yellow-500` | `AlertTriangle`（yellow-400） |
-| error | `border-l-red-500` | `XCircle`（red-400） |
-| progress | `border-l-primary` | `Loader2`（blue-400，animate-spin） |
 
 ---
 
