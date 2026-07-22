@@ -633,14 +633,19 @@ class PyOCDBackend(BackendInterface):
 
             if erase_type == "chip":
                 event_manager.log("info", "Erasing chip...")
-                event_manager.emit("flash.progress", {
-                    "phase": "erase", "current": 0, "total": 1, "percent": 0,
-                })
                 # 使用 Flash.erase_all() 进行全片擦除
                 flash.init(Flash.Operation.ERASE)
                 try:
                     if flash.is_erase_all_supported:
+                        event_manager.emit("flash.progress", {
+                            "phase": "erase", "current": 0, "total": 1, "percent": 0,
+                            "unit": "operations",
+                        })
                         flash.erase_all()
+                        event_manager.emit("flash.progress", {
+                            "phase": "erase", "current": 1, "total": 1, "percent": 100,
+                            "unit": "operations",
+                        })
                     else:
                         # 不支持 erase_all 时，逐扇区擦除
                         sector_size = getattr(region, 'sector_size', 0) or 16384
@@ -650,12 +655,14 @@ class PyOCDBackend(BackendInterface):
                             event_manager.emit("flash.progress", {
                                 "phase": "erase", "current": i + 1, "total": total_sectors,
                                 "percent": round((i + 1) / total_sectors * 100, 2),
+                                "unit": "sectors",
                             })
+                        event_manager.emit("flash.progress", {
+                            "phase": "erase", "current": total_sectors, "total": total_sectors, "percent": 100,
+                            "unit": "sectors",
+                        })
                 finally:
                     flash.uninit()
-                event_manager.emit("flash.progress", {
-                    "phase": "erase", "current": 1, "total": 1, "percent": 100,
-                })
             elif erase_type == "sector_range":
                 # 范围擦除：遍历 address ~ address+size 内的所有扇区
                 # 关键：需要找到每个地址所在的 region，用 region.sector_size 对齐
@@ -713,17 +720,20 @@ class PyOCDBackend(BackendInterface):
                             event_manager.emit("flash.progress", {
                                 "phase": "erase", "current": erased, "total": total_sectors,
                                 "percent": round(erased / total_sectors * 100, 2) if total_sectors > 0 else 100,
+                                "unit": "sectors",
                             })
                     finally:
                         flash.uninit()
 
                 event_manager.emit("flash.progress", {
                     "phase": "erase", "current": total_sectors, "total": total_sectors, "percent": 100,
+                    "unit": "sectors",
                 })
             else:
                 event_manager.log("info", f"Erasing sector at 0x{address:08X}...")
                 event_manager.emit("flash.progress", {
                     "phase": "erase", "current": 0, "total": 1, "percent": 0,
+                    "unit": "operations",
                 })
                 # 扇区擦除
                 flash.init(Flash.Operation.ERASE)
@@ -733,6 +743,7 @@ class PyOCDBackend(BackendInterface):
                     flash.uninit()
                 event_manager.emit("flash.progress", {
                     "phase": "erase", "current": 1, "total": 1, "percent": 100,
+                    "unit": "operations",
                 })
 
             duration = int((time.time() - start_time) * 1000)

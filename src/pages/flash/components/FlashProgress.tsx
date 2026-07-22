@@ -21,12 +21,23 @@ const phaseConfig = {
 } as const
 
 export function FlashProgress() {
-  const { phase, progress, progressCurrent, progressTotal, busy, result } = useFlashStore()
+  const { phase, progress, progressCurrent, progressTotal, progressUnit, busy, result } = useFlashStore()
   const config = phaseConfig[phase]
   const Icon = config.icon
 
   // 不在操作中且无结果时不显示
   if (phase === 'idle' && !result) return null
+
+  // 根据 unit 格式化进度文本
+  let progressDetail = ''
+  if (progressTotal > 0) {
+    if (progressUnit === 'bytes') {
+      progressDetail = `${formatSize(progressCurrent)} / ${formatSize(progressTotal)}`
+    } else if (progressUnit === 'sectors') {
+      progressDetail = `${progressCurrent} / ${progressTotal} 扇区`
+    }
+    // operations: 只显示百分比，不显示数量
+  }
 
   return (
     <Card>
@@ -56,9 +67,9 @@ export function FlashProgress() {
               <span className="text-muted-foreground">
                 {config.label}... {progress.toFixed(1)}%
               </span>
-              {progressTotal > 0 && (
+              {progressTotal > 0 && progressDetail && (
                 <span className="tabular-nums text-muted-foreground">
-                  {formatSize(progressCurrent)} / {formatSize(progressTotal)}
+                  {progressDetail}
                 </span>
               )}
             </div>

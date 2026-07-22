@@ -20,10 +20,7 @@ export function FilePanel() {
   const {
     tabs,
     activeTabId,
-    eraseBefore,
-    verifyAfter,
-    resetAfter,
-    setOption,
+    setTabOption,
     saveTabAs,
     setShowCompareDialog,
     setShowFillDialog,
@@ -81,15 +78,15 @@ export function FilePanel() {
             {/* 烧录选项 */}
             <div className="flex items-center gap-2 text-xs">
               <label className="flex items-center gap-1 cursor-pointer">
-                <input type="checkbox" checked={eraseBefore} onChange={(e) => setOption('eraseBefore', e.target.checked)} className="size-3 rounded border-border accent-primary" />
+                <input type="checkbox" checked={activeTab.eraseBefore} onChange={(e) => setTabOption(activeTab.id, 'eraseBefore', e.target.checked)} className="size-3 rounded border-border accent-primary" />
                 <span>擦除</span>
               </label>
               <label className="flex items-center gap-1 cursor-pointer">
-                <input type="checkbox" checked={verifyAfter} onChange={(e) => setOption('verifyAfter', e.target.checked)} className="size-3 rounded border-border accent-primary" />
+                <input type="checkbox" checked={activeTab.verifyAfter} onChange={(e) => setTabOption(activeTab.id, 'verifyAfter', e.target.checked)} className="size-3 rounded border-border accent-primary" />
                 <span>校验</span>
               </label>
               <label className="flex items-center gap-1 cursor-pointer">
-                <input type="checkbox" checked={resetAfter} onChange={(e) => setOption('resetAfter', e.target.checked)} className="size-3 rounded border-border accent-primary" />
+                <input type="checkbox" checked={activeTab.resetAfter} onChange={(e) => setTabOption(activeTab.id, 'resetAfter', e.target.checked)} className="size-3 rounded border-border accent-primary" />
                 <span>复位和运行</span>
               </label>
             </div>

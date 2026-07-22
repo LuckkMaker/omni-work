@@ -51,7 +51,7 @@ export function TabBar() {
             <Plus className="size-3.5" />
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start">
+        <DropdownMenuContent align="start" onCloseAutoFocus={(e) => e.preventDefault()}>
           <DropdownMenuItem onClick={openFileTab}>
             <FileText className="size-3.5 mr-1.5" />
             Open File...
