@@ -105,6 +105,8 @@ export interface FlashProgressEvent {
   current: number
   total: number
   percent: number
+  /** 进度数量单位：bytes=字节数，sectors=扇区数，operations=操作次数（仅显示百分比） */
+  unit?: 'bytes' | 'sectors' | 'operations'
 }
 
 /** 日志事件 */

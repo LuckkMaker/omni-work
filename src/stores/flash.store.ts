@@ -17,6 +17,10 @@ export interface FlashTab {
   size: number
   format?: string
   loading: boolean
+  // 烧录选项（每个 tab 独立保存，删除 tab 时自动移除）
+  eraseBefore: boolean
+  verifyAfter: boolean
+  resetAfter: boolean
   // compare tab 专用
   rightData?: string | null   // base64 encoded right side data
   rightBaseAddress?: number
@@ -112,14 +116,10 @@ interface FlashStore {
   progress: number
   progressCurrent: number
   progressTotal: number
+  progressUnit: 'bytes' | 'sectors' | 'operations'
   busy: boolean
   result: FlashResult | null
   activeNotifId: string | null
-
-  // ── 烧录选项 ──────────────────────────
-  eraseBefore: boolean
-  verifyAfter: boolean
-  resetAfter: boolean
 
   // ── 日志 ──────────────────────────────
   logs: LogEvent[]
@@ -161,7 +161,7 @@ interface FlashStore {
   cancelOperation: () => Promise<void>
   doCompare: (filePath: string) => Promise<void>
 
-  setOption: (key: 'eraseBefore' | 'verifyAfter' | 'resetAfter', value: boolean) => void
+  setTabOption: (tabId: string, key: 'eraseBefore' | 'verifyAfter' | 'resetAfter', value: boolean) => void
 
   // ── WebSocket 事件 ────────────────────
   onProgress: (data: FlashProgressEvent) => void
@@ -174,7 +174,7 @@ interface FlashStore {
 export const useFlashStore = create<FlashStore>((set, get) => ({
   // ── 初始状态 ──────────────────────────
   tabs: [
-    { id: genId(), type: 'device', title: 'Device Memory', baseAddress: 0x08000000, data: null, size: 0, loading: false },
+    { id: genId(), type: 'device', title: 'Device Memory', baseAddress: 0x08000000, data: null, size: 0, loading: false, eraseBefore: true, verifyAfter: true, resetAfter: false },
   ],
   activeTabId: null,
 
@@ -191,13 +191,10 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
   progress: 0,
   progressCurrent: 0,
   progressTotal: 0,
+  progressUnit: 'bytes',
   busy: false,
   result: null,
   activeNotifId: null,
-
-  eraseBefore: true,
-  verifyAfter: true,
-  resetAfter: false,
 
   logs: [],
 
@@ -216,7 +213,7 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
     const id = genId()
     const fileName = getFileName(path)
     set((state) => ({
-      tabs: [...state.tabs, { id, type: 'file', title: fileName, filePath: path, baseAddress: 0, data: null, size: 0, loading: true }],
+      tabs: [...state.tabs, { id, type: 'file', title: fileName, filePath: path, baseAddress: 0, data: null, size: 0, loading: true, eraseBefore: true, verifyAfter: true, resetAfter: false }],
       activeTabId: id,
     }))
 
@@ -233,7 +230,7 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
     const id = genId()
     const deviceTabs = get().tabs.filter((t) => t.type === 'device').length
     set((state) => ({
-      tabs: [...state.tabs, { id, type: 'device', title: `Device Memory ${deviceTabs > 0 ? deviceTabs + 1 : ''}`.trim(), baseAddress: 0x08000000, data: null, size: 0, loading: false }],
+      tabs: [...state.tabs, { id, type: 'device', title: `Device Memory ${deviceTabs > 0 ? deviceTabs + 1 : ''}`.trim(), baseAddress: 0x08000000, data: null, size: 0, loading: false, eraseBefore: true, verifyAfter: true, resetAfter: false }],
       activeTabId: id,
     }))
   },
@@ -309,7 +306,7 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
     const id = genId()
     const fileName = getFileName(path)
     set((state) => ({
-      tabs: [...state.tabs, { id, type: 'file', title: fileName, filePath: path, baseAddress: address, data: null, size: 0, loading: true }],
+      tabs: [...state.tabs, { id, type: 'file', title: fileName, filePath: path, baseAddress: address, data: null, size: 0, loading: true, eraseBefore: true, verifyAfter: true, resetAfter: false }],
       activeTabId: id,
     }))
 
@@ -390,8 +387,8 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
     // 支持两种 tab 类型：file（文件路径）和 device（内存数据）
     if (tab.type === 'file' && !tab.filePath) return
     if (tab.type === 'device' && !tab.data) return
-    const shouldVerify = verify ?? get().verifyAfter
-    const { eraseBefore, resetAfter } = get()
+    const shouldVerify = verify ?? tab.verifyAfter
+    const { eraseBefore, resetAfter } = tab
     const title = shouldVerify ? '编程并校验' : '编程'
     await wrapOperation(set, get, title, eraseBefore ? '擦除中...' : '编程中...', async () => {
       if (tab.type === 'device' && tab.data) {
@@ -668,6 +665,9 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
           data: tab.data,
           size: tab.size,
           loading: false,
+          eraseBefore: true,
+          verifyAfter: true,
+          resetAfter: false,
           rightData: refData,
           rightBaseAddress: refBaseAddr,
           leftTitle,
@@ -700,23 +700,39 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
     }
   },
 
-  setOption: (key, value) => set({ [key]: value } as Partial<FlashStore>),
+  setTabOption: (tabId, key, value) => {
+    set((state) => ({
+      tabs: state.tabs.map((t) => (t.id === tabId ? { ...t, [key]: value } : t)),
+    }))
+  },
 
   // ── WebSocket 事件 ────────────────────
   onProgress: (data) => {
     const phaseMap: Record<string, FlashPhase> = { erase: 'erasing', program: 'programming', verify: 'verifying', blank: 'verifying', read: 'reading' }
+    // 推断 unit：erase phase 默认 operations，其他默认 bytes
+    const unit = data.unit ?? (data.phase === 'erase' ? 'operations' : 'bytes')
     set({
       phase: phaseMap[data.phase] ?? get().phase,
       progress: data.percent,
       progressCurrent: data.current,
       progressTotal: data.total,
+      progressUnit: unit,
     })
     const { activeNotifId } = get()
     if (activeNotifId) {
       const msgMap: Record<string, string> = { erase: '擦除中...', program: '编程中...', verify: '校验中...', blank: '检查空白中...', read: '读取中...' }
+      let progressText = ''
+      if (data.total > 0) {
+        if (unit === 'bytes') {
+          progressText = ` ${formatSize(data.current)} / ${formatSize(data.total)}`
+        } else if (unit === 'sectors') {
+          progressText = ` ${data.current} / ${data.total} 扇区`
+        }
+        // operations: 只显示百分比，不显示数量
+      }
       useNotificationStore.getState().update(activeNotifId, {
         progress: data.percent,
-        message: data.total > 0 ? `${msgMap[data.phase] ?? ''} ${formatSize(data.current)} / ${formatSize(data.total)}` : (msgMap[data.phase] ?? ''),
+        message: `${msgMap[data.phase] ?? ''}${progressText}`,
       })
     }
   },
@@ -737,7 +753,7 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
     }
   },
 
-  reset: () => set({ phase: 'idle', progress: 0, progressCurrent: 0, progressTotal: 0, busy: false, result: null, logs: [], activeNotifId: null }),
+  reset: () => set({ phase: 'idle', progress: 0, progressCurrent: 0, progressTotal: 0, progressUnit: 'bytes', busy: false, result: null, logs: [], activeNotifId: null }),
 
   clearLogs: () => set({ logs: [] }),
 }))
@@ -768,7 +784,7 @@ async function wrapOperation(
 
   const notif = useNotificationStore.getState()
   const notifId = notif.push({ type: 'progress', title, message: startMsg, progress: 0 })
-  set({ busy: true, progress: 0, progressCurrent: 0, progressTotal: 0, result: null, logs: [{ level: 'info', message: `── ${title} ──`, timestamp: new Date().toISOString() }], activeNotifId: notifId })
+  set({ busy: true, progress: 0, progressCurrent: 0, progressTotal: 0, progressUnit: 'bytes', result: null, logs: [{ level: 'info', message: `── ${title} ──`, timestamp: new Date().toISOString() }], activeNotifId: notifId })
   try {
     const result = await fn()
     set({ phase: result.success ? 'done' : 'error', busy: false, result: result as FlashResult, activeNotifId: null })
