@@ -1,4 +1,4 @@
-import { useState, useRef } from 'react'
+import { useState, useRef, useEffect } from 'react'
 import {
   Eraser,
   Upload,
@@ -64,7 +64,16 @@ export default function FlashPage() {
     setFillAddress,
     setFillSize,
     setFillValue,
+    checkFileChanges,
   } = useFlashStore()
+
+  // 定时检查文件变更（每 3 秒检查所有 file tab）
+  useEffect(() => {
+    const timer = setInterval(() => {
+      checkFileChanges()
+    }, 3000)
+    return () => clearInterval(timer)
+  }, [checkFileChanges])
 
   const selectedProbe = useProbeStore((s) => {
     const uid = s.selectedUid

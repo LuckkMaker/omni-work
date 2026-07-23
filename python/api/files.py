@@ -18,6 +18,18 @@ class SaveRequest(BaseModel):
     data: str  # base64 encoded
 
 
+class StatRequest(BaseModel):
+    file_path: str
+
+
+@router.post("/stat")
+async def stat_file(req: StatRequest):
+    """获取文件修改时间，用于检测文件是否变更"""
+    if not os.path.exists(req.file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+    return {"mtime": os.path.getmtime(req.file_path), "size": os.path.getsize(req.file_path)}
+
+
 @router.post("/parse")
 async def parse_file(req: ParseRequest):
     """解析固件文件，返回格式/大小/段信息"""
@@ -60,6 +72,7 @@ async def read_file(req: ParseRequest):
             "base_address": req.base_address or 0,
             "data": base64.b64encode(data).decode("ascii"),
             "size": len(data),
+            "mtime": os.path.getmtime(req.file_path),
         }
     elif ext == ".hex":
         return read_hex(req.file_path)
@@ -114,7 +127,7 @@ def read_hex(file_path: str):
                 break
 
     if min_addr is None:
-        return {"format": "hex", "base_address": 0, "data": "", "size": 0}
+        return {"format": "hex", "base_address": 0, "data": "", "size": 0, "mtime": os.path.getmtime(file_path)}
 
     # 填充连续数据（空隙用 0xFF 填充）
     total = max_addr - min_addr
@@ -127,6 +140,7 @@ def read_hex(file_path: str):
         "base_address": min_addr,
         "data": base64.b64encode(bytes(raw)).decode("ascii"),
         "size": total,
+        "mtime": os.path.getmtime(file_path),
     }
 
 
@@ -155,7 +169,7 @@ def read_elf(file_path: str):
                     max_addr = vaddr + memsz
 
             if min_addr is None:
-                return {"format": "elf", "base_address": 0, "data": "", "size": 0}
+                return {"format": "elf", "base_address": 0, "data": "", "size": 0, "mtime": os.path.getmtime(file_path)}
 
             total = max_addr - min_addr
             raw = bytearray([0xFF] * total)
@@ -169,6 +183,7 @@ def read_elf(file_path: str):
                 "base_address": min_addr,
                 "data": base64.b64encode(bytes(raw)).decode("ascii"),
                 "size": total,
+                "mtime": os.path.getmtime(file_path),
             }
     except ImportError:
         raise HTTPException(status_code=500, detail="pyelftools not installed")

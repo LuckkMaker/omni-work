@@ -53,6 +53,18 @@ function NotificationItem({ notification }: { notification: Notification }) {
         {notification.message && (
           <div className="mt-0.5 text-xs text-muted-foreground break-words">{notification.message}</div>
         )}
+        {/* 操作按钮 */}
+        {notification.action && (
+          <button
+            onClick={() => {
+              notification.action!.onClick()
+              dismiss(notification.id)
+            }}
+            className="mt-2 rounded border border-border px-2 py-0.5 text-xs text-foreground hover:bg-accent transition-colors"
+          >
+            {notification.action.label}
+          </button>
+        )}
         {/* 进度条 + 取消按钮 */}
       {notification.type === 'progress' && notification.progress != null && (
         <div className="mt-2">

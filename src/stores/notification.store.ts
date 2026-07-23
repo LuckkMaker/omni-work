@@ -14,6 +14,8 @@ export interface Notification {
   autoClose: boolean
   /** 自动关闭延迟（ms），默认 5000 */
   autoCloseDelay: number
+  /** 可选操作按钮 */
+  action?: { label: string, onClick: () => void }
 }
 
 interface NotificationStore {
@@ -25,7 +27,7 @@ interface NotificationStore {
   historyVisible: boolean
 
   /** 新增通知，返回 id */
-  push: (n: Omit<Notification, 'id' | 'timestamp' | 'autoClose' | 'autoCloseDelay'> & Partial<Pick<Notification, 'autoClose' | 'autoCloseDelay'>>) => string
+  push: (n: Omit<Notification, 'id' | 'timestamp' | 'autoClose' | 'autoCloseDelay'> & Partial<Pick<Notification, 'autoClose' | 'autoCloseDelay' | 'action'>>) => string
   /** 更新通知（进度/消息/类型） */
   update: (id: string, patch: Partial<Omit<Notification, 'id' | 'timestamp'>>) => void
   /** 关闭单条通知（移入历史） */
@@ -65,6 +67,7 @@ export const useNotificationStore = create<NotificationStore>((set) => ({
       timestamp: Date.now(),
       autoClose: n.autoClose ?? !isProgress,
       autoCloseDelay: n.autoCloseDelay ?? (isProgress ? 3000 : 5000),
+      action: n.action,
     }
     set((state) => ({
       notifications: [...state.notifications, notification],

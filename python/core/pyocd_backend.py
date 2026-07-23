@@ -1008,7 +1008,7 @@ class PyOCDBackend(BackendInterface):
             return self._parse_hex_data(file_path)
 
         elif ext in (".elf", ".axf"):
-            return self._parse_elf_data(file_path)
+            return self._parse_elf_data(file_path, session)
 
         else:
             return []
@@ -1057,9 +1057,24 @@ class PyOCDBackend(BackendInterface):
 
         return segments
 
-    def _parse_elf_data(self, file_path: str) -> list[tuple[int, bytes]]:
-        """解析 ELF 文件，返回 [(address, data_bytes), ...]"""
+    def _parse_elf_data(self, file_path: str, session=None) -> list[tuple[int, bytes]]:
+        """解析 ELF/AXF 文件，返回 [(address, data_bytes), ...]
+
+        仅提取落在 Flash 内存区域的 section，避免 verify 时比较 RAM 区域（如 .data）导致失败。
+        """
         from elftools.elf.elffile import ELFFile
+
+        # 收集所有 Flash 区域的地址范围
+        flash_ranges = []
+        if session is not None:
+            for region in session.target.memory_map:
+                # region.type 是 MemoryType 枚举，需取 .value 或用 is_flash 属性
+                rtype = region.type
+                is_flash = (getattr(rtype, 'value', str(rtype)) == 'flash'
+                            or getattr(rtype, 'name', '') == 'FLASH'
+                            or getattr(region, 'is_flash', False))
+                if is_flash:
+                    flash_ranges.append((region.start, region.start + region.length))
 
         segments = []
         with open(file_path, 'rb') as f:
@@ -1068,9 +1083,16 @@ class PyOCDBackend(BackendInterface):
                 if (section.header.sh_type == 'SHT_PROGBITS'
                         and section.header.sh_size > 0
                         and section.header.sh_flags & 0x2):  # SHF_ALLOC
+                    sh_addr = section.header.sh_addr
+                    sh_size = section.header.sh_size
+                    # 如果有 Flash 区域信息，只保留落在 Flash 中的 section
+                    if flash_ranges:
+                        in_flash = any(start <= sh_addr < end for start, end in flash_ranges)
+                        if not in_flash:
+                            continue
                     data = section.data()
                     if data:
-                        segments.append((section.header.sh_addr, data))
+                        segments.append((sh_addr, data))
         return segments
 
     def fill_memory(

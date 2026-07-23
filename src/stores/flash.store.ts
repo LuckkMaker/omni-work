@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { FirmwareFileInfo, FlashProgressEvent, LogEvent, FlashResult } from '@shared/types'
 import * as flashService from '@/services/flash.service'
-import { parseFile, readFile } from '@/services/file.service'
+import { parseFile, readFile, statFile } from '@/services/file.service'
 import { useProbeStore } from './probe.store'
 import { useNotificationStore } from './notification.store'
 import { selectedSectorsToRanges } from '@/pages/flash/utils/sectors'
@@ -25,6 +25,10 @@ export interface FlashTab {
   jumpAddr?: string
   highlightOffset?: number | null
   scrollTop?: number
+  /** 文件最后修改时间（用于检测文件变更） */
+  fileMtime?: number
+  /** 是否已通知文件变更（避免重复通知） */
+  fileChangeNotified?: boolean
   // compare tab 专用
   rightData?: string | null   // base64 encoded right side data
   rightBaseAddress?: number
@@ -136,6 +140,8 @@ interface FlashStore {
   getActiveTab: () => FlashTab | null
   updateTab: (id: string, patch: Partial<FlashTab>) => void
   saveTabAs: (id: string) => Promise<void>
+  reloadFileTab: (tabId: string) => Promise<void>
+  checkFileChanges: (tabId?: string) => void
 
   // ── 弹窗控制 ──────────────────────────
   setShowBinAddrDialog: (show: boolean) => void
@@ -223,7 +229,7 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
 
     try {
       const [info, data] = await Promise.all([parseFile(path), readFile(path)])
-      get().updateTab(id, { data: data.data, baseAddress: data.base_address, size: data.size, format: info.format, loading: false })
+      get().updateTab(id, { data: data.data, baseAddress: data.base_address, size: data.size, format: info.format, loading: false, fileMtime: data.mtime })
     } catch (err) {
       console.error('[flash.store] openFileTab failed:', err)
       get().updateTab(id, { loading: false })
@@ -254,7 +260,11 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
     })
   },
 
-  selectTab: (id) => set({ activeTabId: id }),
+  selectTab: (id) => {
+    set({ activeTabId: id })
+    // 文件 tab：检查文件是否已变更
+    get().checkFileChanges(id)
+  },
 
   getActiveTab: () => {
     const { tabs, activeTabId } = get()
@@ -298,6 +308,57 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
     useNotificationStore.getState().push({ type: 'success', title: '另存为', message: `已保存到 ${getFileName(savePath)}`, autoClose: true, autoCloseDelay: 3000 })
   },
 
+  reloadFileTab: async (tabId) => {
+    const tab = get().tabs.find((t) => t.id === tabId)
+    if (!tab?.filePath) return
+    set({ showReloadDialog: false, pendingReloadTabId: null })
+    get().updateTab(tabId, { loading: true })
+    try {
+      const [info, data] = await Promise.all([parseFile(tab.filePath), readFile(tab.filePath, tab.baseAddress)])
+      get().updateTab(tabId, {
+        data: data.data,
+        baseAddress: data.base_address || tab.baseAddress,
+        size: data.size,
+        format: info.format,
+        loading: false,
+        fileMtime: data.mtime,
+        fileChangeNotified: false,
+        jumpAddr: '',
+        highlightOffset: null,
+        scrollTop: 0,
+      })
+      useNotificationStore.getState().push({ type: 'success', title: '文件已重新加载', message: tab.title, autoClose: true, autoCloseDelay: 3000 })
+    } catch (err) {
+      get().updateTab(tabId, { loading: false })
+      useNotificationStore.getState().push({ type: 'error', title: '重新加载失败', message: err instanceof Error ? err.message : '未知错误', autoClose: true })
+    }
+  },
+
+  checkFileChanges: (tabId) => {
+    const tabs = get().tabs
+    const targets = tabId ? [tabs.find((t) => t.id === tabId)].filter(Boolean) as FlashTab[] : tabs.filter((t) => t.type === 'file')
+    for (const tab of targets) {
+      if (tab.type !== 'file' || !tab.filePath || !tab.fileMtime || tab.fileChangeNotified) continue
+      statFile(tab.filePath).then((stat) => {
+        if (Math.abs(stat.mtime - tab.fileMtime!) > 0.001) {
+          // 标记已通知，避免重复
+          get().updateTab(tab.id, { fileChangeNotified: true })
+          // 全局通知 + 操作按钮
+          useNotificationStore.getState().push({
+            type: 'warning',
+            title: '文件已变更',
+            message: `"${tab.title}" 在磁盘上已被修改`,
+            autoClose: false,
+            action: {
+              label: '重新加载',
+              onClick: () => { get().reloadFileTab(tab.id) },
+            },
+          })
+        }
+      }).catch(() => { /* 文件可能已删除，忽略 */ })
+    }
+  },
+
   // ── 弹窗控制 ──────────────────────────
   setShowBinAddrDialog: (show) => set({ showBinAddrDialog: show }),
   setPendingBinPath: (path) => set({ pendingBinPath: path }),
@@ -316,7 +377,7 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
 
     try {
       const [info, data] = await Promise.all([parseFile(path), readFile(path, address)])
-      get().updateTab(id, { data: data.data, baseAddress: address, size: data.size, format: info.format, loading: false })
+      get().updateTab(id, { data: data.data, baseAddress: address, size: data.size, format: info.format, loading: false, fileMtime: data.mtime })
     } catch (err) {
       console.error('[flash.store] confirmBinAddress failed:', err)
       get().updateTab(id, { loading: false })
@@ -417,7 +478,7 @@ export const useFlashStore = create<FlashStore>((set, get) => ({
       if (tab.type === 'device' && tab.data) {
         return await flashService.verifyFlash(uid, '', tab.data, tab.baseAddress)
       }
-      return await flashService.verifyFlash(uid, tab.filePath!)
+      return await flashService.verifyFlash(uid, tab.filePath!, undefined, tab.baseAddress)
     }, () => 'Flash 内容与数据一致')
   },
 
