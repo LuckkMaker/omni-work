@@ -7,6 +7,13 @@ export interface FileReadResult {
   base_address: number
   data: string
   size: number
+  mtime?: number
+}
+
+/** 文件状态信息（用于检测文件变更） */
+export interface FileStatResult {
+  mtime: number
+  size: number
 }
 
 /** 解析固件文件，返回格式/大小/段信息 */
@@ -24,4 +31,11 @@ export async function readFile(filePath: string, baseAddress?: number): Promise<
     base_address: baseAddress,
   })
   return data as FileReadResult
+}
+
+/** 获取文件修改时间（用于检测文件是否变更） */
+export async function statFile(filePath: string): Promise<FileStatResult> {
+  const client = await api()
+  const { data } = await client.post('/api/files/stat', { file_path: filePath })
+  return data as FileStatResult
 }

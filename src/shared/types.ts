@@ -55,9 +55,11 @@ export interface TargetInfo {
   ram_size: number
 }
 
-/** 设备目录信息（来自 device_info.json，静态元数据） */
+/** 设备目录信息（来自 XML 设备目录，静态元数据） */
 export interface DeviceInfo {
   part_number: string
+  /** 设备来源：builtin（内置）/ pack（CMSIS-Pack 导入）/ flm（FLM 自定义） */
+  source: 'builtin' | 'pack' | 'flm'
   vendor: string
   display_name: string
   core: string
@@ -72,6 +74,22 @@ export interface DeviceInfo {
   ram_base_address: string
   /** Flash 区域布局（静态定义，连接前可用） */
   flash_regions?: DeviceFlashRegion[]
+  /** 设备 ID 寄存器地址 */
+  device_id_address?: string
+  /** 来源 Pack 名称（source='pack' 时有值） */
+  pack?: string
+  /** FLM 文件路径（source='flm' 时有值） */
+  flm_path?: string
+  /** 是否已注册到 TARGET 字典（可实际烧录） */
+  available?: boolean
+  /** 覆盖层（用于修正 Pack 导入芯片的默认行为） */
+  overrides?: DeviceOverrides
+}
+
+/** 设备覆盖层配置 */
+export interface DeviceOverrides {
+  flash_regions: { start: string; is_boot_memory?: boolean; length?: string }[]
+  debug_sequences: { name: string; enabled: boolean }[]
 }
 
 /** device_info.json 中的 Flash 区域（所有数值字段均为十六进制字符串） */
@@ -164,4 +182,54 @@ declare global {
   interface Window {
     electron: ElectronAPI
   }
+}
+
+/** CMSIS-Pack 安装信息 */
+export interface PackInfo {
+  name: string
+  version: string
+  filename: string
+  path: string
+  devices: string[]
+  device_count: number
+  installed_at: string
+  file_exists: boolean
+}
+
+/** Pack 预览/编辑中的设备信息 */
+export interface PackDevice {
+  part_number: string
+  vendor: string
+  display_name: string
+  core: string
+  flash_size: number
+  ram_size: number
+  flash_base_address: string
+  ram_base_address: string
+  flash_regions?: DeviceFlashRegion[]
+  /** 当前是否已导入（编辑模式用） */
+  imported?: boolean
+}
+
+/** 设备来源统计 */
+export interface SourceSummary {
+  builtin: number
+  pack: number
+  flm: number
+  total: number
+  available: number
+  metadata_only: number
+}
+
+/** 自定义芯片创建请求 */
+export interface CustomDeviceCreate {
+  flm_path: string
+  part_number: string
+  core: string
+  flash_base_address: string
+  flash_size: number
+  ram_base_address: string
+  ram_size: number
+  vendor: string
+  display_name: string
 }

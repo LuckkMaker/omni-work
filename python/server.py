@@ -17,7 +17,7 @@ import uvicorn
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
-from api import probes, flash, targets, files, devices, commander, rtt, tools, monitor, system
+from api import probes, flash, targets, files, devices, commander, rtt, tools, monitor, system, packs
 from core.events import event_manager
 from core.probe_monitor import probe_monitor
 from core.pyocd_backend import backend
@@ -36,6 +36,25 @@ async def lifespan(app: FastAPI):
 
     # 启动探针热插拔监控
     probe_monitor.start(loop)
+
+    # 加载已安装的 CMSIS-Pack（重新注册芯片到 TARGET 字典）
+    try:
+        from core.pack_manager import load_installed_packs
+        pack_count = load_installed_packs()
+        if pack_count > 0:
+            logger.info(f"Loaded {pack_count} CMSIS-Pack(s)")
+    except Exception as e:
+        logger.warning(f"Failed to load CMSIS-Packs: {e}")
+
+    # 加载 FLM 自定义芯片
+    try:
+        from core.custom_target import load_custom_targets
+        custom_count = load_custom_targets()
+        if custom_count > 0:
+            logger.info(f"Loaded {custom_count} custom FLM target(s)")
+    except Exception as e:
+        logger.warning(f"Failed to load custom targets: {e}")
+
     logger.info("Application started")
 
     yield
@@ -67,6 +86,7 @@ app.add_middleware(
 app.include_router(probes.router, prefix="/api/probes", tags=["probes"])
 app.include_router(targets.router, prefix="/api/targets", tags=["targets"])
 app.include_router(devices.router, prefix="/api/devices", tags=["devices"])
+app.include_router(packs.router, prefix="/api/packs", tags=["packs"])
 app.include_router(flash.router, prefix="/api", tags=["flash"])
 app.include_router(files.router, prefix="/api/files", tags=["files"])
 app.include_router(commander.router, prefix="/api", tags=["commander"])
