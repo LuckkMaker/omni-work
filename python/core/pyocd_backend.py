@@ -865,7 +865,7 @@ class PyOCDBackend(BackendInterface):
                 event_manager.emit("flash.progress", {
                     "phase": "verify", "current": 0, "total": actual_data_size, "percent": 0,
                 })
-                verify_result = self.verify(probe_uid, file_path)
+                verify_result = self.verify(probe_uid, file_path, base_address=base_address)
                 verify_ok = verify_result.success
                 if not verify_ok:
                     event_manager.log("error", f"Verify failed: {verify_result.error}")
@@ -940,7 +940,7 @@ class PyOCDBackend(BackendInterface):
                 event_manager.log("info", f"Verifying {ext} file...")
 
                 # 提取文件中的数据段 [(address, data_bytes), ...]
-                segments = self._extract_file_data(session, file_path, ext)
+                segments = self._extract_file_data(session, file_path, ext, base_address)
                 if not segments:
                     return FlashResult(success=False, error="No data segments found in file")
 
@@ -992,11 +992,14 @@ class PyOCDBackend(BackendInterface):
             event_manager.log("error", f"Verify failed: {e}")
             return FlashResult(success=False, error=str(e))
 
-    def _extract_file_data(self, session, file_path: str, ext: str) -> list[tuple[int, bytes]]:
+    def _extract_file_data(self, session, file_path: str, ext: str, base_address: int | None = None) -> list[tuple[int, bytes]]:
         """从固件文件中提取数据段，返回 [(address, data_bytes), ...]"""
         if ext == ".bin":
-            region = session.target.memory_map.get_boot_memory()
-            base_addr = region.start if region else 0
+            if base_address is not None:
+                base_addr = base_address
+            else:
+                region = session.target.memory_map.get_boot_memory()
+                base_addr = region.start if region else 0
             with open(file_path, 'rb') as f:
                 data = f.read()
             return [(base_addr, data)]
@@ -1004,7 +1007,7 @@ class PyOCDBackend(BackendInterface):
         elif ext == ".hex":
             return self._parse_hex_data(file_path)
 
-        elif ext == ".elf":
+        elif ext in (".elf", ".axf"):
             return self._parse_elf_data(file_path)
 
         else:

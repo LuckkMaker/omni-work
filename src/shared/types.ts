@@ -196,6 +196,21 @@ export interface PackInfo {
   file_exists: boolean
 }
 
+/** Pack 预览/编辑中的设备信息 */
+export interface PackDevice {
+  part_number: string
+  vendor: string
+  display_name: string
+  core: string
+  flash_size: number
+  ram_size: number
+  flash_base_address: string
+  ram_base_address: string
+  flash_regions?: DeviceFlashRegion[]
+  /** 当前是否已导入（编辑模式用） */
+  imported?: boolean
+}
+
 /** 设备来源统计 */
 export interface SourceSummary {
   builtin: number

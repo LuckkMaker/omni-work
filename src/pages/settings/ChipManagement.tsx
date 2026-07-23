@@ -1,14 +1,15 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Loader2, Package, Cpu, Trash2 } from 'lucide-react'
+import { Loader2, Package, Cpu, Trash2, Pencil } from 'lucide-react'
 import { listDevices, getSourceSummary } from '@/services/device.service'
-import { listPacks, importPack, removePack } from '@/services/pack.service'
+import { listPacks, removePack } from '@/services/pack.service'
 import { useProbeStore } from '@/stores/probe.store'
 import { useNotificationStore } from '@/stores/notification.store'
 import { DeviceTable } from '@/components/DeviceTable'
 import type { DeviceInfo, PackInfo, SourceSummary } from '@shared/types'
 import { CustomChipDialog } from './CustomChipDialog'
+import { PackDeviceSelectDialog } from './PackDeviceSelectDialog'
 
 export function ChipManagement() {
   // ── 设备支持列表 ──
@@ -19,6 +20,11 @@ export function ChipManagement() {
   const fetchDevices = useProbeStore((s) => s.fetchDevices)
   const notify = useNotificationStore((s) => s.push)
   const [customDialogOpen, setCustomDialogOpen] = useState(false)
+
+  // ── Pack 设备选择对话框 ──
+  const [packDialogOpen, setPackDialogOpen] = useState(false)
+  const [packDialogMode, setPackDialogMode] = useState<'import' | 'edit'>('import')
+  const [packDialogTarget, setPackDialogTarget] = useState('')
 
   const refreshDevices = useCallback(async () => {
     setDevicesLoading(true)
@@ -44,7 +50,6 @@ export function ChipManagement() {
   // ── CMSIS-Pack 管理 ──
   const [packs, setPacks] = useState<PackInfo[]>([])
   const [packsLoading, setPacksLoading] = useState(true)
-  const [importingPack, setImportingPack] = useState(false)
 
   const refreshPacks = useCallback(async () => {
     setPacksLoading(true)
@@ -63,20 +68,16 @@ export function ChipManagement() {
   const handleImportPack = async () => {
     const path = await window.electron.openFileDialog({ extensions: ['pack'], title: '选择 CMSIS-Pack 文件' })
     if (!path) return
-    setImportingPack(true)
-    try {
-      const result = await importPack(path)
-      if (result.device_count > 0) {
-        notify({ type: 'success', title: 'Pack 导入成功', message: `${result.pack.name} — ${result.device_count} 个设备` })
-      } else {
-        notify({ type: 'warning', title: 'Pack 已安装但未提取到设备', message: `${result.pack.name} — 该 Pack 可能不包含芯片定义（仅含算法库/SVD 等）` })
-      }
-      await Promise.all([refreshPacks(), refreshAndSync()])
-    } catch (e) {
-      notify({ type: 'error', title: 'Pack 导入失败', message: e instanceof Error ? e.message : String(e) })
-    } finally {
-      setImportingPack(false)
-    }
+    // 打开设备选择对话框
+    setPackDialogMode('import')
+    setPackDialogTarget(path)
+    setPackDialogOpen(true)
+  }
+
+  const handleEditPackDevices = (packName: string) => {
+    setPackDialogMode('edit')
+    setPackDialogTarget(packName)
+    setPackDialogOpen(true)
   }
 
   const handleRemovePack = async (packName: string) => {
@@ -103,9 +104,8 @@ export function ChipManagement() {
               <Button
                 size="sm"
                 onClick={handleImportPack}
-                disabled={importingPack}
               >
-                {importingPack ? '导入中...' : 'DFP 导入芯片'}
+                DFP 导入芯片
               </Button>
               <Button
                 size="sm"
@@ -141,7 +141,7 @@ export function ChipManagement() {
           <DeviceTable
             devices={devices}
             loading={devicesLoading}
-            maxHeight="max-h-64"
+            maxHeight="max-h-[460px]"
           />
         </CardContent>
       </Card>
@@ -184,15 +184,26 @@ export function ChipManagement() {
                       )}
                     </div>
                   </div>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => handleRemovePack(pack.name)}
-                    className="text-red-500 hover:text-red-600"
-                  >
-                    <Trash2 className="size-3.5" />
-                    卸载
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleEditPackDevices(pack.name)}
+                      disabled={!pack.file_exists}
+                    >
+                      <Pencil className="size-3.5" />
+                      编辑
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => handleRemovePack(pack.name)}
+                      className="text-red-500 hover:text-red-600"
+                    >
+                      <Trash2 className="size-3.5" />
+                      卸载
+                    </Button>
+                  </div>
                 </div>
               ))}
             </div>
@@ -205,6 +216,15 @@ export function ChipManagement() {
         open={customDialogOpen}
         onOpenChange={setCustomDialogOpen}
         onSuccess={refreshAndSync}
+      />
+
+      {/* Pack 设备选择弹窗（导入/编辑共用） */}
+      <PackDeviceSelectDialog
+        open={packDialogOpen}
+        onOpenChange={setPackDialogOpen}
+        onSuccess={() => Promise.all([refreshPacks(), refreshAndSync()])}
+        mode={packDialogMode}
+        target={packDialogTarget}
       />
     </div>
   )
